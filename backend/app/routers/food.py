@@ -1,5 +1,6 @@
 from fastapi import APIRouter
 from pydantic import BaseModel
+from app.services.nutrition_service import get_mock_nutrition
 
 router = APIRouter()
 
@@ -10,10 +11,5 @@ class FoodSearchRequest(BaseModel):
 
 @router.post("/food/search")
 def search_food(body: FoodSearchRequest):
-    return {
-        "name": body.query,
-        "calories": 250,
-        "protein": 10,
-        "carbs": 20,
-        "fat": 15,
-    }
+    nutrition = get_mock_nutrition(body.query)
+    return {"name": body.query, **nutrition}
