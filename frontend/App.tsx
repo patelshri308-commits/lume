@@ -110,6 +110,17 @@ export default function App() {
     loadSummary();
   }, []);
 
+  // Derived: adjusted nutrition values for the current serving count.
+  // The original `result` object is never mutated.
+  const adjusted = result
+    ? {
+        calories: parseFloat((result.calories * servings).toFixed(1)),
+        protein:  parseFloat((result.protein  * servings).toFixed(1)),
+        carbs:    parseFloat((result.carbs     * servings).toFixed(1)),
+        fat:      parseFloat((result.fat       * servings).toFixed(1)),
+      }
+    : null;
+
   return (
     <SafeAreaView style={styles.safe}>
       <ScrollView contentContainerStyle={styles.container}>
@@ -146,15 +157,20 @@ export default function App() {
         {!result && !searching && (
           <Text style={styles.emptyState}>Search for a food to see nutrition info</Text>
         )}
-        {result && (
+        {result && adjusted && (
           <View style={styles.card}>
             <Text style={styles.cardTitle}>{result.name}</Text>
             <View style={styles.macroRow}>
-              <MacroItem label="Calories" value={`${result.calories}`} unit="kcal" />
-              <MacroItem label="Protein"  value={`${result.protein}`}  unit="g" />
-              <MacroItem label="Carbs"    value={`${result.carbs}`}    unit="g" />
-              <MacroItem label="Fat"      value={`${result.fat}`}      unit="g" />
+              <MacroItem label="Calories" value={`${adjusted.calories}`} unit="kcal" />
+              <MacroItem label="Protein"  value={`${adjusted.protein}`}  unit="g" />
+              <MacroItem label="Carbs"    value={`${adjusted.carbs}`}    unit="g" />
+              <MacroItem label="Fat"      value={`${adjusted.fat}`}      unit="g" />
             </View>
+            {servings > 1 && (
+              <Text style={styles.perServing}>
+                {result.calories} kcal · {result.protein}g · {result.carbs}g · {result.fat}g per serving
+              </Text>
+            )}
             <View style={styles.servingRow}>
               <TouchableOpacity
                 style={styles.servingButton}
@@ -390,6 +406,13 @@ const styles = StyleSheet.create({
     fontSize: 12,
     color: "#c62828",
     fontWeight: "600",
+  },
+
+  perServing: {
+    marginTop: 6,
+    fontSize: 11,
+    color: "#bbb",
+    textAlign: "center",
   },
 
   // Serving control
