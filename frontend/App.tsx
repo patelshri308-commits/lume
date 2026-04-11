@@ -92,6 +92,12 @@ export default function App() {
     }
   };
 
+  const clearSearch = () => {
+    setQuery("");
+    setResult(null);
+    setLogMessage("");
+  };
+
   useEffect(() => {
     loadLogs();
     loadSummary();
@@ -118,7 +124,14 @@ export default function App() {
             autoCapitalize="none"
             style={styles.input}
           />
-          <Button title="Search" onPress={searchFood} />
+          <View style={styles.searchButtons}>
+            <View style={styles.searchButtonItem}>
+              <Button title="Search" onPress={searchFood} />
+            </View>
+            <View style={styles.searchButtonItem}>
+              <Button title="Clear" onPress={clearSearch} color="#aaa" />
+            </View>
+          </View>
         </View>
 
         {/* Search Result */}
@@ -243,6 +256,15 @@ const styles = StyleSheet.create({
     fontSize: 15,
     marginBottom: 10,
     color: "#111",
+  },
+
+  // Search buttons
+  searchButtons: {
+    flexDirection: "row",
+    gap: 10,
+  },
+  searchButtonItem: {
+    flex: 1,
   },
 
   // Cards
