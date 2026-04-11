@@ -1,4 +1,5 @@
-from sqlalchemy import Column, Integer, Float, String
+import datetime
+from sqlalchemy import Column, Integer, Float, String, Date
 from app.database import Base
 
 
@@ -12,3 +13,4 @@ class FoodLog(Base):
     protein  = Column(Float,   nullable=False)
     carbs    = Column(Float,   nullable=False)
     fat      = Column(Float,   nullable=False)
+    log_date = Column(Date, nullable=False, default=datetime.date.today)

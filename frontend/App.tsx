@@ -37,6 +37,7 @@ export default function App() {
   const [summary,    setSummary]    = useState<DailySummary | null>(null);
   const [searching,  setSearching]  = useState(false);
   const [servings,   setServings]   = useState(1);
+  const [selectedDay, setSelectedDay] = useState<"today" | "yesterday">("today");
 
   const searchFood = async () => {
     setLogMessage("");
@@ -82,6 +83,7 @@ export default function App() {
         protein:  result.protein  * servings,
         carbs:    result.carbs    * servings,
         fat:      result.fat      * servings,
+        log_date: toDateString(selectedDay),
       });
       setLogMessage("Food logged successfully!");
       await loadSummary();
@@ -91,9 +93,16 @@ export default function App() {
     }
   };
 
-  const loadSummary = async () => {
+  // Returns a YYYY-MM-DD string for "today" or "yesterday"
+  const toDateString = (day: "today" | "yesterday"): string => {
+    const d = new Date();
+    if (day === "yesterday") d.setDate(d.getDate() - 1);
+    return d.toISOString().split("T")[0];
+  };
+
+  const loadSummary = async (day = selectedDay) => {
     try {
-      const res = await axios.get("http://127.0.0.1:8000/dashboard/daily");
+      const res = await axios.get(`http://127.0.0.1:8000/dashboard/daily?date=${toDateString(day)}`);
       setSummary(res.data);
     } catch (err) {
       console.log(err);
@@ -110,9 +119,9 @@ export default function App() {
     }
   };
 
-  const loadLogs = async () => {
+  const loadLogs = async (day = selectedDay) => {
     try {
-      const res = await axios.get("http://127.0.0.1:8000/logs");
+      const res = await axios.get(`http://127.0.0.1:8000/logs?date=${toDateString(day)}`);
       setLogs(res.data.logs);
     } catch (err) {
       console.log(err);
@@ -126,10 +135,11 @@ export default function App() {
     setServings(1);
   };
 
+  // Reload data whenever the selected day changes (and on first mount)
   useEffect(() => {
-    loadLogs();
-    loadSummary();
-  }, []);
+    loadLogs(selectedDay);
+    loadSummary(selectedDay);
+  }, [selectedDay]);
 
   // Derived: adjusted nutrition values for the current serving count.
   // The original `result` object is never mutated.
@@ -149,6 +159,21 @@ export default function App() {
         {/* Header */}
         <Text style={styles.appTitle}>Lume</Text>
         <Text style={styles.appSubtitle}>Track what you eat</Text>
+
+        {/* Day selector */}
+        <View style={styles.dayToggle}>
+          {(["today", "yesterday"] as const).map((day) => (
+            <TouchableOpacity
+              key={day}
+              style={[styles.dayButton, selectedDay === day && styles.dayButtonActive]}
+              onPress={() => setSelectedDay(day)}
+            >
+              <Text style={[styles.dayButtonText, selectedDay === day && styles.dayButtonTextActive]}>
+                {day.charAt(0).toUpperCase() + day.slice(1)}
+              </Text>
+            </TouchableOpacity>
+          ))}
+        </View>
 
         {/* Search */}
         <View style={styles.section}>
@@ -300,6 +325,33 @@ const styles = StyleSheet.create({
     color: "#999",
     textAlign: "center",
     marginBottom: 28,
+  },
+
+  // Day toggle
+  dayToggle: {
+    flexDirection: "row",
+    gap: 8,
+    marginBottom: 4,
+  },
+  dayButton: {
+    flex: 1,
+    paddingVertical: 8,
+    borderRadius: 8,
+    borderWidth: 1,
+    borderColor: "#ddd",
+    alignItems: "center",
+  },
+  dayButtonActive: {
+    backgroundColor: "#111",
+    borderColor: "#111",
+  },
+  dayButtonText: {
+    fontSize: 13,
+    fontWeight: "600",
+    color: "#aaa",
+  },
+  dayButtonTextActive: {
+    color: "#fff",
   },
 
   // Sections
