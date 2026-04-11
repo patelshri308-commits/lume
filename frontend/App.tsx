@@ -29,6 +29,23 @@ type DailySummary = {
   entries_count:  number;
 };
 
+// Returns today's date as YYYY-MM-DD using local time (not UTC)
+function localToday(): string {
+  const d = new Date();
+  return [
+    d.getFullYear(),
+    String(d.getMonth() + 1).padStart(2, "0"),
+    String(d.getDate()).padStart(2, "0"),
+  ].join("-");
+}
+
+// Returns true only for strings that are valid YYYY-MM-DD dates
+function isValidDate(s: string): boolean {
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(s)) return false;
+  const d = new Date(s);
+  return !isNaN(d.getTime());
+}
+
 export default function App() {
   const [query,      setQuery]      = useState("");
   const [result,     setResult]     = useState<NutritionResult | null>(null);
@@ -36,8 +53,9 @@ export default function App() {
   const [logs,       setLogs]       = useState<FoodLogEntry[]>([]);
   const [summary,    setSummary]    = useState<DailySummary | null>(null);
   const [searching,  setSearching]  = useState(false);
-  const [servings,   setServings]   = useState(1);
-  const [selectedDay, setSelectedDay] = useState<"today" | "yesterday">("today");
+  const [servings,      setServings]      = useState(1);
+  const [selectedDate,  setSelectedDate]  = useState(localToday());
+  const [dateError,     setDateError]     = useState("");
 
   const searchFood = async () => {
     setLogMessage("");
@@ -83,7 +101,7 @@ export default function App() {
         protein:  result.protein  * servings,
         carbs:    result.carbs    * servings,
         fat:      result.fat      * servings,
-        log_date: toDateString(selectedDay),
+        log_date: selectedDate,
       });
       setLogMessage("Food logged successfully!");
       await loadSummary();
@@ -93,16 +111,9 @@ export default function App() {
     }
   };
 
-  // Returns a YYYY-MM-DD string for "today" or "yesterday"
-  const toDateString = (day: "today" | "yesterday"): string => {
-    const d = new Date();
-    if (day === "yesterday") d.setDate(d.getDate() - 1);
-    return d.toISOString().split("T")[0];
-  };
-
-  const loadSummary = async (day = selectedDay) => {
+  const loadSummary = async (date = selectedDate) => {
     try {
-      const res = await axios.get(`http://127.0.0.1:8000/dashboard/daily?date=${toDateString(day)}`);
+      const res = await axios.get(`http://127.0.0.1:8000/dashboard/daily?date=${date}`);
       setSummary(res.data);
     } catch (err) {
       console.log(err);
@@ -119,9 +130,9 @@ export default function App() {
     }
   };
 
-  const loadLogs = async (day = selectedDay) => {
+  const loadLogs = async (date = selectedDate) => {
     try {
-      const res = await axios.get(`http://127.0.0.1:8000/logs?date=${toDateString(day)}`);
+      const res = await axios.get(`http://127.0.0.1:8000/logs?date=${date}`);
       setLogs(res.data.logs);
     } catch (err) {
       console.log(err);
@@ -135,11 +146,12 @@ export default function App() {
     setServings(1);
   };
 
-  // Reload data whenever the selected day changes (and on first mount)
+  // Reload data whenever selectedDate changes, but only if it's a valid date
   useEffect(() => {
-    loadLogs(selectedDay);
-    loadSummary(selectedDay);
-  }, [selectedDay]);
+    if (!isValidDate(selectedDate)) return;
+    loadLogs(selectedDate);
+    loadSummary(selectedDate);
+  }, [selectedDate]);
 
   // Derived: adjusted nutrition values for the current serving count.
   // The original `result` object is never mutated.
@@ -160,19 +172,22 @@ export default function App() {
         <Text style={styles.appTitle}>Lume</Text>
         <Text style={styles.appSubtitle}>Track what you eat</Text>
 
-        {/* Day selector */}
-        <View style={styles.dayToggle}>
-          {(["today", "yesterday"] as const).map((day) => (
-            <TouchableOpacity
-              key={day}
-              style={[styles.dayButton, selectedDay === day && styles.dayButtonActive]}
-              onPress={() => setSelectedDay(day)}
-            >
-              <Text style={[styles.dayButtonText, selectedDay === day && styles.dayButtonTextActive]}>
-                {day.charAt(0).toUpperCase() + day.slice(1)}
-              </Text>
-            </TouchableOpacity>
-          ))}
+        {/* Date selector */}
+        <View style={styles.dateSection}>
+          <Text style={styles.sectionLabel}>VIEWING DATE</Text>
+          <TextInput
+            style={[styles.input, dateError ? styles.inputError : null]}
+            value={selectedDate}
+            onChangeText={(text) => {
+              setSelectedDate(text);
+              setDateError(isValidDate(text) ? "" : "Enter a valid date: YYYY-MM-DD");
+            }}
+            placeholder="YYYY-MM-DD"
+            placeholderTextColor="#aaa"
+            autoCapitalize="none"
+            keyboardType="numbers-and-punctuation"
+          />
+          {dateError ? <Text style={styles.dateErrorText}>{dateError}</Text> : null}
         </View>
 
         {/* Search */}
@@ -327,31 +342,17 @@ const styles = StyleSheet.create({
     marginBottom: 28,
   },
 
-  // Day toggle
-  dayToggle: {
-    flexDirection: "row",
-    gap: 8,
+  // Date selector
+  dateSection: {
     marginBottom: 4,
   },
-  dayButton: {
-    flex: 1,
-    paddingVertical: 8,
-    borderRadius: 8,
-    borderWidth: 1,
-    borderColor: "#ddd",
-    alignItems: "center",
+  inputError: {
+    borderColor: "#c62828",
   },
-  dayButtonActive: {
-    backgroundColor: "#111",
-    borderColor: "#111",
-  },
-  dayButtonText: {
-    fontSize: 13,
-    fontWeight: "600",
-    color: "#aaa",
-  },
-  dayButtonTextActive: {
-    color: "#fff",
+  dateErrorText: {
+    fontSize: 12,
+    color: "#c62828",
+    marginTop: 4,
   },
 
   // Sections
