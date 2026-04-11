@@ -10,6 +10,8 @@ import {
   TouchableOpacity,
 } from "react-native";
 import axios from "axios";
+import { Session } from "@supabase/supabase-js";
+import { supabase } from "./lib/supabase";
 
 type NutritionResult = {
   name:     string;
@@ -56,6 +58,37 @@ export default function App() {
   const [servings,      setServings]      = useState(1);
   const [selectedDate,  setSelectedDate]  = useState(localToday());
   const [dateError,     setDateError]     = useState("");
+
+  // Auth state
+  const [session,       setSession]       = useState<Session | null>(null);
+  const [authEmail,     setAuthEmail]     = useState("");
+  const [authPassword,  setAuthPassword]  = useState("");
+  const [authMessage,   setAuthMessage]   = useState("");
+
+  // Initialise session on mount and listen for auth changes
+  useEffect(() => {
+    supabase.auth.getSession().then(({ data: { session } }) => setSession(session));
+    const { data: { subscription } } = supabase.auth.onAuthStateChange((_event, session) => {
+      setSession(session);
+    });
+    return () => subscription.unsubscribe();
+  }, []);
+
+  const signUp = async () => {
+    setAuthMessage("");
+    const { error } = await supabase.auth.signUp({ email: authEmail, password: authPassword });
+    setAuthMessage(error ? error.message : "Check your email to confirm your account.");
+  };
+
+  const logIn = async () => {
+    setAuthMessage("");
+    const { error } = await supabase.auth.signInWithPassword({ email: authEmail, password: authPassword });
+    if (error) setAuthMessage(error.message);
+  };
+
+  const logOut = async () => {
+    await supabase.auth.signOut();
+  };
 
   const searchFood = async () => {
     setLogMessage("");
@@ -164,13 +197,64 @@ export default function App() {
       }
     : null;
 
+  // ── Auth screen ────────────────────────────────────────────────────────────
+  if (!session) {
+    return (
+      <SafeAreaView style={styles.safe}>
+        <View style={styles.authContainer}>
+          <Text style={styles.appTitle}>Lume</Text>
+          <Text style={styles.appSubtitle}>Track what you eat</Text>
+
+          <TextInput
+            style={styles.input}
+            placeholder="Email"
+            placeholderTextColor="#aaa"
+            value={authEmail}
+            onChangeText={setAuthEmail}
+            autoCapitalize="none"
+            keyboardType="email-address"
+          />
+          <TextInput
+            style={styles.input}
+            placeholder="Password"
+            placeholderTextColor="#aaa"
+            value={authPassword}
+            onChangeText={setAuthPassword}
+            secureTextEntry
+          />
+
+          <View style={styles.authButtons}>
+            <View style={styles.authButtonItem}>
+              <Button title="Log In" onPress={logIn} />
+            </View>
+            <View style={styles.authButtonItem}>
+              <Button title="Sign Up" onPress={signUp} color="#aaa" />
+            </View>
+          </View>
+
+          {authMessage ? (
+            <Text style={styles.authMessage}>{authMessage}</Text>
+          ) : null}
+        </View>
+      </SafeAreaView>
+    );
+  }
+
+  // ── Tracker screen (logged in) ──────────────────────────────────────────────
   return (
     <SafeAreaView style={styles.safe}>
       <ScrollView contentContainerStyle={styles.container}>
 
         {/* Header */}
-        <Text style={styles.appTitle}>Lume</Text>
-        <Text style={styles.appSubtitle}>Track what you eat</Text>
+        <View style={styles.headerRow}>
+          <View>
+            <Text style={styles.appTitle}>Lume</Text>
+            <Text style={styles.appSubtitle}>Track what you eat</Text>
+          </View>
+          <TouchableOpacity onPress={logOut}>
+            <Text style={styles.logOutText}>Log Out</Text>
+          </TouchableOpacity>
+        </View>
 
         {/* Date selector */}
         <View style={styles.dateSection}>
@@ -327,19 +411,49 @@ const styles = StyleSheet.create({
     paddingBottom: 48,
   },
 
+  // Auth screen
+  authContainer: {
+    flex: 1,
+    padding: 28,
+    justifyContent: "center",
+  },
+  authButtons: {
+    flexDirection: "row",
+    gap: 10,
+    marginTop: 4,
+  },
+  authButtonItem: {
+    flex: 1,
+  },
+  authMessage: {
+    marginTop: 14,
+    fontSize: 13,
+    color: "#555",
+    textAlign: "center",
+  },
+
   // Header
+  headerRow: {
+    flexDirection: "row",
+    justifyContent: "space-between",
+    alignItems: "flex-start",
+    marginTop: 12,
+    marginBottom: 4,
+  },
   appTitle: {
     fontSize: 34,
     fontWeight: "700",
-    textAlign: "center",
-    marginTop: 12,
     letterSpacing: 1,
   },
   appSubtitle: {
     fontSize: 14,
     color: "#999",
-    textAlign: "center",
-    marginBottom: 28,
+    marginBottom: 4,
+  },
+  logOutText: {
+    fontSize: 13,
+    color: "#aaa",
+    paddingTop: 8,
   },
 
   // Date selector
