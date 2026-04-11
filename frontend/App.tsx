@@ -36,6 +36,7 @@ export default function App() {
   const [logs,       setLogs]       = useState<FoodLogEntry[]>([]);
   const [summary,    setSummary]    = useState<DailySummary | null>(null);
   const [searching,  setSearching]  = useState(false);
+  const [servings,   setServings]   = useState(1);
 
   const searchFood = async () => {
     setLogMessage("");
@@ -43,6 +44,7 @@ export default function App() {
     try {
       const res = await axios.post("http://127.0.0.1:8000/food/search", { query });
       setResult(res.data);
+      setServings(1);
     } catch (err) {
       console.log(err);
     } finally {
@@ -55,10 +57,10 @@ export default function App() {
     try {
       await axios.post("http://127.0.0.1:8000/logs", {
         name:     result.name,
-        calories: result.calories,
-        protein:  result.protein,
-        carbs:    result.carbs,
-        fat:      result.fat,
+        calories: result.calories * servings,
+        protein:  result.protein  * servings,
+        carbs:    result.carbs    * servings,
+        fat:      result.fat      * servings,
       });
       setLogMessage("Food logged successfully!");
       await loadSummary();
@@ -100,6 +102,7 @@ export default function App() {
     setQuery("");
     setResult(null);
     setLogMessage("");
+    setServings(1);
   };
 
   useEffect(() => {
@@ -152,6 +155,22 @@ export default function App() {
               <MacroItem label="Carbs"    value={`${result.carbs}`}    unit="g" />
               <MacroItem label="Fat"      value={`${result.fat}`}      unit="g" />
             </View>
+            <View style={styles.servingRow}>
+              <TouchableOpacity
+                style={styles.servingButton}
+                onPress={() => setServings(s => Math.max(1, s - 1))}
+              >
+                <Text style={styles.servingButtonText}>−</Text>
+              </TouchableOpacity>
+              <Text style={styles.servingCount}>{servings} {servings === 1 ? "serving" : "servings"}</Text>
+              <TouchableOpacity
+                style={styles.servingButton}
+                onPress={() => setServings(s => s + 1)}
+              >
+                <Text style={styles.servingButtonText}>+</Text>
+              </TouchableOpacity>
+            </View>
+
             <View style={styles.cardAction}>
               <Button title="Log Food" onPress={logFood} />
             </View>
@@ -371,6 +390,36 @@ const styles = StyleSheet.create({
     fontSize: 12,
     color: "#c62828",
     fontWeight: "600",
+  },
+
+  // Serving control
+  servingRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "center",
+    marginTop: 14,
+    gap: 16,
+  },
+  servingButton: {
+    width: 32,
+    height: 32,
+    borderRadius: 16,
+    borderWidth: 1,
+    borderColor: "#ccc",
+    alignItems: "center",
+    justifyContent: "center",
+  },
+  servingButtonText: {
+    fontSize: 18,
+    color: "#333",
+    lineHeight: 22,
+  },
+  servingCount: {
+    fontSize: 14,
+    fontWeight: "600",
+    color: "#333",
+    minWidth: 80,
+    textAlign: "center",
   },
 
   // Empty states
