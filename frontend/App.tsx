@@ -40,11 +40,32 @@ export default function App() {
 
   const searchFood = async () => {
     setLogMessage("");
+
+    // Map of supported number words to their integer values
+    const NUMBER_WORDS: Record<string, number> = {
+      one: 1, two: 2, three: 3, four: 4,  five: 5,
+      six: 6, seven: 7, eight: 8, nine: 9, ten: 10,
+    };
+
+    // Build a regex that matches a leading digit(s) OR a supported number word, followed by a space
+    const wordList   = Object.keys(NUMBER_WORDS).join("|");
+    const pattern    = new RegExp(`^(\\d+|${wordList})\\s+(.+)$`, "i");
+    const match      = query.trim().match(pattern);
+
+    let parsedServings = 1;
+    let foodQuery      = query.trim();
+
+    if (match) {
+      const token = match[1].toLowerCase();
+      parsedServings = NUMBER_WORDS[token] ?? parseInt(token, 10);
+      foodQuery      = match[2].trim();
+    }
+
+    setServings(parsedServings);
     setSearching(true);
     try {
-      const res = await axios.post("http://127.0.0.1:8000/food/search", { query });
+      const res = await axios.post("http://127.0.0.1:8000/food/search", { query: foodQuery });
       setResult(res.data);
-      setServings(1);
     } catch (err) {
       console.log(err);
     } finally {
