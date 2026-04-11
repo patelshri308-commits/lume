@@ -35,14 +35,18 @@ export default function App() {
   const [logMessage, setLogMessage] = useState("");
   const [logs,       setLogs]       = useState<FoodLogEntry[]>([]);
   const [summary,    setSummary]    = useState<DailySummary | null>(null);
+  const [searching,  setSearching]  = useState(false);
 
   const searchFood = async () => {
     setLogMessage("");
+    setSearching(true);
     try {
       const res = await axios.post("http://127.0.0.1:8000/food/search", { query });
       setResult(res.data);
     } catch (err) {
       console.log(err);
+    } finally {
+      setSearching(false);
     }
   };
 
@@ -126,15 +130,19 @@ export default function App() {
           />
           <View style={styles.searchButtons}>
             <View style={styles.searchButtonItem}>
-              <Button title="Search" onPress={searchFood} />
+              <Button title="Search" onPress={searchFood} disabled={searching} />
             </View>
             <View style={styles.searchButtonItem}>
               <Button title="Clear" onPress={clearSearch} color="#aaa" />
             </View>
           </View>
+          {searching && <Text style={styles.searchingText}>Searching...</Text>}
         </View>
 
         {/* Search Result */}
+        {!result && !searching && (
+          <Text style={styles.emptyState}>Search for a food to see nutrition info</Text>
+        )}
         {result && (
           <View style={styles.card}>
             <Text style={styles.cardTitle}>{result.name}</Text>
@@ -177,6 +185,9 @@ export default function App() {
         {/* Logged Foods */}
         <View style={styles.section}>
           <Text style={styles.sectionLabel}>LOGGED FOODS</Text>
+          {logs.length === 0 && (
+            <Text style={styles.emptyState}>No foods logged yet</Text>
+          )}
           {logs.map((entry) => (
             <View key={entry.id} style={styles.logEntry}>
               <View style={styles.logEntryRow}>
@@ -256,6 +267,12 @@ const styles = StyleSheet.create({
     fontSize: 15,
     marginBottom: 10,
     color: "#111",
+  },
+
+  searchingText: {
+    marginTop: 8,
+    fontSize: 13,
+    color: "#aaa",
   },
 
   // Search buttons
@@ -354,6 +371,14 @@ const styles = StyleSheet.create({
     fontSize: 12,
     color: "#c62828",
     fontWeight: "600",
+  },
+
+  // Empty states
+  emptyState: {
+    marginTop: 10,
+    fontSize: 13,
+    color: "#bbb",
+    fontStyle: "italic",
   },
 
   // Feedback
