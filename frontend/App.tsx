@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import {
   View,
   Text,
@@ -7,6 +7,7 @@ import {
   StyleSheet,
   ScrollView,
   SafeAreaView,
+  TouchableOpacity,
 } from "react-native";
 import axios from "axios";
 
@@ -17,6 +18,8 @@ type NutritionResult = {
   carbs:    number;
   fat:      number;
 };
+
+type FoodLogEntry = NutritionResult & { id: number };
 
 type DailySummary = {
   total_calories: number;
@@ -30,7 +33,7 @@ export default function App() {
   const [query,      setQuery]      = useState("");
   const [result,     setResult]     = useState<NutritionResult | null>(null);
   const [logMessage, setLogMessage] = useState("");
-  const [logs,       setLogs]       = useState<NutritionResult[]>([]);
+  const [logs,       setLogs]       = useState<FoodLogEntry[]>([]);
   const [summary,    setSummary]    = useState<DailySummary | null>(null);
 
   const searchFood = async () => {
@@ -54,6 +57,8 @@ export default function App() {
         fat:      result.fat,
       });
       setLogMessage("Food logged successfully!");
+      await loadSummary();
+      await loadLogs();
     } catch (err) {
       setLogMessage("Failed to log food. Is the backend running?");
     }
@@ -68,6 +73,16 @@ export default function App() {
     }
   };
 
+  const deleteLog = async (id: number) => {
+    try {
+      await axios.delete(`http://127.0.0.1:8000/logs/${id}`);
+      await loadSummary();
+      await loadLogs();
+    } catch (err) {
+      console.log(err);
+    }
+  };
+
   const loadLogs = async () => {
     try {
       const res = await axios.get("http://127.0.0.1:8000/logs");
@@ -76,6 +91,11 @@ export default function App() {
       console.log(err);
     }
   };
+
+  useEffect(() => {
+    loadLogs();
+    loadSummary();
+  }, []);
 
   return (
     <SafeAreaView style={styles.safe}>
@@ -146,12 +166,19 @@ export default function App() {
         <View style={styles.section}>
           <Text style={styles.sectionLabel}>LOGGED FOODS</Text>
           <Button title="Load Logged Foods" onPress={loadLogs} />
-          {logs.map((entry, index) => (
-            <View key={index} style={styles.logEntry}>
-              <Text style={styles.logEntryName}>{entry.name}</Text>
-              <Text style={styles.logEntryMacros}>
-                {entry.calories} kcal · {entry.protein}g protein · {entry.carbs}g carbs · {entry.fat}g fat
-              </Text>
+          {logs.map((entry) => (
+            <View key={entry.id} style={styles.logEntry}>
+              <View style={styles.logEntryRow}>
+                <View style={styles.logEntryText}>
+                  <Text style={styles.logEntryName}>{entry.name}</Text>
+                  <Text style={styles.logEntryMacros}>
+                    {entry.calories} kcal · {entry.protein}g protein · {entry.carbs}g carbs · {entry.fat}g fat
+                  </Text>
+                </View>
+                <TouchableOpacity onPress={() => deleteLog(entry.id)}>
+                  <Text style={styles.deleteButton}>Delete</Text>
+                </TouchableOpacity>
+              </View>
             </View>
           ))}
         </View>
@@ -284,6 +311,15 @@ const styles = StyleSheet.create({
     borderWidth: 1,
     borderColor: "#eee",
   },
+  logEntryRow: {
+    flexDirection: "row",
+    justifyContent: "space-between",
+    alignItems: "center",
+  },
+  logEntryText: {
+    flex: 1,
+    marginRight: 12,
+  },
   logEntryName: {
     fontSize: 14,
     fontWeight: "600",
@@ -293,6 +329,11 @@ const styles = StyleSheet.create({
   logEntryMacros: {
     fontSize: 12,
     color: "#777",
+  },
+  deleteButton: {
+    fontSize: 12,
+    color: "#c62828",
+    fontWeight: "600",
   },
 
   // Feedback

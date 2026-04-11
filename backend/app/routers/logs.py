@@ -1,4 +1,4 @@
-from fastapi import APIRouter, Depends
+from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel
 from sqlalchemy.orm import Session
 from app.database import get_db
@@ -35,3 +35,13 @@ def add_log(entry: CreateFoodLog, db: Session = Depends(get_db)):
 def get_logs(db: Session = Depends(get_db)):
     logs = db.query(models.FoodLog).all()
     return {"logs": logs}
+
+
+@router.delete("/logs/{log_id}")
+def delete_log(log_id: int, db: Session = Depends(get_db)):
+    db_log = db.query(models.FoodLog).filter(models.FoodLog.id == log_id).first()
+    if not db_log:
+        raise HTTPException(status_code=404, detail="Log not found")
+    db.delete(db_log)
+    db.commit()
+    return {"message": "Log deleted successfully"}
