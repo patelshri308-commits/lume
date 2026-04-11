@@ -1,5 +1,13 @@
 import { useState } from "react";
-import { View, Text, TextInput, Button, StyleSheet, ScrollView } from "react-native";
+import {
+  View,
+  Text,
+  TextInput,
+  Button,
+  StyleSheet,
+  ScrollView,
+  SafeAreaView,
+} from "react-native";
 import axios from "axios";
 
 type NutritionResult = {
@@ -70,125 +78,232 @@ export default function App() {
   };
 
   return (
-    <ScrollView contentContainerStyle={styles.container}>
-      <Text style={styles.title}>Lume</Text>
+    <SafeAreaView style={styles.safe}>
+      <ScrollView contentContainerStyle={styles.container}>
 
-      <TextInput
-        placeholder="Enter food..."
-        value={query}
-        onChangeText={setQuery}
-        style={styles.input}
-      />
+        {/* Header */}
+        <Text style={styles.appTitle}>Lume</Text>
+        <Text style={styles.appSubtitle}>Track what you eat</Text>
 
-      <Button title="Search" onPress={searchFood} />
-
-      {result && (
-        <View style={styles.result}>
-          <Text>Name: {result.name}</Text>
-          <Text>Calories: {result.calories}</Text>
-          <Text>Protein: {result.protein}</Text>
-          <Text>Carbs: {result.carbs}</Text>
-          <Text>Fat: {result.fat}</Text>
-
-          <View style={styles.logButton}>
-            <Button title="Log Food" onPress={logFood} />
-          </View>
-
-          {logMessage ? (
-            <Text style={logMessage.includes("successfully") ? styles.success : styles.error}>
-              {logMessage}
-            </Text>
-          ) : null}
+        {/* Search */}
+        <View style={styles.section}>
+          <Text style={styles.sectionLabel}>FOOD SEARCH</Text>
+          <TextInput
+            placeholder="e.g. banana, grilled chicken..."
+            placeholderTextColor="#aaa"
+            value={query}
+            onChangeText={setQuery}
+            onSubmitEditing={searchFood}
+            returnKeyType="search"
+            autoCapitalize="none"
+            style={styles.input}
+          />
+          <Button title="Search" onPress={searchFood} />
         </View>
-      )}
 
-      <View style={styles.summarySection}>
-        <Button title="Load Daily Summary" onPress={loadSummary} />
-
-        {summary && (
-          <View style={styles.summaryCard}>
-            <Text style={styles.summaryTitle}>Today's Totals</Text>
-            <Text>Calories: {summary.total_calories} kcal</Text>
-            <Text>Protein:  {summary.total_protein}g</Text>
-            <Text>Carbs:    {summary.total_carbs}g</Text>
-            <Text>Fat:      {summary.total_fat}g</Text>
-            <Text>Entries:  {summary.entries_count}</Text>
+        {/* Search Result */}
+        {result && (
+          <View style={styles.card}>
+            <Text style={styles.cardTitle}>{result.name}</Text>
+            <View style={styles.macroRow}>
+              <MacroItem label="Calories" value={`${result.calories}`} unit="kcal" />
+              <MacroItem label="Protein"  value={`${result.protein}`}  unit="g" />
+              <MacroItem label="Carbs"    value={`${result.carbs}`}    unit="g" />
+              <MacroItem label="Fat"      value={`${result.fat}`}      unit="g" />
+            </View>
+            <View style={styles.cardAction}>
+              <Button title="Log Food" onPress={logFood} />
+            </View>
+            {logMessage ? (
+              <Text style={logMessage.includes("successfully") ? styles.success : styles.error}>
+                {logMessage}
+              </Text>
+            ) : null}
           </View>
         )}
-      </View>
 
-      <View style={styles.logsSection}>
-        <Button title="Load Logged Foods" onPress={loadLogs} />
+        {/* Daily Summary */}
+        <View style={styles.section}>
+          <Text style={styles.sectionLabel}>DAILY SUMMARY</Text>
+          <Button title="Load Daily Summary" onPress={loadSummary} />
+          {summary && (
+            <View style={[styles.card, styles.summaryCard]}>
+              <Text style={styles.cardTitle}>Today's Totals</Text>
+              <View style={styles.macroRow}>
+                <MacroItem label="Calories" value={`${summary.total_calories}`} unit="kcal" />
+                <MacroItem label="Protein"  value={`${summary.total_protein}`}  unit="g" />
+                <MacroItem label="Carbs"    value={`${summary.total_carbs}`}    unit="g" />
+                <MacroItem label="Fat"      value={`${summary.total_fat}`}      unit="g" />
+              </View>
+              <Text style={styles.entryCount}>
+                {summary.entries_count} {summary.entries_count === 1 ? "entry" : "entries"} logged
+              </Text>
+            </View>
+          )}
+        </View>
 
-        {logs.map((entry, index) => (
-          <View key={index} style={styles.logEntry}>
-            <Text style={styles.logName}>{entry.name}</Text>
-            <Text>Calories: {entry.calories}</Text>
-            <Text>Protein: {entry.protein}g</Text>
-            <Text>Carbs: {entry.carbs}g</Text>
-            <Text>Fat: {entry.fat}g</Text>
-          </View>
-        ))}
-      </View>
-    </ScrollView>
+        {/* Logged Foods */}
+        <View style={styles.section}>
+          <Text style={styles.sectionLabel}>LOGGED FOODS</Text>
+          <Button title="Load Logged Foods" onPress={loadLogs} />
+          {logs.map((entry, index) => (
+            <View key={index} style={styles.logEntry}>
+              <Text style={styles.logEntryName}>{entry.name}</Text>
+              <Text style={styles.logEntryMacros}>
+                {entry.calories} kcal · {entry.protein}g protein · {entry.carbs}g carbs · {entry.fat}g fat
+              </Text>
+            </View>
+          ))}
+        </View>
+
+      </ScrollView>
+    </SafeAreaView>
+  );
+}
+
+// Small reusable component for displaying a single macro value
+function MacroItem({ label, value, unit }: { label: string; value: string; unit: string }) {
+  return (
+    <View style={styles.macroItem}>
+      <Text style={styles.macroValue}>{value}</Text>
+      <Text style={styles.macroUnit}>{unit}</Text>
+      <Text style={styles.macroLabel}>{label}</Text>
+    </View>
   );
 }
 
 const styles = StyleSheet.create({
+  safe: {
+    flex: 1,
+    backgroundColor: "#fff",
+  },
   container: {
     padding: 20,
-    paddingTop: 60,
+    paddingBottom: 48,
   },
-  title: {
-    fontSize: 28,
-    marginBottom: 20,
+
+  // Header
+  appTitle: {
+    fontSize: 34,
+    fontWeight: "700",
     textAlign: "center",
+    marginTop: 12,
+    letterSpacing: 1,
   },
-  input: {
-    borderWidth: 1,
-    padding: 10,
+  appSubtitle: {
+    fontSize: 14,
+    color: "#999",
+    textAlign: "center",
+    marginBottom: 28,
+  },
+
+  // Sections
+  section: {
+    marginTop: 28,
+  },
+  sectionLabel: {
+    fontSize: 11,
+    fontWeight: "600",
+    color: "#aaa",
+    letterSpacing: 1.2,
     marginBottom: 10,
   },
-  result: {
-    marginTop: 20,
+
+  // Input
+  input: {
+    borderWidth: 1,
+    borderColor: "#ddd",
+    borderRadius: 8,
+    padding: 12,
+    fontSize: 15,
+    marginBottom: 10,
+    color: "#111",
   },
-  logButton: {
-    marginTop: 12,
-  },
-  success: {
-    color: "green",
-    marginTop: 8,
-  },
-  error: {
-    color: "red",
-    marginTop: 8,
-  },
-  summarySection: {
-    marginTop: 32,
+
+  // Cards
+  card: {
+    marginTop: 14,
+    padding: 16,
+    borderRadius: 10,
+    backgroundColor: "#f9f9f9",
+    borderWidth: 1,
+    borderColor: "#eee",
   },
   summaryCard: {
-    marginTop: 12,
-    padding: 12,
-    borderRadius: 8,
-    backgroundColor: "#eef6ff",
-    gap: 4,
+    backgroundColor: "#f0f6ff",
+    borderColor: "#d0e4ff",
   },
-  summaryTitle: {
+  cardTitle: {
+    fontSize: 16,
     fontWeight: "600",
-    marginBottom: 4,
+    marginBottom: 12,
+    textTransform: "capitalize",
   },
-  logsSection: {
-    marginTop: 32,
+  cardAction: {
+    marginTop: 14,
   },
+
+  // Macro grid
+  macroRow: {
+    flexDirection: "row",
+    justifyContent: "space-between",
+  },
+  macroItem: {
+    alignItems: "center",
+    flex: 1,
+  },
+  macroValue: {
+    fontSize: 18,
+    fontWeight: "700",
+    color: "#111",
+  },
+  macroUnit: {
+    fontSize: 10,
+    color: "#888",
+  },
+  macroLabel: {
+    fontSize: 11,
+    color: "#aaa",
+    marginTop: 2,
+  },
+
+  // Summary
+  entryCount: {
+    marginTop: 12,
+    fontSize: 12,
+    color: "#888",
+    textAlign: "center",
+  },
+
+  // Log list
   logEntry: {
-    marginTop: 12,
+    marginTop: 10,
     padding: 12,
     borderRadius: 8,
-    backgroundColor: "#f5f5f5",
-    gap: 2,
+    backgroundColor: "#f9f9f9",
+    borderWidth: 1,
+    borderColor: "#eee",
   },
-  logName: {
+  logEntryName: {
+    fontSize: 14,
     fontWeight: "600",
-    marginBottom: 4,
+    marginBottom: 3,
+    textTransform: "capitalize",
+  },
+  logEntryMacros: {
+    fontSize: 12,
+    color: "#777",
+  },
+
+  // Feedback
+  success: {
+    color: "#2e7d32",
+    marginTop: 10,
+    fontSize: 13,
+  },
+  error: {
+    color: "#c62828",
+    marginTop: 10,
+    fontSize: 13,
   },
 });
