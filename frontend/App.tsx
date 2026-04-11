@@ -145,7 +145,6 @@ export default function App() {
         {/* Daily Summary */}
         <View style={styles.section}>
           <Text style={styles.sectionLabel}>DAILY SUMMARY</Text>
-          <Button title="Load Daily Summary" onPress={loadSummary} />
           {summary && (
             <View style={[styles.card, styles.summaryCard]}>
               <Text style={styles.cardTitle}>Today's Totals</Text>
@@ -165,7 +164,6 @@ export default function App() {
         {/* Logged Foods */}
         <View style={styles.section}>
           <Text style={styles.sectionLabel}>LOGGED FOODS</Text>
-          <Button title="Load Logged Foods" onPress={loadLogs} />
           {logs.map((entry) => (
             <View key={entry.id} style={styles.logEntry}>
               <View style={styles.logEntryRow}>
