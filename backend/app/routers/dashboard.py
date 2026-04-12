@@ -48,3 +48,42 @@ def get_daily_summary(
         "total_fat":       result.total_fat,
         "entries_count":   result.entries_count,
     }
+
+
+@router.get("/dashboard/weekly")
+def get_weekly_summary(
+    db: Session = Depends(get_db),
+    user_id: str = Depends(get_current_user),
+):
+    today = datetime.date.today()
+    # Build the 7-day window: 6 days ago through today (oldest → newest)
+    days = [today - datetime.timedelta(days=i) for i in range(6, -1, -1)]
+
+    start_date = days[0]   # 6 days ago
+    end_date   = days[-1]  # today
+
+    # Fetch all matching rows in one query, grouped by date
+    rows = (
+        db.query(
+            models.FoodLog.log_date,
+            func.coalesce(func.sum(models.FoodLog.calories), 0).label("total_calories"),
+        )
+        .filter(
+            models.FoodLog.user_id == user_id,
+            models.FoodLog.log_date >= start_date,
+            models.FoodLog.log_date <= end_date,
+        )
+        .group_by(models.FoodLog.log_date)
+        .all()
+    )
+
+    # Index results by date so we can fill in zero-calorie days easily
+    calories_by_date = {row.log_date: row.total_calories for row in rows}
+
+    return [
+        {
+            "date":           day.isoformat(),
+            "total_calories": calories_by_date.get(day, 0),
+        }
+        for day in days
+    ]

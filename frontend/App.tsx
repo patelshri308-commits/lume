@@ -13,6 +13,7 @@ import {
 import axios from "axios";
 import { Session } from "@supabase/supabase-js";
 import { supabase } from "./lib/supabase";
+import { API_URL } from "./lib/config";
 
 type NutritionResult = {
   name:     string;
@@ -30,6 +31,11 @@ type DailySummary = {
   total_carbs:    number;
   total_fat:      number;
   entries_count:  number;
+};
+
+type WeeklyDay = {
+  date:           string;
+  total_calories: number;
 };
 
 // Returns today's date as YYYY-MM-DD using local time (not UTC)
@@ -60,6 +66,8 @@ export default function App() {
   const [summaryLoading,setSummaryLoading]= useState(false);
   const [loggingFood,   setLoggingFood]   = useState(false);
   const [deletingLogId, setDeletingLogId] = useState<number | null>(null);
+  const [weeklyData,    setWeeklyData]    = useState<WeeklyDay[]>([]);
+  const [weeklyLoading, setWeeklyLoading] = useState(false);
   const [servings,      setServings]      = useState(1);
   const [selectedDate,  setSelectedDate]  = useState(localToday());
   const [dateError,     setDateError]     = useState("");
@@ -129,7 +137,7 @@ export default function App() {
     setServings(parsedServings);
     setSearching(true);
     try {
-      const res = await axios.post("http://127.0.0.1:8000/food/search", { query: foodQuery });
+      const res = await axios.post(`${API_URL}/food/search`, { query: foodQuery });
       setResult(res.data);
     } catch (err) {
       console.log("Error searching food");
@@ -144,7 +152,7 @@ export default function App() {
     setLoggingFood(true);
     try {
       await axios.post(
-        "http://127.0.0.1:8000/logs",
+        `${API_URL}/logs`,
         {
           name:     result.name,
           calories: result.calories * servings,
@@ -169,7 +177,7 @@ export default function App() {
   const loadSummary = async (date = selectedDate) => {
     setSummaryLoading(true);
     try {
-      const res = await axios.get(`http://127.0.0.1:8000/dashboard/daily?date=${date}`, {
+      const res = await axios.get(`${API_URL}/dashboard/daily?date=${date}`, {
         headers: getAuthHeaders(),
       });
       setSummary(res.data);
@@ -184,7 +192,7 @@ export default function App() {
   const deleteLog = async (id: number) => {
     setDeletingLogId(id);
     try {
-      await axios.delete(`http://127.0.0.1:8000/logs/${id}`, {
+      await axios.delete(`${API_URL}/logs/${id}`, {
         headers: getAuthHeaders(),
       });
       await loadSummary();
@@ -200,7 +208,7 @@ export default function App() {
   const loadLogs = async (date = selectedDate) => {
     setLogsLoading(true);
     try {
-      const res = await axios.get(`http://127.0.0.1:8000/logs?date=${date}`, {
+      const res = await axios.get(`${API_URL}/logs?date=${date}`, {
         headers: getAuthHeaders(),
       });
       setLogs(res.data.logs);
@@ -209,6 +217,20 @@ export default function App() {
       setLogMessage("Failed to load logs.");
     } finally {
       setLogsLoading(false);
+    }
+  };
+
+  const loadWeekly = async () => {
+    setWeeklyLoading(true);
+    try {
+      const res = await axios.get(`${API_URL}/dashboard/weekly`, {
+        headers: getAuthHeaders(),
+      });
+      setWeeklyData(res.data);
+    } catch (err) {
+      console.log("Error loading weekly data");
+    } finally {
+      setWeeklyLoading(false);
     }
   };
 
@@ -232,6 +254,7 @@ export default function App() {
       // Wipe every piece of user-specific state so the next user starts clean
       setLogs([]);
       setSummary(null);
+      setWeeklyData([]);
       setResult(null);
       setLogMessage("");
       setQuery("");
@@ -242,6 +265,7 @@ export default function App() {
         loadLogs(selectedDate);
         loadSummary(selectedDate);
       }
+      loadWeekly();
     }
   }, [session]); // eslint-disable-line react-hooks/exhaustive-deps
 
@@ -461,6 +485,30 @@ export default function App() {
               </View>
             </View>
           ))}
+        </View>
+
+        {/* Weekly Analytics */}
+        <View style={styles.section}>
+          <Text style={styles.sectionLabel}>LAST 7 DAYS</Text>
+          {weeklyLoading && <Text style={styles.searchingText}>Loading...</Text>}
+          {!weeklyLoading && weeklyData.length > 0 && (() => {
+            const max = Math.max(...weeklyData.map(d => d.total_calories), 1);
+            return weeklyData.map((day) => {
+              const label = new Date(day.date + "T00:00:00").toLocaleDateString([], { weekday: "short", month: "numeric", day: "numeric" });
+              const barWidth = `${Math.round((day.total_calories / max) * 100)}%` as `${number}%`;
+              return (
+                <View key={day.date} style={styles.weekRow}>
+                  <Text style={styles.weekLabel}>{label}</Text>
+                  <View style={styles.weekBarTrack}>
+                    <View style={[styles.weekBarFill, { width: barWidth }]} />
+                  </View>
+                  <Text style={styles.weekCalories}>
+                    {day.total_calories === 0 ? "—" : `${Math.round(day.total_calories)}`}
+                  </Text>
+                </View>
+              );
+            });
+          })()}
         </View>
 
       </ScrollView>
@@ -727,6 +775,37 @@ const styles = StyleSheet.create({
     fontSize: 13,
     color: "#bbb",
     fontStyle: "italic",
+  },
+
+  // Weekly analytics
+  weekRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    marginBottom: 8,
+    gap: 8,
+  },
+  weekLabel: {
+    fontSize: 12,
+    color: "#555",
+    width: 72,
+  },
+  weekBarTrack: {
+    flex: 1,
+    height: 8,
+    backgroundColor: "#eee",
+    borderRadius: 4,
+    overflow: "hidden",
+  },
+  weekBarFill: {
+    height: 8,
+    backgroundColor: "#4a90d9",
+    borderRadius: 4,
+  },
+  weekCalories: {
+    fontSize: 12,
+    color: "#555",
+    width: 40,
+    textAlign: "right",
   },
 
   // Feedback

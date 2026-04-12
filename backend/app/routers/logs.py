@@ -77,6 +77,7 @@ def get_logs(
             models.FoodLog.user_id == user_id,
             models.FoodLog.log_date == filter_date,
         )
+        .order_by(models.FoodLog.id.desc())
         .all()
     )
     return {"logs": logs}
