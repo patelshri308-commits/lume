@@ -1,5 +1,6 @@
 import { useState, useEffect } from "react";
 import {
+  Alert,
   View,
   Text,
   TextInput,
@@ -21,7 +22,7 @@ type NutritionResult = {
   fat:      number;
 };
 
-type FoodLogEntry = NutritionResult & { id: number };
+type FoodLogEntry = NutritionResult & { id: number; created_at: string };
 
 type DailySummary = {
   total_calories: number;
@@ -78,8 +79,6 @@ export default function App() {
     return () => subscription.unsubscribe();
   }, []);
   const getAuthHeaders = () => {
-  console.log("TOKEN:", session?.access_token);  
-
   if (!session?.access_token) {
     throw new Error("No active session");
   }
@@ -133,7 +132,8 @@ export default function App() {
       const res = await axios.post("http://127.0.0.1:8000/food/search", { query: foodQuery });
       setResult(res.data);
     } catch (err) {
-      console.log(err);
+      console.log("Error searching food");
+      setLogMessage("Failed to search. Is the backend running?");
     } finally {
       setSearching(false);
     }
@@ -159,6 +159,7 @@ export default function App() {
       await loadSummary();
       await loadLogs();
     } catch (err) {
+      console.log("Error logging food");
       setLogMessage("Failed to log food. Is the backend running?");
     } finally {
       setLoggingFood(false);
@@ -173,7 +174,8 @@ export default function App() {
       });
       setSummary(res.data);
     } catch (err) {
-      console.log(err);
+      console.log("Error loading summary");
+      setLogMessage("Failed to load summary.");
     } finally {
       setSummaryLoading(false);
     }
@@ -188,7 +190,8 @@ export default function App() {
       await loadSummary();
       await loadLogs();
     } catch (err) {
-      console.log(err);
+      console.log("Error deleting log");
+      setLogMessage("Failed to delete log.");
     } finally {
       setDeletingLogId(null);
     }
@@ -202,7 +205,8 @@ export default function App() {
       });
       setLogs(res.data.logs);
     } catch (err) {
-      console.log(err);
+      console.log("Error loading logs");
+      setLogMessage("Failed to load logs.");
     } finally {
       setLogsLoading(false);
     }
@@ -433,9 +437,21 @@ export default function App() {
                   <Text style={styles.logEntryMacros}>
                     {entry.calories} kcal · {entry.protein}g protein · {entry.carbs}g carbs · {entry.fat}g fat
                   </Text>
+                  <Text style={styles.logEntryTime}>
+                    {new Date(entry.created_at + "Z").toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}
+                  </Text>
                 </View>
                 <TouchableOpacity
-                  onPress={() => deleteLog(entry.id)}
+                  onPress={() => {
+                    Alert.alert(
+                      "Delete entry",
+                      `Remove "${entry.name}" from your log?`,
+                      [
+                        { text: "Cancel", style: "cancel" },
+                        { text: "Delete", style: "destructive", onPress: () => deleteLog(entry.id) },
+                      ],
+                    );
+                  }}
                   disabled={deletingLogId === entry.id}
                 >
                   <Text style={deletingLogId === entry.id ? styles.deleteButtonDisabled : styles.deleteButton}>
@@ -651,6 +667,11 @@ const styles = StyleSheet.create({
   logEntryMacros: {
     fontSize: 12,
     color: "#777",
+  },
+  logEntryTime: {
+    fontSize: 11,
+    color: "#bbb",
+    marginTop: 2,
   },
   deleteButton: {
     fontSize: 12,
