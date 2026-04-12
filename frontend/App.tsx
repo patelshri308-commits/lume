@@ -54,7 +54,11 @@ export default function App() {
   const [logMessage, setLogMessage] = useState("");
   const [logs,       setLogs]       = useState<FoodLogEntry[]>([]);
   const [summary,    setSummary]    = useState<DailySummary | null>(null);
-  const [searching,  setSearching]  = useState(false);
+  const [searching,     setSearching]     = useState(false);
+  const [logsLoading,   setLogsLoading]   = useState(false);
+  const [summaryLoading,setSummaryLoading]= useState(false);
+  const [loggingFood,   setLoggingFood]   = useState(false);
+  const [deletingLogId, setDeletingLogId] = useState<number | null>(null);
   const [servings,      setServings]      = useState(1);
   const [selectedDate,  setSelectedDate]  = useState(localToday());
   const [dateError,     setDateError]     = useState("");
@@ -137,6 +141,7 @@ export default function App() {
 
   const logFood = async () => {
     if (!result) return;
+    setLoggingFood(true);
     try {
       await axios.post(
         "http://127.0.0.1:8000/logs",
@@ -155,10 +160,13 @@ export default function App() {
       await loadLogs();
     } catch (err) {
       setLogMessage("Failed to log food. Is the backend running?");
+    } finally {
+      setLoggingFood(false);
     }
   };
 
   const loadSummary = async (date = selectedDate) => {
+    setSummaryLoading(true);
     try {
       const res = await axios.get(`http://127.0.0.1:8000/dashboard/daily?date=${date}`, {
         headers: getAuthHeaders(),
@@ -166,10 +174,13 @@ export default function App() {
       setSummary(res.data);
     } catch (err) {
       console.log(err);
+    } finally {
+      setSummaryLoading(false);
     }
   };
 
   const deleteLog = async (id: number) => {
+    setDeletingLogId(id);
     try {
       await axios.delete(`http://127.0.0.1:8000/logs/${id}`, {
         headers: getAuthHeaders(),
@@ -178,10 +189,13 @@ export default function App() {
       await loadLogs();
     } catch (err) {
       console.log(err);
+    } finally {
+      setDeletingLogId(null);
     }
   };
 
   const loadLogs = async (date = selectedDate) => {
+    setLogsLoading(true);
     try {
       const res = await axios.get(`http://127.0.0.1:8000/logs?date=${date}`, {
         headers: getAuthHeaders(),
@@ -189,6 +203,8 @@ export default function App() {
       setLogs(res.data.logs);
     } catch (err) {
       console.log(err);
+    } finally {
+      setLogsLoading(false);
     }
   };
 
@@ -372,7 +388,7 @@ export default function App() {
             </View>
 
             <View style={styles.cardAction}>
-              <Button title="Log Food" onPress={logFood} />
+              <Button title={loggingFood ? "Logging..." : "Log Food"} onPress={logFood} disabled={loggingFood} />
             </View>
             {logMessage ? (
               <Text style={logMessage.includes("successfully") ? styles.success : styles.error}>
@@ -385,7 +401,8 @@ export default function App() {
         {/* Daily Summary */}
         <View style={styles.section}>
           <Text style={styles.sectionLabel}>DAILY SUMMARY</Text>
-          {summary && (
+          {summaryLoading && <Text style={styles.searchingText}>Loading summary...</Text>}
+          {!summaryLoading && summary && (
             <View style={[styles.card, styles.summaryCard]}>
               <Text style={styles.cardTitle}>Today's Totals</Text>
               <View style={styles.macroRow}>
@@ -404,10 +421,11 @@ export default function App() {
         {/* Logged Foods */}
         <View style={styles.section}>
           <Text style={styles.sectionLabel}>LOGGED FOODS</Text>
-          {logs.length === 0 && (
+          {logsLoading && <Text style={styles.searchingText}>Loading logs...</Text>}
+          {!logsLoading && logs.length === 0 && (
             <Text style={styles.emptyState}>No foods logged yet</Text>
           )}
-          {logs.map((entry) => (
+          {!logsLoading && logs.map((entry) => (
             <View key={entry.id} style={styles.logEntry}>
               <View style={styles.logEntryRow}>
                 <View style={styles.logEntryText}>
@@ -416,8 +434,13 @@ export default function App() {
                     {entry.calories} kcal · {entry.protein}g protein · {entry.carbs}g carbs · {entry.fat}g fat
                   </Text>
                 </View>
-                <TouchableOpacity onPress={() => deleteLog(entry.id)}>
-                  <Text style={styles.deleteButton}>Delete</Text>
+                <TouchableOpacity
+                  onPress={() => deleteLog(entry.id)}
+                  disabled={deletingLogId === entry.id}
+                >
+                  <Text style={deletingLogId === entry.id ? styles.deleteButtonDisabled : styles.deleteButton}>
+                    {deletingLogId === entry.id ? "..." : "Delete"}
+                  </Text>
                 </TouchableOpacity>
               </View>
             </View>
@@ -632,6 +655,11 @@ const styles = StyleSheet.create({
   deleteButton: {
     fontSize: 12,
     color: "#c62828",
+    fontWeight: "600",
+  },
+  deleteButtonDisabled: {
+    fontSize: 12,
+    color: "#ccc",
     fontWeight: "600",
   },
 
