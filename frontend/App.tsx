@@ -73,7 +73,17 @@ export default function App() {
     });
     return () => subscription.unsubscribe();
   }, []);
+  const getAuthHeaders = () => {
+  console.log("TOKEN:", session?.access_token);  
 
+  if (!session?.access_token) {
+    throw new Error("No active session");
+  }
+
+  return {
+    Authorization: `Bearer ${session.access_token}`,
+  };
+};
   const signUp = async () => {
     setAuthMessage("");
     const { error } = await supabase.auth.signUp({ email: authEmail, password: authPassword });
@@ -128,14 +138,18 @@ export default function App() {
   const logFood = async () => {
     if (!result) return;
     try {
-      await axios.post("http://127.0.0.1:8000/logs", {
-        name:     result.name,
-        calories: result.calories * servings,
-        protein:  result.protein  * servings,
-        carbs:    result.carbs    * servings,
-        fat:      result.fat      * servings,
-        log_date: selectedDate,
-      });
+      await axios.post(
+        "http://127.0.0.1:8000/logs",
+        {
+          name:     result.name,
+          calories: result.calories * servings,
+          protein:  result.protein  * servings,
+          carbs:    result.carbs    * servings,
+          fat:      result.fat      * servings,
+          log_date: selectedDate,
+        },
+        { headers: getAuthHeaders() },
+      );
       setLogMessage("Food logged successfully!");
       await loadSummary();
       await loadLogs();
@@ -146,7 +160,9 @@ export default function App() {
 
   const loadSummary = async (date = selectedDate) => {
     try {
-      const res = await axios.get(`http://127.0.0.1:8000/dashboard/daily?date=${date}`);
+      const res = await axios.get(`http://127.0.0.1:8000/dashboard/daily?date=${date}`, {
+        headers: getAuthHeaders(),
+      });
       setSummary(res.data);
     } catch (err) {
       console.log(err);
@@ -155,7 +171,9 @@ export default function App() {
 
   const deleteLog = async (id: number) => {
     try {
-      await axios.delete(`http://127.0.0.1:8000/logs/${id}`);
+      await axios.delete(`http://127.0.0.1:8000/logs/${id}`, {
+        headers: getAuthHeaders(),
+      });
       await loadSummary();
       await loadLogs();
     } catch (err) {
@@ -165,7 +183,9 @@ export default function App() {
 
   const loadLogs = async (date = selectedDate) => {
     try {
-      const res = await axios.get(`http://127.0.0.1:8000/logs?date=${date}`);
+      const res = await axios.get(`http://127.0.0.1:8000/logs?date=${date}`, {
+        headers: getAuthHeaders(),
+      });
       setLogs(res.data.logs);
     } catch (err) {
       console.log(err);
@@ -185,6 +205,25 @@ export default function App() {
     loadLogs(selectedDate);
     loadSummary(selectedDate);
   }, [selectedDate]);
+
+  // Clear stale state on logout; reload fresh data on login / user switch
+  useEffect(() => {
+    if (!session) {
+      // Wipe every piece of user-specific state so the next user starts clean
+      setLogs([]);
+      setSummary(null);
+      setResult(null);
+      setLogMessage("");
+      setQuery("");
+      setServings(1);
+    } else {
+      // A valid session just arrived (login or token refresh) — load their data
+      if (isValidDate(selectedDate)) {
+        loadLogs(selectedDate);
+        loadSummary(selectedDate);
+      }
+    }
+  }, [session]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // Derived: adjusted nutrition values for the current serving count.
   // The original `result` object is never mutated.

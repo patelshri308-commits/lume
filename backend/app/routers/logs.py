@@ -7,6 +7,7 @@ from sqlalchemy.orm import Session
 
 from app.database import get_db
 from app import models
+from app.auth import get_current_user
 
 router = APIRouter()
 
@@ -22,7 +23,11 @@ class CreateFoodLog(BaseModel):
 
 
 @router.post("/logs")
-def add_log(entry: CreateFoodLog, db: Session = Depends(get_db)):
+def add_log(
+    entry: CreateFoodLog,
+    db: Session = Depends(get_db),
+    user_id: str = Depends(get_current_user),
+):
     if entry.log_date is not None:
         try:
             log_date = datetime.date.fromisoformat(entry.log_date)
@@ -35,6 +40,7 @@ def add_log(entry: CreateFoodLog, db: Session = Depends(get_db)):
         log_date = datetime.date.today()
 
     db_log = models.FoodLog(
+        user_id=user_id,
         name=entry.name,
         calories=entry.calories,
         protein=entry.protein,
@@ -52,6 +58,7 @@ def add_log(entry: CreateFoodLog, db: Session = Depends(get_db)):
 def get_logs(
     date: Optional[str] = Query(default=None, description="Filter by date (YYYY-MM-DD). Defaults to today."),
     db: Session = Depends(get_db),
+    user_id: str = Depends(get_current_user),
 ):
     if date is not None:
         try:
@@ -64,14 +71,34 @@ def get_logs(
     else:
         filter_date = datetime.date.today()
 
-    logs = db.query(models.FoodLog).filter(models.FoodLog.log_date == filter_date).all()
+    logs = (
+        db.query(models.FoodLog)
+        .filter(
+            models.FoodLog.user_id == user_id,
+            models.FoodLog.log_date == filter_date,
+        )
+        .all()
+    )
     return {"logs": logs}
 
 
 @router.delete("/logs/{log_id}")
-def delete_log(log_id: int, db: Session = Depends(get_db)):
-    db_log = db.query(models.FoodLog).filter(models.FoodLog.id == log_id).first()
+def delete_log(
+    log_id: int,
+    db: Session = Depends(get_db),
+    user_id: str = Depends(get_current_user),
+):
+    db_log = (
+        db.query(models.FoodLog)
+        .filter(
+            models.FoodLog.id == log_id,
+            models.FoodLog.user_id == user_id,
+        )
+        .first()
+    )
     if not db_log:
+        # Return 404 whether the log doesn't exist or belongs to another user
+        # so we don't leak the existence of other users' data.
         raise HTTPException(status_code=404, detail="Log not found")
     db.delete(db_log)
     db.commit()

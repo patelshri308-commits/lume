@@ -7,6 +7,7 @@ from sqlalchemy import func
 
 from app.database import get_db
 from app import models
+from app.auth import get_current_user
 
 router = APIRouter()
 
@@ -15,6 +16,7 @@ router = APIRouter()
 def get_daily_summary(
     date: Optional[str] = Query(default=None, description="Date to summarise (YYYY-MM-DD). Defaults to today."),
     db: Session = Depends(get_db),
+    user_id: str = Depends(get_current_user),
 ):
     if date is not None:
         try:
@@ -33,7 +35,10 @@ def get_daily_summary(
         func.coalesce(func.sum(models.FoodLog.carbs),    0).label("total_carbs"),
         func.coalesce(func.sum(models.FoodLog.fat),      0).label("total_fat"),
         func.count(models.FoodLog.id).label("entries_count"),
-    ).filter(models.FoodLog.log_date == filter_date).one()
+    ).filter(
+        models.FoodLog.user_id == user_id,
+        models.FoodLog.log_date == filter_date,
+    ).one()
 
     return {
         "date":            filter_date.isoformat(),

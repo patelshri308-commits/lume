@@ -8,6 +8,7 @@ class FoodLog(Base):
     __tablename__ = "food_logs"
 
     id       = Column(Integer, primary_key=True, index=True)
+    user_id  = Column(String,  nullable=False, index=True)  # Supabase auth UUID
     name     = Column(String,  nullable=False)
     calories = Column(Float,   nullable=False)
     protein  = Column(Float,   nullable=False)
