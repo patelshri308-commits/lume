@@ -74,6 +74,9 @@ export default function App() {
   const [summaryLoading,setSummaryLoading]= useState(false);
   const [loggingFood,   setLoggingFood]   = useState(false);
   const [deletingLogId, setDeletingLogId] = useState<number | null>(null);
+  const [editingLogId,  setEditingLogId]  = useState<number | null>(null);
+  const [editFields,    setEditFields]    = useState({ name: "", calories: "", protein: "", carbs: "", fat: "" });
+  const [savingEdit,    setSavingEdit]    = useState(false);
   const [weeklyData,    setWeeklyData]    = useState<WeeklyDay[]>([]);
   const [weeklyLoading, setWeeklyLoading] = useState(false);
   const [servings,      setServings]      = useState(1);
@@ -213,6 +216,32 @@ export default function App() {
       setLogMessage("Failed to delete log.");
     } finally {
       setDeletingLogId(null);
+    }
+  };
+
+  const saveEdit = async (id: number) => {
+    setSavingEdit(true);
+    try {
+      await axios.patch(
+        `${API_URL}/logs/${id}`,
+        {
+          name:     editFields.name     || undefined,
+          calories: editFields.calories ? parseFloat(editFields.calories) : undefined,
+          protein:  editFields.protein  ? parseFloat(editFields.protein)  : undefined,
+          carbs:    editFields.carbs    ? parseFloat(editFields.carbs)    : undefined,
+          fat:      editFields.fat      ? parseFloat(editFields.fat)      : undefined,
+        },
+        { headers: getAuthHeaders() },
+      );
+      setEditingLogId(null);
+      await loadSummary();
+      await loadLogs();
+      await loadWeekly();
+    } catch (err) {
+      console.log("Error saving edit");
+      setLogMessage("Failed to save edit.");
+    } finally {
+      setSavingEdit(false);
     }
   };
 
@@ -479,34 +508,127 @@ export default function App() {
           )}
           {!logsLoading && logs.map((entry) => (
             <View key={entry.id} style={styles.logEntry}>
-              <View style={styles.logEntryRow}>
-                <View style={styles.logEntryText}>
-                  <Text style={styles.logEntryName}>{entry.name}</Text>
-                  <Text style={styles.logEntryMacros}>
-                    {entry.calories} kcal · {entry.protein}g protein · {entry.carbs}g carbs · {entry.fat}g fat
-                  </Text>
-                  <Text style={styles.logEntryTime}>
-                    {new Date(entry.created_at + "Z").toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}
-                  </Text>
+              {editingLogId === entry.id ? (
+                /* ── Inline edit form ── */
+                <View>
+                  <TextInput
+                    style={styles.editInput}
+                    value={editFields.name}
+                    onChangeText={(v) => setEditFields(f => ({ ...f, name: v }))}
+                    placeholder="Name"
+                    placeholderTextColor="#aaa"
+                    autoCapitalize="none"
+                  />
+                  <View style={styles.editMacroRow}>
+                    <View style={styles.editMacroField}>
+                      <Text style={styles.editMacroLabel}>Calories</Text>
+                      <TextInput
+                        style={[styles.editInput, styles.editMacroInput]}
+                        value={editFields.calories}
+                        onChangeText={(v) => setEditFields(f => ({ ...f, calories: v }))}
+                        placeholder="kcal"
+                        placeholderTextColor="#aaa"
+                        keyboardType="numeric"
+                      />
+                    </View>
+                    <View style={styles.editMacroField}>
+                      <Text style={styles.editMacroLabel}>Protein</Text>
+                      <TextInput
+                        style={[styles.editInput, styles.editMacroInput]}
+                        value={editFields.protein}
+                        onChangeText={(v) => setEditFields(f => ({ ...f, protein: v }))}
+                        placeholder="g"
+                        placeholderTextColor="#aaa"
+                        keyboardType="numeric"
+                      />
+                    </View>
+                    <View style={styles.editMacroField}>
+                      <Text style={styles.editMacroLabel}>Carbs</Text>
+                      <TextInput
+                        style={[styles.editInput, styles.editMacroInput]}
+                        value={editFields.carbs}
+                        onChangeText={(v) => setEditFields(f => ({ ...f, carbs: v }))}
+                        placeholder="g"
+                        placeholderTextColor="#aaa"
+                        keyboardType="numeric"
+                      />
+                    </View>
+                    <View style={styles.editMacroField}>
+                      <Text style={styles.editMacroLabel}>Fat</Text>
+                      <TextInput
+                        style={[styles.editInput, styles.editMacroInput]}
+                        value={editFields.fat}
+                        onChangeText={(v) => setEditFields(f => ({ ...f, fat: v }))}
+                        placeholder="g"
+                        placeholderTextColor="#aaa"
+                        keyboardType="numeric"
+                      />
+                    </View>
+                  </View>
+                  <View style={styles.editActions}>
+                    <TouchableOpacity
+                      style={styles.editSaveButton}
+                      onPress={() => saveEdit(entry.id)}
+                      disabled={savingEdit}
+                    >
+                      <Text style={styles.editSaveText}>{savingEdit ? "Saving..." : "Save"}</Text>
+                    </TouchableOpacity>
+                    <TouchableOpacity
+                      style={styles.editCancelButton}
+                      onPress={() => setEditingLogId(null)}
+                      disabled={savingEdit}
+                    >
+                      <Text style={styles.editCancelText}>Cancel</Text>
+                    </TouchableOpacity>
+                  </View>
                 </View>
-                <TouchableOpacity
-                  onPress={() => {
-                    Alert.alert(
-                      "Delete entry",
-                      `Remove "${entry.name}" from your log?`,
-                      [
-                        { text: "Cancel", style: "cancel" },
-                        { text: "Delete", style: "destructive", onPress: () => deleteLog(entry.id) },
-                      ],
-                    );
-                  }}
-                  disabled={deletingLogId === entry.id}
-                >
-                  <Text style={deletingLogId === entry.id ? styles.deleteButtonDisabled : styles.deleteButton}>
-                    {deletingLogId === entry.id ? "..." : "Delete"}
-                  </Text>
-                </TouchableOpacity>
-              </View>
+              ) : (
+                /* ── Normal view ── */
+                <View style={styles.logEntryRow}>
+                  <View style={styles.logEntryText}>
+                    <Text style={styles.logEntryName}>{entry.name}</Text>
+                    <Text style={styles.logEntryMacros}>
+                      {entry.calories} kcal · {entry.protein}g protein · {entry.carbs}g carbs · {entry.fat}g fat
+                    </Text>
+                    <Text style={styles.logEntryTime}>
+                      {new Date(entry.created_at + "Z").toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}
+                    </Text>
+                  </View>
+                  <View style={styles.logEntryActions}>
+                    <TouchableOpacity
+                      onPress={() => {
+                        setEditingLogId(entry.id);
+                        setEditFields({
+                          name:     entry.name,
+                          calories: String(entry.calories),
+                          protein:  String(entry.protein),
+                          carbs:    String(entry.carbs),
+                          fat:      String(entry.fat),
+                        });
+                      }}
+                    >
+                      <Text style={styles.editButton}>Edit</Text>
+                    </TouchableOpacity>
+                    <TouchableOpacity
+                      onPress={() => {
+                        Alert.alert(
+                          "Delete entry",
+                          `Remove "${entry.name}" from your log?`,
+                          [
+                            { text: "Cancel", style: "cancel" },
+                            { text: "Delete", style: "destructive", onPress: () => deleteLog(entry.id) },
+                          ],
+                        );
+                      }}
+                      disabled={deletingLogId === entry.id}
+                    >
+                      <Text style={deletingLogId === entry.id ? styles.deleteButtonDisabled : styles.deleteButton}>
+                        {deletingLogId === entry.id ? "..." : "Delete"}
+                      </Text>
+                    </TouchableOpacity>
+                  </View>
+                </View>
+              )}
             </View>
           ))}
         </View>
@@ -764,6 +886,78 @@ const styles = StyleSheet.create({
     color: "#bbb",
     marginTop: 2,
   },
+  // Log entry action buttons (Edit + Delete stacked)
+  logEntryActions: {
+    alignItems: "flex-end",
+    gap: 6,
+  },
+  editButton: {
+    fontSize: 12,
+    color: "#4a90d9",
+    fontWeight: "600",
+  },
+
+  // Inline edit form
+  editInput: {
+    borderWidth: 1,
+    borderColor: "#ddd",
+    borderRadius: 6,
+    padding: 8,
+    fontSize: 13,
+    fontFamily: "Inter-Variable",
+    color: "#111",
+    marginBottom: 6,
+  },
+  editMacroRow: {
+    flexDirection: "row",
+    gap: 6,
+    marginBottom: 6,
+  },
+  editMacroField: {
+    flex: 1,
+  },
+  editMacroLabel: {
+    fontSize: 10,
+    fontFamily: "Inter-Variable",
+    color: "#999",
+    marginBottom: 3,
+  },
+  editMacroInput: {
+    flex: 1,
+    marginBottom: 0,
+  },
+  editActions: {
+    flexDirection: "row",
+    gap: 8,
+    marginTop: 2,
+  },
+  editSaveButton: {
+    flex: 1,
+    backgroundColor: "#4a90d9",
+    borderRadius: 6,
+    paddingVertical: 8,
+    alignItems: "center",
+  },
+  editSaveText: {
+    fontSize: 13,
+    fontFamily: "Inter-Variable",
+    color: "#fff",
+    fontWeight: "600",
+  },
+  editCancelButton: {
+    flex: 1,
+    borderWidth: 1,
+    borderColor: "#ddd",
+    borderRadius: 6,
+    paddingVertical: 8,
+    alignItems: "center",
+  },
+  editCancelText: {
+    fontSize: 13,
+    fontFamily: "Inter-Variable",
+    color: "#555",
+  },
+
   deleteButton: {
     fontSize: 12,
     color: "#c62828",

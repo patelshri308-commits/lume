@@ -22,6 +22,17 @@ class CreateFoodLog(BaseModel):
     log_date: Optional[str] = None  # YYYY-MM-DD; defaults to today if omitted
 
 
+class UpdateFoodLog(BaseModel):
+    """Shape of the request body for PATCH /logs/{log_id}.
+    All fields are optional — only the ones supplied will be updated.
+    """
+    name:     Optional[str]   = None
+    calories: Optional[float] = None
+    protein:  Optional[float] = None
+    carbs:    Optional[float] = None
+    fat:      Optional[float] = None
+
+
 @router.post("/logs")
 def add_log(
     entry: CreateFoodLog,
@@ -81,6 +92,38 @@ def get_logs(
         .all()
     )
     return {"logs": logs}
+
+
+@router.patch("/logs/{log_id}")
+def update_log(
+    log_id: int,
+    updates: UpdateFoodLog,
+    db: Session = Depends(get_db),
+    user_id: str = Depends(get_current_user),
+):
+    db_log = (
+        db.query(models.FoodLog)
+        .filter(
+            models.FoodLog.id == log_id,
+            models.FoodLog.user_id == user_id,
+        )
+        .first()
+    )
+    if not db_log:
+        # Return 404 whether the log doesn't exist or belongs to another user
+        # so we don't leak the existence of other users' data.
+        raise HTTPException(status_code=404, detail="Log not found")
+
+    # Apply only the fields the caller actually sent
+    if updates.name     is not None: db_log.name     = updates.name
+    if updates.calories is not None: db_log.calories = updates.calories
+    if updates.protein  is not None: db_log.protein  = updates.protein
+    if updates.carbs    is not None: db_log.carbs    = updates.carbs
+    if updates.fat      is not None: db_log.fat      = updates.fat
+
+    db.commit()
+    db.refresh(db_log)
+    return {"message": "Log updated successfully", "entry": db_log}
 
 
 @router.delete("/logs/{log_id}")
