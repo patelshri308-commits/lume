@@ -673,6 +673,13 @@ function MacroItem({ label, value, unit }: { label: string; value: string; unit:
   );
 }
 
+const COLORS = {
+  primary:      "#E3D517",  // brand yellow
+  primaryLight: "#FAF3B0",  // soft yellow for card accents
+  textPrimary:  "#111111",
+  textSecondary:"#666666",
+};
+
 const styles = StyleSheet.create({
   safe: {
     flex: 1,
@@ -803,8 +810,8 @@ const styles = StyleSheet.create({
     borderColor: "#eee",
   },
   summaryCard: {
-    backgroundColor: "#f0f6ff",
-    borderColor: "#d0e4ff",
+    backgroundColor: COLORS.primaryLight,
+    borderColor: "#E3D517",
   },
   cardTitle: {
     fontSize: 16,
@@ -893,7 +900,7 @@ const styles = StyleSheet.create({
   },
   editButton: {
     fontSize: 12,
-    color: "#4a90d9",
+    color: COLORS.primary,
     fontWeight: "600",
   },
 
@@ -933,7 +940,7 @@ const styles = StyleSheet.create({
   },
   editSaveButton: {
     flex: 1,
-    backgroundColor: "#4a90d9",
+    backgroundColor: COLORS.primary,
     borderRadius: 6,
     paddingVertical: 8,
     alignItems: "center",
@@ -941,7 +948,7 @@ const styles = StyleSheet.create({
   editSaveText: {
     fontSize: 13,
     fontFamily: "Inter-Variable",
-    color: "#fff",
+    color: "#000",
     fontWeight: "600",
   },
   editCancelButton: {
@@ -1038,7 +1045,7 @@ const styles = StyleSheet.create({
   },
   weekBarFill: {
     height: 8,
-    backgroundColor: "#4a90d9",
+    backgroundColor: COLORS.primary,
     borderRadius: 4,
   },
   weekCalories: {
