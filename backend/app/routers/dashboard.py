@@ -27,7 +27,7 @@ def get_daily_summary(
                 detail="Invalid date format. Use YYYY-MM-DD, e.g. 2026-04-12.",
             )
     else:
-        filter_date = datetime.date.today()
+        filter_date = datetime.datetime.utcnow().date()
 
     result = db.query(
         func.coalesce(func.sum(models.FoodLog.calories), 0).label("total_calories"),
@@ -55,7 +55,7 @@ def get_weekly_summary(
     db: Session = Depends(get_db),
     user_id: str = Depends(get_current_user),
 ):
-    today = datetime.date.today()
+    today = datetime.datetime.utcnow().date()
     # Build the 7-day window: 6 days ago through today (oldest → newest)
     days = [today - datetime.timedelta(days=i) for i in range(6, -1, -1)]
 

@@ -37,7 +37,7 @@ def add_log(
                 detail="Invalid log_date format. Use YYYY-MM-DD.",
             )
     else:
-        log_date = datetime.date.today()
+        log_date = datetime.datetime.utcnow().date()
 
     db_log = models.FoodLog(
         user_id=user_id,
@@ -69,7 +69,7 @@ def get_logs(
                 detail="Invalid date format. Use YYYY-MM-DD, e.g. 2026-04-12.",
             )
     else:
-        filter_date = datetime.date.today()
+        filter_date = datetime.datetime.utcnow().date()
 
     logs = (
         db.query(models.FoodLog)
