@@ -5,6 +5,7 @@ import DateTimePicker, { DateTimePickerAndroid } from "@react-native-community/d
 import {
   Alert,
   Image,
+  RefreshControl,
   View,
   Text,
   TextInput,
@@ -95,6 +96,7 @@ export default function App() {
   const [savingEdit,    setSavingEdit]    = useState(false);
   const [weeklyData,    setWeeklyData]    = useState<WeeklyDay[]>([]);
   const [weeklyLoading, setWeeklyLoading] = useState(false);
+  const [refreshing,    setRefreshing]    = useState(false);
   const [servings,      setServings]      = useState(1);
   const [selectedDate,    setSelectedDate]    = useState(localToday());
   const [showDatePicker,  setShowDatePicker]  = useState(false);
@@ -114,15 +116,17 @@ export default function App() {
     return () => subscription.unsubscribe();
   }, []);
 
-  const getAuthHeaders = () => {
-  if (!session?.access_token) {
-    throw new Error("No active session");
-  }
-
-  return {
-    Authorization: `Bearer ${session.access_token}`,
+  // Always fetches a fresh (auto-refreshed) token from Supabase rather than
+  // reading the potentially-expired token stored in React state.
+  const getAuthHeaders = async () => {
+    const { data: { session: freshSession } } = await supabase.auth.getSession();
+    if (!freshSession?.access_token) {
+      throw new Error("No active session");
+    }
+    return {
+      Authorization: `Bearer ${freshSession.access_token}`,
+    };
   };
-};
   const signUp = async () => {
     setAuthMessage("");
     const { error } = await supabase.auth.signUp({ email: authEmail, password: authPassword });
@@ -189,7 +193,7 @@ export default function App() {
           fat:      result.fat      * servings,
           log_date: selectedDate,
         },
-        { headers: getAuthHeaders() },
+        { headers: await getAuthHeaders() },
       );
       setLogMessage("Food logged successfully!");
       await loadSummary();
@@ -204,10 +208,11 @@ export default function App() {
   };
 
   const loadSummary = async (date = selectedDate) => {
+    if (!session?.access_token) return;
     setSummaryLoading(true);
     try {
       const res = await axios.get(`${API_URL}/dashboard/daily?date=${date}`, {
-        headers: getAuthHeaders(),
+        headers: await getAuthHeaders(),
       });
       setSummary(res.data);
     } catch (err) {
@@ -222,7 +227,7 @@ export default function App() {
     setDeletingLogId(id);
     try {
       await axios.delete(`${API_URL}/logs/${id}`, {
-        headers: getAuthHeaders(),
+        headers: await getAuthHeaders(),
       });
       await loadSummary();
       await loadLogs();
@@ -247,7 +252,7 @@ export default function App() {
           carbs:    editFields.carbs    ? parseFloat(editFields.carbs)    : undefined,
           fat:      editFields.fat      ? parseFloat(editFields.fat)      : undefined,
         },
-        { headers: getAuthHeaders() },
+        { headers: await getAuthHeaders() },
       );
       setEditingLogId(null);
       await loadSummary();
@@ -262,10 +267,11 @@ export default function App() {
   };
 
   const loadLogs = async (date = selectedDate) => {
+    if (!session?.access_token) return;
     setLogsLoading(true);
     try {
       const res = await axios.get(`${API_URL}/logs?date=${date}`, {
-        headers: getAuthHeaders(),
+        headers: await getAuthHeaders(),
       });
       setLogs(res.data.logs);
     } catch (err) {
@@ -277,10 +283,11 @@ export default function App() {
   };
 
   const loadWeekly = async () => {
+    if (!session?.access_token) return;
     setWeeklyLoading(true);
     try {
       const res = await axios.get(`${API_URL}/dashboard/weekly`, {
-        headers: getAuthHeaders(),
+        headers: await getAuthHeaders(),
       });
       setWeeklyData(res.data);
     } catch (err) {
@@ -313,6 +320,20 @@ export default function App() {
     }
   };
 
+  const onRefresh = async () => {
+    if (!session?.access_token) return;
+    setRefreshing(true);
+    try {
+      await Promise.all([
+        loadLogs(selectedDate),
+        loadSummary(selectedDate),
+        loadWeekly(),
+      ]);
+    } finally {
+      setRefreshing(false);
+    }
+  };
+
   const clearSearch = () => {
     setQuery("");
     setResult(null);
@@ -320,16 +341,19 @@ export default function App() {
     setServings(1);
   };
 
-  // Reload data whenever selectedDate changes, but only if it's a valid date and session exists
+  // Reload logs + summary whenever selectedDate OR session changes.
+  // session is included so the effect re-runs (with a current, non-stale closure)
+  // as soon as a valid token arrives — no request is made until then.
   useEffect(() => {
-    if (!session || !isValidDate(selectedDate)) return;
+    if (!session?.access_token || !isValidDate(selectedDate)) return;
     loadLogs(selectedDate);
     loadSummary(selectedDate);
-  }, [selectedDate]); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [selectedDate, session]); // eslint-disable-line react-hooks/exhaustive-deps
 
-  // Clear stale state on logout; reload fresh data on login / user switch
+  // Clear stale state on logout; load weekly data on login / user switch.
+  // Logs + summary are handled by the selectedDate effect above.
   useEffect(() => {
-    if (!session) {
+    if (!session?.access_token) {
       // Wipe every piece of user-specific state so the next user starts clean
       setLogs([]);
       setSummary(null);
@@ -339,11 +363,6 @@ export default function App() {
       setQuery("");
       setServings(1);
     } else {
-      // A valid session just arrived (login or token refresh) — load their data
-      if (isValidDate(selectedDate)) {
-        loadLogs(selectedDate);
-        loadSummary(selectedDate);
-      }
       loadWeekly();
     }
   }, [session]); // eslint-disable-line react-hooks/exhaustive-deps
@@ -414,7 +433,17 @@ export default function App() {
   // ── Tracker screen (logged in) ──────────────────────────────────────────────
   return (
     <SafeAreaView style={styles.safe}>
-      <ScrollView contentContainerStyle={styles.container}>
+      <ScrollView
+        contentContainerStyle={styles.container}
+        refreshControl={
+          <RefreshControl
+            refreshing={refreshing}
+            onRefresh={onRefresh}
+            tintColor={COLORS.primary}
+            colors={[COLORS.primary]}
+          />
+        }
+      >
 
         {/* Header */}
         <View style={styles.headerRow}>
