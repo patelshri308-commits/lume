@@ -52,6 +52,20 @@ function localToday(): string {
   ].join("-");
 }
 
+// Returns a readable label for a YYYY-MM-DD date, e.g. "April 7th"
+function formatDateLabel(dateStr: string): string {
+  const date = new Date(dateStr + "T00:00:00");
+  const month = date.toLocaleDateString([], { month: "long" });
+  const day   = date.getDate();
+  const suffix =
+    day % 100 >= 11 && day % 100 <= 13 ? "th"
+    : day % 10 === 1 ? "st"
+    : day % 10 === 2 ? "nd"
+    : day % 10 === 3 ? "rd"
+    : "th";
+  return `${month} ${day}${suffix}, ${date.getFullYear()}`;
+}
+
 // Returns true only for strings that are valid YYYY-MM-DD dates
 function isValidDate(s: string): boolean {
   if (!/^\d{4}-\d{2}-\d{2}$/.test(s)) return false;
@@ -511,7 +525,11 @@ export default function App() {
           {summaryLoading && <Text style={styles.searchingText}>Loading summary...</Text>}
           {!summaryLoading && summary && (
             <View style={[styles.card, styles.summaryCard]}>
-              <Text style={styles.cardTitle}>Today's Totals</Text>
+              <Text style={styles.cardTitle}>
+                {selectedDate === localToday()
+                  ? "Today's Totals"
+                  : `Totals — ${formatDateLabel(selectedDate)}`}
+              </Text>
               <View style={styles.macroRow}>
                 <MacroItem label="Calories" value={`${summary.total_calories}`} unit="kcal" />
                 <MacroItem label="Protein"  value={`${summary.total_protein}`}  unit="g" />
