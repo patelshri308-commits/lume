@@ -439,6 +439,9 @@ export default function App() {
             <View style={styles.cardAction}>
               <Button title={loggingFood ? "Logging..." : "Log Food"} onPress={logFood} disabled={loggingFood} />
             </View>
+            <Text style={styles.disclaimer}>
+              Nutrition data is estimated and may vary based on brand and preparation.
+            </Text>
             {logMessage ? (
               <Text style={logMessage.includes("successfully") ? styles.success : styles.error}>
                 {logMessage}
@@ -583,7 +586,7 @@ const styles = StyleSheet.create({
   // Logo
   logoContainer: {
     alignItems: "center",
-    marginBottom: 8,
+    marginBottom: 24,
   },
   logo: {
     width: 160,
@@ -850,6 +853,14 @@ const styles = StyleSheet.create({
     color: "#555",
     width: 40,
     textAlign: "right",
+  },
+
+  disclaimer: {
+    marginTop: 12,
+    fontSize: 11,
+    fontFamily: "Inter-Variable",
+    color: "#bbb",
+    textAlign: "center",
   },
 
   // Feedback
