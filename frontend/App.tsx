@@ -2,6 +2,7 @@ import { useState, useEffect } from "react";
 import { useFonts } from "expo-font";
 import {
   Alert,
+  Image,
   View,
   Text,
   TextInput,
@@ -298,7 +299,13 @@ export default function App() {
     return (
       <SafeAreaView style={styles.safe}>
         <View style={styles.authContainer}>
-          <Text style={styles.appTitle}>Lume</Text>
+          <View style={styles.logoContainer}>
+            <Image
+              source={require("./assets/Lume.png")}
+              style={styles.logo}
+              resizeMode="contain"
+            />
+          </View>
           <Text style={styles.appSubtitle}>Track what you eat</Text>
 
           <TextInput
@@ -343,10 +350,11 @@ export default function App() {
 
         {/* Header */}
         <View style={styles.headerRow}>
-          <View>
-            <Text style={styles.appTitle}>Lume</Text>
-            <Text style={styles.appSubtitle}>Track what you eat</Text>
-          </View>
+          <Image
+            source={require("./assets/Lume.png")}
+            style={styles.logo}
+            resizeMode="contain"
+          />
           <TouchableOpacity onPress={logOut}>
             <Text style={styles.logOutText}>Log Out</Text>
           </TouchableOpacity>
@@ -570,6 +578,16 @@ const styles = StyleSheet.create({
     fontFamily: "Inter-Variable",
     color: "#555",
     textAlign: "center",
+  },
+
+  // Logo
+  logoContainer: {
+    alignItems: "center",
+    marginBottom: 8,
+  },
+  logo: {
+    width: 160,
+    height: 60,
   },
 
   // Header
