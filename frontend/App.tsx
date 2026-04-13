@@ -86,6 +86,7 @@ export default function App() {
     });
     return () => subscription.unsubscribe();
   }, []);
+
   const getAuthHeaders = () => {
   if (!session?.access_token) {
     throw new Error("No active session");
@@ -166,6 +167,7 @@ export default function App() {
       setLogMessage("Food logged successfully!");
       await loadSummary();
       await loadLogs();
+      await loadWeekly();
     } catch (err) {
       console.log("Error logging food");
       setLogMessage("Failed to log food. Is the backend running?");
@@ -197,6 +199,7 @@ export default function App() {
       });
       await loadSummary();
       await loadLogs();
+      await loadWeekly();
     } catch (err) {
       console.log("Error deleting log");
       setLogMessage("Failed to delete log.");
@@ -241,12 +244,12 @@ export default function App() {
     setServings(1);
   };
 
-  // Reload data whenever selectedDate changes, but only if it's a valid date
+  // Reload data whenever selectedDate changes, but only if it's a valid date and session exists
   useEffect(() => {
-    if (!isValidDate(selectedDate)) return;
+    if (!session || !isValidDate(selectedDate)) return;
     loadLogs(selectedDate);
     loadSummary(selectedDate);
-  }, [selectedDate]);
+  }, [selectedDate]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // Clear stale state on logout; reload fresh data on login / user switch
   useEffect(() => {
