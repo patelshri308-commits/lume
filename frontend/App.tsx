@@ -1,4 +1,5 @@
 import { useState, useEffect } from "react";
+import { useFonts } from "expo-font";
 import {
   Alert,
   View,
@@ -56,6 +57,12 @@ function isValidDate(s: string): boolean {
 }
 
 export default function App() {
+  const [fontsLoaded] = useFonts({
+    "Chillax-Regular": require("./assets/fonts/Chillax-Regular.otf"),
+    "Chillax-Medium":  require("./assets/fonts/Chillax-Medium.otf"),
+    "Inter-Variable":  require("./assets/fonts/Inter-VariableFont_opsz,wght.ttf"),
+  });
+
   const [query,      setQuery]      = useState("");
   const [result,     setResult]     = useState<NutritionResult | null>(null);
   const [logMessage, setLogMessage] = useState("");
@@ -282,6 +289,9 @@ export default function App() {
         fat:      parseFloat((result.fat       * servings).toFixed(1)),
       }
     : null;
+
+  // Wait for custom fonts before rendering anything
+  if (!fontsLoaded) return null;
 
   // ── Auth screen ────────────────────────────────────────────────────────────
   if (!session) {
@@ -557,6 +567,7 @@ const styles = StyleSheet.create({
   authMessage: {
     marginTop: 14,
     fontSize: 13,
+    fontFamily: "Inter-Variable",
     color: "#555",
     textAlign: "center",
   },
@@ -571,11 +582,12 @@ const styles = StyleSheet.create({
   },
   appTitle: {
     fontSize: 34,
-    fontWeight: "700",
+    fontFamily: "Chillax-Medium",
     letterSpacing: 1,
   },
   appSubtitle: {
     fontSize: 14,
+    fontFamily: "Inter-Variable",
     color: "#999",
     marginBottom: 4,
   },
@@ -604,7 +616,7 @@ const styles = StyleSheet.create({
   },
   sectionLabel: {
     fontSize: 11,
-    fontWeight: "600",
+    fontFamily: "Chillax-Medium",
     color: "#aaa",
     letterSpacing: 1.2,
     marginBottom: 10,
@@ -617,6 +629,7 @@ const styles = StyleSheet.create({
     borderRadius: 8,
     padding: 12,
     fontSize: 15,
+    fontFamily: "Inter-Variable",
     marginBottom: 10,
     color: "#111",
   },
@@ -624,6 +637,7 @@ const styles = StyleSheet.create({
   searchingText: {
     marginTop: 8,
     fontSize: 13,
+    fontFamily: "Inter-Variable",
     color: "#aaa",
   },
 
@@ -651,7 +665,7 @@ const styles = StyleSheet.create({
   },
   cardTitle: {
     fontSize: 16,
-    fontWeight: "600",
+    fontFamily: "Chillax-Medium",
     marginBottom: 12,
     textTransform: "capitalize",
   },
@@ -670,15 +684,17 @@ const styles = StyleSheet.create({
   },
   macroValue: {
     fontSize: 18,
-    fontWeight: "700",
+    fontFamily: "Chillax-Medium",
     color: "#111",
   },
   macroUnit: {
     fontSize: 10,
+    fontFamily: "Inter-Variable",
     color: "#888",
   },
   macroLabel: {
     fontSize: 11,
+    fontFamily: "Inter-Variable",
     color: "#aaa",
     marginTop: 2,
   },
@@ -687,6 +703,7 @@ const styles = StyleSheet.create({
   entryCount: {
     marginTop: 12,
     fontSize: 12,
+    fontFamily: "Inter-Variable",
     color: "#888",
     textAlign: "center",
   },
@@ -711,16 +728,18 @@ const styles = StyleSheet.create({
   },
   logEntryName: {
     fontSize: 14,
-    fontWeight: "600",
+    fontFamily: "Chillax-Medium",
     marginBottom: 3,
     textTransform: "capitalize",
   },
   logEntryMacros: {
     fontSize: 12,
+    fontFamily: "Inter-Variable",
     color: "#777",
   },
   logEntryTime: {
     fontSize: 11,
+    fontFamily: "Inter-Variable",
     color: "#bbb",
     marginTop: 2,
   },
@@ -738,6 +757,7 @@ const styles = StyleSheet.create({
   perServing: {
     marginTop: 6,
     fontSize: 11,
+    fontFamily: "Inter-Variable",
     color: "#bbb",
     textAlign: "center",
   },
@@ -766,7 +786,7 @@ const styles = StyleSheet.create({
   },
   servingCount: {
     fontSize: 14,
-    fontWeight: "600",
+    fontFamily: "Inter-Variable",
     color: "#333",
     minWidth: 80,
     textAlign: "center",
@@ -776,6 +796,7 @@ const styles = StyleSheet.create({
   emptyState: {
     marginTop: 10,
     fontSize: 13,
+    fontFamily: "Inter-Variable",
     color: "#bbb",
     fontStyle: "italic",
   },
@@ -789,6 +810,7 @@ const styles = StyleSheet.create({
   },
   weekLabel: {
     fontSize: 12,
+    fontFamily: "Inter-Variable",
     color: "#555",
     width: 72,
   },
@@ -806,6 +828,7 @@ const styles = StyleSheet.create({
   },
   weekCalories: {
     fontSize: 12,
+    fontFamily: "Inter-Variable",
     color: "#555",
     width: 40,
     textAlign: "right",
@@ -816,10 +839,12 @@ const styles = StyleSheet.create({
     color: "#2e7d32",
     marginTop: 10,
     fontSize: 13,
+    fontFamily: "Inter-Variable",
   },
   error: {
     color: "#c62828",
     marginTop: 10,
     fontSize: 13,
+    fontFamily: "Inter-Variable",
   },
 });
