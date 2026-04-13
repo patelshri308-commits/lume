@@ -1,5 +1,7 @@
 import { useState, useEffect } from "react";
+import { Platform } from "react-native";
 import { useFonts } from "expo-font";
+import DateTimePicker, { DateTimePickerAndroid } from "@react-native-community/datetimepicker";
 import {
   Alert,
   Image,
@@ -80,8 +82,8 @@ export default function App() {
   const [weeklyData,    setWeeklyData]    = useState<WeeklyDay[]>([]);
   const [weeklyLoading, setWeeklyLoading] = useState(false);
   const [servings,      setServings]      = useState(1);
-  const [selectedDate,  setSelectedDate]  = useState(localToday());
-  const [dateError,     setDateError]     = useState("");
+  const [selectedDate,    setSelectedDate]    = useState(localToday());
+  const [showDatePicker,  setShowDatePicker]  = useState(false);
 
   // Auth state
   const [session,       setSession]       = useState<Session | null>(null);
@@ -274,6 +276,29 @@ export default function App() {
     }
   };
 
+  const handleDateChange = (_event: unknown, date?: Date) => {
+    setShowDatePicker(false); // close picker on iOS after selection
+    if (!date) return;
+    const formatted = [
+      date.getFullYear(),
+      String(date.getMonth() + 1).padStart(2, "0"),
+      String(date.getDate()).padStart(2, "0"),
+    ].join("-");
+    setSelectedDate(formatted);
+  };
+
+  const openDatePicker = () => {
+    if (Platform.OS === "android") {
+      DateTimePickerAndroid.open({
+        value: new Date(selectedDate + "T00:00:00"),
+        onChange: handleDateChange,
+        mode: "date",
+      });
+    } else {
+      setShowDatePicker(prev => !prev);
+    }
+  };
+
   const clearSearch = () => {
     setQuery("");
     setResult(null);
@@ -392,19 +417,20 @@ export default function App() {
         {/* Date selector */}
         <View style={styles.dateSection}>
           <Text style={styles.sectionLabel}>VIEWING DATE</Text>
-          <TextInput
-            style={[styles.input, dateError ? styles.inputError : null]}
-            value={selectedDate}
-            onChangeText={(text) => {
-              setSelectedDate(text);
-              setDateError(isValidDate(text) ? "" : "Enter a valid date: YYYY-MM-DD");
-            }}
-            placeholder="YYYY-MM-DD"
-            placeholderTextColor="#aaa"
-            autoCapitalize="none"
-            keyboardType="numbers-and-punctuation"
-          />
-          {dateError ? <Text style={styles.dateErrorText}>{dateError}</Text> : null}
+          <TouchableOpacity style={styles.dateTrigger} onPress={openDatePicker}>
+            <Text style={styles.dateTriggerText}>{selectedDate}</Text>
+            <Text style={styles.dateTriggerIcon}>▾</Text>
+          </TouchableOpacity>
+          {showDatePicker && Platform.OS === "ios" && (
+            <DateTimePicker
+              value={new Date(selectedDate + "T00:00:00")}
+              mode="date"
+              display="inline"
+              onChange={handleDateChange}
+              accentColor={COLORS.primary}
+              style={styles.datePicker}
+            />
+          )}
         </View>
 
         {/* Search */}
@@ -751,12 +777,26 @@ const styles = StyleSheet.create({
   dateSection: {
     marginBottom: 4,
   },
-  inputError: {
-    borderColor: "#c62828",
+  dateTrigger: {
+    flexDirection: "row",
+    justifyContent: "space-between",
+    alignItems: "center",
+    borderWidth: 1,
+    borderColor: "#ddd",
+    borderRadius: 8,
+    padding: 12,
+    marginBottom: 4,
   },
-  dateErrorText: {
-    fontSize: 12,
-    color: "#c62828",
+  dateTriggerText: {
+    fontSize: 15,
+    fontFamily: "Inter-Variable",
+    color: "#111",
+  },
+  dateTriggerIcon: {
+    fontSize: 14,
+    color: "#999",
+  },
+  datePicker: {
     marginTop: 4,
   },
 
