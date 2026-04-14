@@ -124,9 +124,10 @@ export default function App() {
   const [authPassword,  setAuthPassword]  = useState("");
   const [authMessage,   setAuthMessage]   = useState("");
 
-  // Initialise session on mount and listen for auth changes
+  // Initialise session on mount and listen for auth changes.
+  // onAuthStateChange fires INITIAL_SESSION immediately on subscription (Supabase v2),
+  // so a separate getSession() call is not needed and would cause a duplicate setSession.
   useEffect(() => {
-    supabase.auth.getSession().then(({ data: { session } }) => setSession(session));
     const { data: { subscription } } = supabase.auth.onAuthStateChange((_event, session) => {
       setSession(session);
     });
