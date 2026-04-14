@@ -58,9 +58,12 @@ def _score_food(food: dict, query: str) -> int:
     # Reward generic data types, penalise branded ones
     score += DATA_TYPE_SCORE.get(data_type, -30)
 
-    # Reward every query word that appears in the description
+    # Reward every query word that appears in the description.
+    # Also try a simple singular form (strip trailing "s") so that
+    # "eggs" matches "egg, whole, raw, fresh", "oats" matches "oat", etc.
     for word in query_words:
-        if word in description:
+        stem = word[:-1] if len(word) > 3 and word.endswith("s") else word
+        if word in description or stem in description:
             score += 15
 
     # Penalise descriptions that contain processed-food keywords —
@@ -90,14 +93,52 @@ def _get_fallback_nutrition(query: str) -> dict:
     """Rule-based fallback used when the USDA API is unavailable or returns nothing."""
     q = query.lower()
 
+    # ── Fruit ─────────────────────────────────────────────────────────────────
     if "apple" in q:
         return {"calories": 95,  "protein": 0,  "carbs": 25, "fat": 0}
-    elif "banana" in q:
-        return {"calories": 89,  "protein": 1,  "carbs": 23, "fat": 0}
-    elif "burger" in q or "pizza" in q:
+    if "banana" in q:
+        return {"calories": 90,  "protein": 1,  "carbs": 23, "fat": 0}
+
+    # ── American / fast food ──────────────────────────────────────────────────
+    if "burger" in q or "pizza" in q:
         return {"calories": 650, "protein": 30, "carbs": 55, "fat": 35}
-    else:
-        return {"calories": 250, "protein": 10, "carbs": 20, "fat": 15}
+    if "fries" in q or "fry" in q:
+        return {"calories": 400, "protein": 5,  "carbs": 50, "fat": 18}
+
+    # ── Mexican ───────────────────────────────────────────────────────────────
+    if "burrito" in q:
+        return {"calories": 700, "protein": 30, "carbs": 75, "fat": 25}
+    if "taco" in q:
+        return {"calories": 250, "protein": 12, "carbs": 20, "fat": 12}
+
+    # ── Asian ─────────────────────────────────────────────────────────────────
+    if "sushi" in q:
+        return {"calories": 350, "protein": 15, "carbs": 50, "fat": 8}
+    if "ramen" in q:
+        return {"calories": 500, "protein": 25, "carbs": 60, "fat": 15}
+    if "curry" in q:
+        return {"calories": 450, "protein": 20, "carbs": 45, "fat": 20}
+
+    # ── Sandwiches ────────────────────────────────────────────────────────────
+    if "sandwich" in q or "wrap" in q or "sub" in q:
+        return {"calories": 450, "protein": 25, "carbs": 45, "fat": 15}
+
+    # ── Pasta / noodles ───────────────────────────────────────────────────────
+    if "pasta" in q or "spaghetti" in q or "noodle" in q:
+        return {"calories": 500, "protein": 20, "carbs": 65, "fat": 15}
+
+    # ── Bakery ────────────────────────────────────────────────────────────────
+    if "bagel" in q:
+        return {"calories": 300, "protein": 10, "carbs": 55, "fat": 2}
+    if "muffin" in q:
+        return {"calories": 400, "protein": 5,  "carbs": 55, "fat": 15}
+    if "donut" in q or "doughnut" in q:
+        return {"calories": 300, "protein": 3,  "carbs": 35, "fat": 15}
+    if "pancake" in q or "waffle" in q:
+        return {"calories": 400, "protein": 10, "carbs": 55, "fat": 15}
+
+    # ── Generic fallback ──────────────────────────────────────────────────────
+    return {"calories": 250, "protein": 10, "carbs": 20, "fat": 15}
 
 
 # ---------------------------------------------------------------------------
