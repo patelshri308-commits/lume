@@ -43,9 +43,10 @@ type WeeklyDay = {
   total_calories: number;
 };
 
-// Returns today's date as YYYY-MM-DD using local time (not UTC)
-function localToday(): string {
-  const d = new Date();
+// ── Date helpers ─────────────────────────────────────────────────────────────
+
+// Converts a JS Date to a YYYY-MM-DD string using local (device) time.
+function formatDateToLocalYYYYMMDD(d: Date): string {
   return [
     d.getFullYear(),
     String(d.getMonth() + 1).padStart(2, "0"),
@@ -53,11 +54,34 @@ function localToday(): string {
   ].join("-");
 }
 
-// Returns a readable label for a YYYY-MM-DD date, e.g. "April 7th"
+// Parses a YYYY-MM-DD string as a local-time Date.
+// Avoids the UTC-shift bug from new Date("YYYY-MM-DD") (which parses as UTC).
+function parseDateStringToLocalDate(s: string): Date {
+  const [year, month, day] = s.split("-").map(Number);
+  return new Date(year, month - 1, day);
+}
+
+// Returns today's date as YYYY-MM-DD in local time.
+function localToday(): string {
+  return formatDateToLocalYYYYMMDD(new Date());
+}
+
+// Returns true only for structurally valid YYYY-MM-DD date strings.
+// Rejects impossible dates (e.g. 2026-02-30) by confirming the
+// constructed date's components round-trip back to the original values.
+function isValidDate(s: string): boolean {
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(s)) return false;
+  const [year, month, day] = s.split("-").map(Number);
+  if (month < 1 || month > 12 || day < 1 || day > 31) return false;
+  const d = new Date(year, month - 1, day);
+  return d.getFullYear() === year && d.getMonth() === month - 1 && d.getDate() === day;
+}
+
+// Returns a readable label for a YYYY-MM-DD string, e.g. "April 7th, 2026".
 function formatDateLabel(dateStr: string): string {
-  const date = new Date(dateStr + "T00:00:00");
-  const month = date.toLocaleDateString([], { month: "long" });
-  const day   = date.getDate();
+  const date   = parseDateStringToLocalDate(dateStr);
+  const month  = date.toLocaleDateString([], { month: "long" });
+  const day    = date.getDate();
   const suffix =
     day % 100 >= 11 && day % 100 <= 13 ? "th"
     : day % 10 === 1 ? "st"
@@ -65,13 +89,6 @@ function formatDateLabel(dateStr: string): string {
     : day % 10 === 3 ? "rd"
     : "th";
   return `${month} ${day}${suffix}, ${date.getFullYear()}`;
-}
-
-// Returns true only for strings that are valid YYYY-MM-DD dates
-function isValidDate(s: string): boolean {
-  if (!/^\d{4}-\d{2}-\d{2}$/.test(s)) return false;
-  const d = new Date(s);
-  return !isNaN(d.getTime());
 }
 
 export default function App() {
@@ -300,18 +317,13 @@ export default function App() {
   const handleDateChange = (_event: unknown, date?: Date) => {
     setShowDatePicker(false); // close picker on iOS after selection
     if (!date) return;
-    const formatted = [
-      date.getFullYear(),
-      String(date.getMonth() + 1).padStart(2, "0"),
-      String(date.getDate()).padStart(2, "0"),
-    ].join("-");
-    setSelectedDate(formatted);
+    setSelectedDate(formatDateToLocalYYYYMMDD(date));
   };
 
   const openDatePicker = () => {
     if (Platform.OS === "android") {
       DateTimePickerAndroid.open({
-        value: new Date(selectedDate + "T00:00:00"),
+        value: parseDateStringToLocalDate(selectedDate),
         onChange: handleDateChange,
         mode: "date",
       });
@@ -466,7 +478,7 @@ export default function App() {
           </TouchableOpacity>
           {showDatePicker && Platform.OS === "ios" && (
             <DateTimePicker
-              value={new Date(selectedDate + "T00:00:00")}
+              value={parseDateStringToLocalDate(selectedDate)}
               mode="date"
               display="inline"
               onChange={handleDateChange}
