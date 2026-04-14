@@ -189,7 +189,6 @@ export default function App() {
       const res = await axios.post(`${API_URL}/food/search`, { query: foodQuery });
       setResult(res.data);
     } catch (err) {
-      console.log("Error searching food");
       setLogMessage("Failed to search. Is the backend running?");
     } finally {
       setSearching(false);
@@ -217,7 +216,6 @@ export default function App() {
       await loadLogs();
       await loadWeekly();
     } catch (err) {
-      console.log("Error logging food");
       setLogMessage("Failed to log food. Is the backend running?");
     } finally {
       setLoggingFood(false);
@@ -233,7 +231,6 @@ export default function App() {
       });
       setSummary(res.data);
     } catch (err) {
-      console.log("Error loading summary");
       setLogMessage("Failed to load summary.");
     } finally {
       setSummaryLoading(false);
@@ -250,7 +247,6 @@ export default function App() {
       await loadLogs();
       await loadWeekly();
     } catch (err) {
-      console.log("Error deleting log");
       setLogMessage("Failed to delete log.");
     } finally {
       setDeletingLogId(null);
@@ -276,7 +272,6 @@ export default function App() {
       await loadLogs();
       await loadWeekly();
     } catch (err) {
-      console.log("Error saving edit");
       setLogMessage("Failed to save edit.");
     } finally {
       setSavingEdit(false);
@@ -292,7 +287,6 @@ export default function App() {
       });
       setLogs(res.data.logs);
     } catch (err) {
-      console.log("Error loading logs");
       setLogMessage("Failed to load logs.");
     } finally {
       setLogsLoading(false);
