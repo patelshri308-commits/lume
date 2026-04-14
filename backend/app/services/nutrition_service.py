@@ -89,7 +89,7 @@ def _extract_nutrient(nutrients: list, nutrient_id: int) -> float:
     return 0.0
 
 
-def _get_fallback_nutrition(query: str) -> dict:
+def _get_fallback_nutrition(query: str) -> dict:  # always returns is_estimated: True
     """Rule-based fallback used when the USDA API is unavailable or returns nothing."""
     q = query.lower()
 
@@ -166,7 +166,7 @@ def get_nutrition(query: str) -> dict:
         foods = response.json().get("foods", [])
 
         if not foods:
-            return _get_fallback_nutrition(query)
+            return {**_get_fallback_nutrition(query), "is_estimated": True}
 
         # Pick the highest-scoring result instead of blindly taking foods[0]
         best_food  = max(foods, key=lambda food: _score_food(food, query))
@@ -176,16 +176,17 @@ def get_nutrition(query: str) -> dict:
         # score to clear the threshold, no query word appeared in any result —
         # returning it would be misleading.
         if best_score < CONFIDENCE_THRESHOLD:
-            return _get_fallback_nutrition(query)
+            return {**_get_fallback_nutrition(query), "is_estimated": True}
 
         nutrients = best_food.get("foodNutrients", [])
 
         return {
-            "calories": _extract_nutrient(nutrients, NUTRIENT_ID_CALORIES),
-            "protein":  _extract_nutrient(nutrients, NUTRIENT_ID_PROTEIN),
-            "carbs":    _extract_nutrient(nutrients, NUTRIENT_ID_CARBS),
-            "fat":      _extract_nutrient(nutrients, NUTRIENT_ID_FAT),
+            "calories":     _extract_nutrient(nutrients, NUTRIENT_ID_CALORIES),
+            "protein":      _extract_nutrient(nutrients, NUTRIENT_ID_PROTEIN),
+            "carbs":        _extract_nutrient(nutrients, NUTRIENT_ID_CARBS),
+            "fat":          _extract_nutrient(nutrients, NUTRIENT_ID_FAT),
+            "is_estimated": False,
         }
 
     except Exception:
-        return _get_fallback_nutrition(query)
+        return {**_get_fallback_nutrition(query), "is_estimated": True}

@@ -21,11 +21,12 @@ import { supabase } from "./lib/supabase";
 import { API_URL } from "./lib/config";
 
 type NutritionResult = {
-  name:     string;
-  calories: number;
-  protein:  number;
-  carbs:    number;
-  fat:      number;
+  name:         string;
+  calories:     number;
+  protein:      number;
+  carbs:        number;
+  fat:          number;
+  is_estimated: boolean;
 };
 
 type FoodLogEntry = NutritionResult & { id: number; created_at: string };
@@ -553,6 +554,9 @@ export default function App() {
             <View style={styles.cardAction}>
               <Button title={loggingFood ? "Logging..." : "Log Food"} onPress={logFood} disabled={loggingFood} />
             </View>
+            {result.is_estimated && (
+              <Text style={styles.estimatedLabel}>Estimated</Text>
+            )}
             <Text style={styles.disclaimer}>
               Nutrition data is estimated and may vary based on brand and preparation.
             </Text>
@@ -1166,6 +1170,15 @@ const styles = StyleSheet.create({
     fontFamily: "Inter-Variable",
     color: "#bbb",
     textAlign: "center",
+  },
+
+  estimatedLabel: {
+    marginTop: 10,
+    fontSize: 11,
+    fontFamily: "Inter-Variable",
+    color: "#aaa",
+    textAlign: "center",
+    fontStyle: "italic",
   },
 
   // Feedback
