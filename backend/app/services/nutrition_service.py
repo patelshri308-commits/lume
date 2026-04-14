@@ -25,6 +25,13 @@ DATA_TYPE_SCORE = {
     "Branded":        -30,   # Avoid: manufacturer data, often processed products
 }
 
+# Minimum score a candidate must reach before we trust it as a real match.
+# A Foundation item with zero query-word matches scores at most 29 (30 − len//10).
+# A Foundation item with one word match scores at least 39 (30 + 15 − 6).
+# This threshold therefore rejects matches driven purely by data-type preference
+# with no lexical support from the user's query.
+CONFIDENCE_THRESHOLD = 30
+
 # Words that suggest a result is a processed or compound food, not a plain ingredient.
 # Matching any of these penalises the result so it ranks lower.
 PROCESSED_KEYWORDS = [
@@ -121,7 +128,15 @@ def get_nutrition(query: str) -> dict:
             return _get_fallback_nutrition(query)
 
         # Pick the highest-scoring result instead of blindly taking foods[0]
-        best_food = max(foods, key=lambda food: _score_food(food, query))
+        best_food  = max(foods, key=lambda food: _score_food(food, query))
+        best_score = _score_food(best_food, query)
+
+        # Reject weak matches: if even the best candidate didn't earn enough
+        # score to clear the threshold, no query word appeared in any result —
+        # returning it would be misleading.
+        if best_score < CONFIDENCE_THRESHOLD:
+            return _get_fallback_nutrition(query)
+
         nutrients = best_food.get("foodNutrients", [])
 
         return {
