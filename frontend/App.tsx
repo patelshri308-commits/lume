@@ -12,9 +12,9 @@ import {
   Button,
   StyleSheet,
   ScrollView,
-  SafeAreaView,
   TouchableOpacity,
 } from "react-native";
+import { SafeAreaProvider, SafeAreaView } from "react-native-safe-area-context";
 import axios from "axios";
 import { Session } from "@supabase/supabase-js";
 import { supabase } from "./lib/supabase";
@@ -390,6 +390,7 @@ export default function App() {
   // ── Auth screen ────────────────────────────────────────────────────────────
   if (!session) {
     return (
+      <SafeAreaProvider>
       <SafeAreaView style={styles.safe}>
         <View style={styles.authContainer}>
           <View style={styles.logoContainer}>
@@ -433,11 +434,13 @@ export default function App() {
           ) : null}
         </View>
       </SafeAreaView>
+      </SafeAreaProvider>
     );
   }
 
   // ── Tracker screen (logged in) ──────────────────────────────────────────────
   return (
+    <SafeAreaProvider>
     <SafeAreaView style={styles.safe}>
       <ScrollView
         contentContainerStyle={styles.container}
@@ -738,6 +741,7 @@ export default function App() {
 
       </ScrollView>
     </SafeAreaView>
+    </SafeAreaProvider>
   );
 }
 
