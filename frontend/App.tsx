@@ -104,6 +104,7 @@ export default function App() {
   const [logs,       setLogs]       = useState<FoodLogEntry[]>([]);
   const [summary,    setSummary]    = useState<DailySummary | null>(null);
   const [searching,     setSearching]     = useState(false);
+  const [hasSearched,   setHasSearched]   = useState(false);
   const [logsLoading,   setLogsLoading]   = useState(false);
   const [summaryLoading,setSummaryLoading]= useState(false);
   const [loggingFood,   setLoggingFood]   = useState(false);
@@ -163,6 +164,7 @@ export default function App() {
 
   const searchFood = async () => {
     setLogMessage("");
+    setHasSearched(true);
 
     // Map of supported number words to their integer values
     const NUMBER_WORDS: Record<string, number> = {
@@ -190,7 +192,7 @@ export default function App() {
       const res = await axios.post(`${API_URL}/food/search`, { query: foodQuery });
       setResult(res.data);
     } catch (err) {
-      setLogMessage("Failed to search. Is the backend running?");
+      setLogMessage("Failed to search");
     } finally {
       setSearching(false);
     }
@@ -212,12 +214,12 @@ export default function App() {
         },
         { headers: await getAuthHeaders() },
       );
-      setLogMessage("Food logged successfully!");
+      setLogMessage("Food logged");
       await loadSummary();
       await loadLogs();
       await loadWeekly();
     } catch (err) {
-      setLogMessage("Failed to log food. Is the backend running?");
+      setLogMessage("Failed to log food");
     } finally {
       setLoggingFood(false);
     }
@@ -232,7 +234,7 @@ export default function App() {
       });
       setSummary(res.data);
     } catch (err) {
-      setLogMessage("Failed to load summary.");
+      setLogMessage("Failed to load summary");
     } finally {
       setSummaryLoading(false);
     }
@@ -248,7 +250,7 @@ export default function App() {
       await loadLogs();
       await loadWeekly();
     } catch (err) {
-      setLogMessage("Failed to delete log.");
+      setLogMessage("Failed to delete entry");
     } finally {
       setDeletingLogId(null);
     }
@@ -273,7 +275,7 @@ export default function App() {
       await loadLogs();
       await loadWeekly();
     } catch (err) {
-      setLogMessage("Failed to save edit.");
+      setLogMessage("Failed to update entry");
     } finally {
       setSavingEdit(false);
     }
@@ -288,7 +290,7 @@ export default function App() {
       });
       setLogs(res.data.logs);
     } catch (err) {
-      setLogMessage("Failed to load logs.");
+      setLogMessage("Failed to load entries");
     } finally {
       setLogsLoading(false);
     }
@@ -346,6 +348,7 @@ export default function App() {
     setResult(null);
     setLogMessage("");
     setServings(1);
+    setHasSearched(false);
   };
 
   // Reload logs + summary whenever selectedDate OR session changes.
@@ -511,8 +514,11 @@ export default function App() {
         </View>
 
         {/* Search Result */}
-        {!result && !searching && (
+        {!result && !searching && !hasSearched && (
           <Text style={styles.emptyState}>Search for a food to see nutrition info</Text>
+        )}
+        {!result && !searching && hasSearched && (
+          <Text style={styles.emptyState}>No results found — try something simpler</Text>
         )}
         {result && adjusted && (
           <View style={styles.card}>
@@ -551,7 +557,7 @@ export default function App() {
               Nutrition data is estimated and may vary based on brand and preparation.
             </Text>
             {logMessage ? (
-              <Text style={logMessage.includes("successfully") ? styles.success : styles.error}>
+              <Text style={!logMessage.startsWith("Failed") ? styles.success : styles.error}>
                 {logMessage}
               </Text>
             ) : null}
@@ -587,7 +593,7 @@ export default function App() {
           <Text style={styles.sectionLabel}>LOGGED FOODS</Text>
           {logsLoading && <Text style={styles.searchingText}>Loading logs...</Text>}
           {!logsLoading && logs.length === 0 && (
-            <Text style={styles.emptyState}>No foods logged yet</Text>
+            <Text style={styles.emptyState}>No food logged yet — let's get your first one in</Text>
           )}
           {!logsLoading && logs.map((entry) => (
             <View key={entry.id} style={styles.logEntry}>
@@ -719,8 +725,8 @@ export default function App() {
         {/* Weekly Analytics */}
         <View style={styles.section}>
           <Text style={styles.sectionLabel}>LAST 7 DAYS</Text>
-          {weeklyLoading && <Text style={styles.searchingText}>Loading...</Text>}
-          {!weeklyLoading && weeklyData.length > 0 && (() => {
+          {weeklyLoading && weeklyData.length === 0 && <Text style={styles.searchingText}>Loading...</Text>}
+          {weeklyData.length > 0 && (() => {
             const max = Math.max(...weeklyData.map(d => d.total_calories), 1);
             return weeklyData.map((day) => {
               const label = new Date(day.date + "T00:00:00").toLocaleDateString([], { weekday: "short", month: "numeric", day: "numeric" });
@@ -812,7 +818,7 @@ const styles = StyleSheet.create({
     justifyContent: "space-between",
     alignItems: "flex-start",
     marginTop: 12,
-    marginBottom: 4,
+    marginBottom: 16,
   },
   appTitle: {
     fontSize: 34,
@@ -823,7 +829,7 @@ const styles = StyleSheet.create({
     fontSize: 14,
     fontFamily: "Inter-Variable",
     color: "#999",
-    marginBottom: 4,
+    marginBottom: 16,
   },
   logOutText: {
     fontSize: 13,
@@ -968,7 +974,7 @@ const styles = StyleSheet.create({
   logEntryRow: {
     flexDirection: "row",
     justifyContent: "space-between",
-    alignItems: "center",
+    alignItems: "flex-start",
   },
   logEntryText: {
     flex: 1,
@@ -1034,7 +1040,7 @@ const styles = StyleSheet.create({
   editActions: {
     flexDirection: "row",
     gap: 8,
-    marginTop: 2,
+    marginTop: 8,
   },
   editSaveButton: {
     flex: 1,
