@@ -43,21 +43,25 @@ def _score_food(food: dict, query: str) -> int:
     Assign a score to a USDA result. Higher score = better match for a generic query.
     This is used to pick the best result from a list of candidates.
     """
-    score = 0
+    score       = 0
     description = food.get("description", "").lower()
-    data_type    = food.get("dataType", "Branded")
+    data_type   = food.get("dataType", "Branded")
+    query_words = set(query.lower().split())
 
     # Reward generic data types, penalise branded ones
     score += DATA_TYPE_SCORE.get(data_type, -30)
 
     # Reward every query word that appears in the description
-    for word in query.lower().split():
+    for word in query_words:
         if word in description:
             score += 15
 
-    # Penalise descriptions that contain processed-food keywords
+    # Penalise descriptions that contain processed-food keywords —
+    # but only when those keywords were NOT part of the user's query.
+    # Without this guard, searching "orange juice" or "banana bread"
+    # would penalise the best matching results.
     for keyword in PROCESSED_KEYWORDS:
-        if keyword in description:
+        if keyword in description and keyword not in query_words:
             score -= 20
 
     # Shorter descriptions tend to be plainer foods ("Bananas, raw" beats
@@ -80,13 +84,13 @@ def _get_fallback_nutrition(query: str) -> dict:
     q = query.lower()
 
     if "apple" in q:
-        return {"calories": 95,  "protein": 0,  "carbs": 25, "fat": 0,  "matched_food": "fallback"}
+        return {"calories": 95,  "protein": 0,  "carbs": 25, "fat": 0}
     elif "banana" in q:
-        return {"calories": 89,  "protein": 1,  "carbs": 23, "fat": 0,  "matched_food": "fallback"}
+        return {"calories": 89,  "protein": 1,  "carbs": 23, "fat": 0}
     elif "burger" in q or "pizza" in q:
-        return {"calories": 650, "protein": 30, "carbs": 55, "fat": 35, "matched_food": "fallback"}
+        return {"calories": 650, "protein": 30, "carbs": 55, "fat": 35}
     else:
-        return {"calories": 250, "protein": 10, "carbs": 20, "fat": 15, "matched_food": "fallback"}
+        return {"calories": 250, "protein": 10, "carbs": 20, "fat": 15}
 
 
 # ---------------------------------------------------------------------------
@@ -118,19 +122,13 @@ def get_nutrition(query: str) -> dict:
 
         # Pick the highest-scoring result instead of blindly taking foods[0]
         best_food = max(foods, key=lambda food: _score_food(food, query))
-
-        # Temporary debug field — lets you see exactly which USDA item was chosen.
-        # Remove this once you are confident the selection logic is working well.
-        selected_description = best_food.get("description", "unknown")
-
         nutrients = best_food.get("foodNutrients", [])
 
         return {
-            "calories":     _extract_nutrient(nutrients, NUTRIENT_ID_CALORIES),
-            "protein":      _extract_nutrient(nutrients, NUTRIENT_ID_PROTEIN),
-            "carbs":        _extract_nutrient(nutrients, NUTRIENT_ID_CARBS),
-            "fat":          _extract_nutrient(nutrients, NUTRIENT_ID_FAT),
-            "matched_food": selected_description,   # <-- debug: remove when done
+            "calories": _extract_nutrient(nutrients, NUTRIENT_ID_CALORIES),
+            "protein":  _extract_nutrient(nutrients, NUTRIENT_ID_PROTEIN),
+            "carbs":    _extract_nutrient(nutrients, NUTRIENT_ID_CARBS),
+            "fat":      _extract_nutrient(nutrients, NUTRIENT_ID_FAT),
         }
 
     except Exception:
