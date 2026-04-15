@@ -247,12 +247,38 @@ def _normalize_query(query: str) -> str:
 
 
 # ---------------------------------------------------------------------------
-# Public function — called by the router
+# Quantity extractor
 # ---------------------------------------------------------------------------
 
-def get_nutrition(query: str) -> dict:
+def _extract_leading_quantity(query: str) -> int:
     """
-    Fetch nutrition data for a food query from the USDA FoodData Central API.
+    Return the leading integer quantity from a query (2–9 only), or 1 if none.
+    Supports digit form ("2 donuts") and number words ("three tacos").
+    Only inspects the first word so it never fires on mid-query numbers.
+    Capped at 9 to avoid obviously nonsensical multiplications.
+    """
+    _WORD_TO_INT = {
+        "two": 2, "three": 3, "four": 4, "five": 5,
+        "six": 6, "seven": 7, "eight": 8, "nine": 9,
+    }
+    words = query.strip().lower().split()
+    if not words:
+        return 1
+    first = words[0]
+    if first.isdigit():
+        n = int(first)
+        if 2 <= n <= 9:
+            return n
+    return _WORD_TO_INT.get(first, 1)
+
+
+# ---------------------------------------------------------------------------
+# Single-serving lookup (internal) + public wrapper with quantity scaling
+# ---------------------------------------------------------------------------
+
+def _fetch_nutrition(query: str) -> dict:
+    """
+    Fetch single-serving nutrition data from USDA FoodData Central.
     Scores the candidates and picks the best generic match.
     Falls back to rule-based estimates if the API fails or returns no results.
     """
@@ -324,3 +350,25 @@ def get_nutrition(query: str) -> dict:
 
     except Exception:
         return {**_get_fallback_nutrition(query), "is_estimated": True}
+
+
+def get_nutrition(query: str) -> dict:
+    """
+    Public entry point called by the router.
+    Extracts a leading quantity (e.g. "2 donuts" → qty=2), fetches a
+    single-serving result via _fetch_nutrition, then scales all macros
+    if qty > 1.  Quantity detection happens on the raw query before
+    normalization strips the number.
+    """
+    qty    = _extract_leading_quantity(query)
+    result = _fetch_nutrition(query)
+
+    if qty > 1:
+        return {
+            **result,
+            "calories": round(result["calories"] * qty, 1),
+            "protein":  round(result["protein"]  * qty, 1),
+            "carbs":    round(result["carbs"]     * qty, 1),
+            "fat":      round(result["fat"]       * qty, 1),
+        }
+    return result
