@@ -137,6 +137,36 @@ def _get_fallback_nutrition(query: str) -> dict:  # always returns is_estimated:
     if "pancake" in q or "waffle" in q:
         return {"calories": 400, "protein": 10, "carbs": 55, "fat": 15}
 
+    # ── Desserts ──────────────────────────────────────────────────────────────
+    if "ice cream" in q or "gelato" in q or "sorbet" in q:
+        return {"calories": 250, "protein": 3,  "carbs": 30, "fat": 13}
+    if "cupcake" in q:                               # must precede "cake" check
+        return {"calories": 300, "protein": 3,  "carbs": 40, "fat": 15}
+    if "cake" in q:                                  # also catches cheesecake, birthday cake
+        return {"calories": 350, "protein": 4,  "carbs": 50, "fat": 15}
+    if "brownie" in q:
+        return {"calories": 250, "protein": 3,  "carbs": 35, "fat": 12}
+    if "cookie" in q:
+        return {"calories": 200, "protein": 2,  "carbs": 28, "fat": 9}
+    if "pastry" in q or "croissant" in q or "danish" in q:
+        return {"calories": 300, "protein": 5,  "carbs": 35, "fat": 16}
+
+    # ── Snacks ────────────────────────────────────────────────────────────────
+    if "chips" in q or "crisps" in q:
+        return {"calories": 150, "protein": 2,  "carbs": 15, "fat": 10}
+    if "cracker" in q:
+        return {"calories": 150, "protein": 3,  "carbs": 20, "fat": 6}
+    if "popcorn" in q:
+        return {"calories": 150, "protein": 3,  "carbs": 18, "fat": 8}
+    if "protein bar" in q:
+        return {"calories": 250, "protein": 20, "carbs": 25, "fat": 8}
+    if "granola bar" in q or "granola" in q:
+        return {"calories": 200, "protein": 4,  "carbs": 30, "fat": 7}
+    if "trail mix" in q:
+        return {"calories": 300, "protein": 8,  "carbs": 30, "fat": 18}
+    if "candy" in q:
+        return {"calories": 200, "protein": 0,  "carbs": 35, "fat": 5}
+
     # ── Generic fallback ──────────────────────────────────────────────────────
     return {"calories": 250, "protein": 10, "carbs": 20, "fat": 15}
 
