@@ -1,6 +1,7 @@
 import { useState, useEffect, useRef } from "react";
 import { Platform, Modal } from "react-native";
 import { CameraView, useCameraPermissions } from "expo-camera";
+const barcodIcon = require("./assets/barcode.png");
 import { useFonts } from "expo-font";
 import DateTimePicker, { DateTimePickerAndroid } from "@react-native-community/datetimepicker";
 import {
@@ -522,16 +523,29 @@ export default function App() {
         {/* Search */}
         <View style={styles.section}>
           <Text style={styles.sectionLabel}>FOOD SEARCH</Text>
-          <TextInput
-            placeholder="e.g. banana, grilled chicken..."
-            placeholderTextColor="#aaa"
-            value={query}
-            onChangeText={setQuery}
-            onSubmitEditing={searchFood}
-            returnKeyType="search"
-            autoCapitalize="none"
-            style={styles.input}
-          />
+          <View style={styles.inputRow}>
+            <TextInput
+              placeholder="e.g. banana, grilled chicken..."
+              placeholderTextColor="#aaa"
+              value={query}
+              onChangeText={setQuery}
+              onSubmitEditing={searchFood}
+              returnKeyType="search"
+              autoCapitalize="none"
+              style={styles.input}
+            />
+            <TouchableOpacity
+              style={styles.scanButton}
+              onPress={async () => {
+                if (!cameraPermission?.granted) {
+                  await requestCameraPermission();
+                }
+                setIsScannerOpen(true);
+              }}
+            >
+              <Image source={barcodIcon} style={styles.scanButtonIcon} />
+            </TouchableOpacity>
+          </View>
           <View style={styles.searchButtons}>
             <View style={styles.searchButtonItem}>
               <Button title="Search" onPress={searchFood} disabled={searching} />
@@ -540,17 +554,6 @@ export default function App() {
               <Button title="Clear" onPress={clearSearch} color="#aaa" />
             </View>
           </View>
-          <TouchableOpacity
-            style={styles.scanButton}
-            onPress={async () => {
-              if (!cameraPermission?.granted) {
-                await requestCameraPermission();
-              }
-              setIsScannerOpen(true);
-            }}
-          >
-            <Text style={styles.scanButtonText}>Scan Barcode</Text>
-          </TouchableOpacity>
           {searching && <Text style={styles.searchingText}>Searching...</Text>}
         </View>
 
@@ -964,14 +967,20 @@ const styles = StyleSheet.create({
   },
 
   // Input
-  input: {
+  inputRow: {
+    flexDirection: "row",
+    alignItems: "center",
     borderWidth: 1,
     borderColor: "#ddd",
     borderRadius: 8,
-    padding: 12,
+    paddingHorizontal: 12,
+    marginBottom: 10,
+  },
+  input: {
+    flex: 1,
+    paddingVertical: 12,
     fontSize: 15,
     fontFamily: "Inter-Variable",
-    marginBottom: 10,
     color: "#111",
   },
 
@@ -992,17 +1001,13 @@ const styles = StyleSheet.create({
   },
 
   scanButton: {
-    marginTop: 10,
-    paddingVertical: 10,
-    borderRadius: 8,
-    borderWidth: 1,
-    borderColor: "#ccc",
-    alignItems: "center",
+    marginLeft: 8,
+    justifyContent: "center",
   },
-  scanButtonText: {
-    fontSize: 14,
-    fontFamily: "Inter-Variable",
-    color: "#555",
+  scanButtonIcon: {
+    width: 32,
+    height: 32,
+    resizeMode: "contain",
   },
 
   // Barcode scanner modal
