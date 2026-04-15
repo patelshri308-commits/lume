@@ -204,6 +204,49 @@ def _get_fallback_nutrition(query: str) -> dict:  # always returns is_estimated:
 
 
 # ---------------------------------------------------------------------------
+# Query normalizer
+# ---------------------------------------------------------------------------
+
+def _normalize_query(query: str) -> str:
+    """
+    Light normalization applied before USDA lookup and fallback matching.
+    Improves handling of common real-world query messiness:
+      - "with" add-ons     "burrito with guac"     → "burrito"
+      - Leading digits     "2 donuts"               → "donuts"
+      - Number words       "three tacos"            → "tacos"
+      - Filler articles    "a latte" / "the burger" → "latte" / "burger"
+      - Size modifiers     "large fries"            → "fries"
+    Preserves meaningful descriptors: "iced", "grilled", "banana", "chocolate".
+    """
+    q = query.lower().strip()
+
+    # Remove "with ..." add-on phrases — keep only the core food
+    if " with " in q:
+        q = q[:q.index(" with ")].strip()
+
+    # Strip a leading standalone digit: "2 donuts" → "donuts"
+    words = q.split()
+    if words and words[0].isdigit():
+        words = words[1:]
+        q = " ".join(words)
+
+    # Strip a leading number word or filler article
+    _LEADING = {"one", "two", "three", "four", "five", "six", "seven",
+                "eight", "nine", "ten", "a", "an", "the"}
+    words = q.split()
+    if words and words[0] in _LEADING:
+        words = words[1:]
+        q = " ".join(words)
+
+    # Remove size/quantity modifiers wherever they appear in the query
+    _SIZE = {"small", "medium", "large", "grande", "venti", "tall",
+             "mini", "regular", "extra", "double", "triple"}
+    words = [w for w in q.split() if w not in _SIZE]
+
+    return " ".join(words).strip()
+
+
+# ---------------------------------------------------------------------------
 # Public function — called by the router
 # ---------------------------------------------------------------------------
 
@@ -213,6 +256,8 @@ def get_nutrition(query: str) -> dict:
     Scores the candidates and picks the best generic match.
     Falls back to rule-based estimates if the API fails or returns no results.
     """
+    query = _normalize_query(query)
+
     try:
         response = httpx.get(
             USDA_SEARCH_URL,
