@@ -1,6 +1,6 @@
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel
-from app.services.nutrition_service import get_nutrition
+from app.services.query_router import route_food_query
 from app.services.barcode_service import lookup_barcode, BarcodeNotFoundError, BarcodeProviderError
 
 router = APIRouter()
@@ -16,8 +16,7 @@ class BarcodeRequest(BaseModel):
 
 @router.post("/food/search")
 def search_food(body: FoodSearchRequest):
-    nutrition = get_nutrition(body.query)
-    return {"name": body.query, **nutrition}
+    return route_food_query(body.query)
 
 
 @router.post("/food/barcode")
