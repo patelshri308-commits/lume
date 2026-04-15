@@ -113,6 +113,7 @@ export default function App() {
   const [editingLogId,  setEditingLogId]  = useState<number | null>(null);
   const [editFields,    setEditFields]    = useState({ name: "", calories: "", protein: "", carbs: "", fat: "" });
   const [savingEdit,    setSavingEdit]    = useState(false);
+  const [isScannerOpen, setIsScannerOpen] = useState(false);
   const [weeklyData,    setWeeklyData]    = useState<WeeklyDay[]>([]);
   const [weeklyLoading, setWeeklyLoading] = useState(false);
   const [refreshing,    setRefreshing]    = useState(false);
@@ -511,6 +512,12 @@ export default function App() {
               <Button title="Clear" onPress={clearSearch} color="#aaa" />
             </View>
           </View>
+          <TouchableOpacity
+            style={styles.scanButton}
+            onPress={() => setIsScannerOpen(true)}
+          >
+            <Text style={styles.scanButtonText}>Scan Barcode</Text>
+          </TouchableOpacity>
           {searching && <Text style={styles.searchingText}>Searching...</Text>}
         </View>
 
@@ -906,6 +913,20 @@ const styles = StyleSheet.create({
   },
   searchButtonItem: {
     flex: 1,
+  },
+
+  scanButton: {
+    marginTop: 10,
+    paddingVertical: 10,
+    borderRadius: 8,
+    borderWidth: 1,
+    borderColor: "#ccc",
+    alignItems: "center",
+  },
+  scanButtonText: {
+    fontSize: 14,
+    fontFamily: "Inter-Variable",
+    color: "#555",
   },
 
   // Cards
