@@ -93,6 +93,29 @@ def _get_fallback_nutrition(query: str) -> dict:  # always returns is_estimated:
     """Rule-based fallback used when the USDA API is unavailable or returns nothing."""
     q = query.lower()
 
+    # ── Phrase priority ───────────────────────────────────────────────────────
+    # Multi-word category phrases must be checked BEFORE single-ingredient
+    # keywords so that "banana smoothie" returns smoothie nutrition (not banana),
+    # "apple juice" returns juice nutrition (not apple), etc.
+    # Ordering within this block still matters: "orange juice" before "juice",
+    # "protein bar" before any candy/nut checks further down.
+    if "frappuccino" in q or "frappe" in q:
+        return {"calories": 400, "protein": 5,  "carbs": 60, "fat": 15}
+    if "milkshake" in q or "milk shake" in q:
+        return {"calories": 500, "protein": 10, "carbs": 70, "fat": 20}
+    if "smoothie" in q:
+        return {"calories": 300, "protein": 5,  "carbs": 55, "fat": 5}
+    if "latte" in q or "cappuccino" in q:
+        return {"calories": 150, "protein": 8,  "carbs": 15, "fat": 6}
+    if "protein bar" in q:
+        return {"calories": 250, "protein": 20, "carbs": 25, "fat": 8}
+    if "granola bar" in q or "granola" in q:
+        return {"calories": 200, "protein": 4,  "carbs": 30, "fat": 7}
+    if "orange juice" in q:
+        return {"calories": 110, "protein": 2,  "carbs": 26, "fat": 0}
+    if "juice" in q:
+        return {"calories": 120, "protein": 1,  "carbs": 28, "fat": 0}
+
     # ── Fruit ─────────────────────────────────────────────────────────────────
     if "apple" in q:
         return {"calories": 95,  "protein": 0,  "carbs": 25, "fat": 0}
