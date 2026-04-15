@@ -10,6 +10,19 @@ REQUEST_TIMEOUT   = 8.0
 
 
 # ---------------------------------------------------------------------------
+# Exceptions — raised instead of returning None so callers can distinguish
+# "not in database" from "couldn't reach the database".
+# ---------------------------------------------------------------------------
+
+class BarcodeNotFoundError(Exception):
+    """Product barcode was not found in the Open Food Facts database,
+    or the product exists but lacks usable nutrition data."""
+
+class BarcodeProviderError(Exception):
+    """Network error, HTTP error, or unexpected response from Open Food Facts."""
+
+
+# ---------------------------------------------------------------------------
 # Internal helpers
 # ---------------------------------------------------------------------------
 
@@ -64,17 +77,17 @@ def _get_macros(nutriments: dict) -> tuple | None:
 # Public function — called by the router
 # ---------------------------------------------------------------------------
 
-def lookup_barcode(barcode: str) -> dict | None:
+def lookup_barcode(barcode: str) -> dict:
     """
     Look up a packaged food by barcode using Open Food Facts.
 
-    Returns a normalized nutrition dict on success, or None if:
-      - the product is not found in the database
-      - the product lacks sufficient usable nutrition data
-      - the request fails for any reason
+    Returns a normalized nutrition dict on success.
 
-    The caller is responsible for surfacing a clean "not found" response;
-    this function never silently falls back to estimated values.
+    Raises:
+      BarcodeNotFoundError  — product not in the database, or product exists
+                              but lacks usable nutrition data.
+      BarcodeProviderError  — network error, HTTP error, or unexpected
+                              upstream response.
     """
     try:
         response = httpx.get(
@@ -85,40 +98,42 @@ def lookup_barcode(barcode: str) -> dict | None:
         response.raise_for_status()
         data = response.json()
 
-        # status == 1 means the product exists in the database
-        if data.get("status") != 1:
-            return None
+    except BarcodeNotFoundError:
+        raise   # should not occur here, but guard against re-entry
+    except Exception as exc:
+        raise BarcodeProviderError(f"Upstream request failed: {exc}") from exc
 
-        product    = data.get("product", {})
-        nutriments = product.get("nutriments", {})
-        macros     = _get_macros(nutriments)
+    # status == 1 means the product exists in the database
+    if data.get("status") != 1:
+        raise BarcodeNotFoundError(barcode)
 
-        if macros is None:
-            return None   # product found but nutrition data is unusable
+    product    = data.get("product", {})
+    nutriments = product.get("nutriments", {})
+    macros     = _get_macros(nutriments)
 
-        calories, protein, carbs, fat = macros
+    if macros is None:
+        raise BarcodeNotFoundError(barcode)   # product found but data unusable
 
-        name = (
-            product.get("product_name")
-            or product.get("product_name_en")
-            or "Unknown Product"
-        ).strip()
+    calories, protein, carbs, fat = macros
 
-        brand   = (product.get("brands")       or "").strip() or None
-        serving = (product.get("serving_size") or "").strip() or None
+    name = (
+        product.get("product_name")
+        or product.get("product_name_en")
+        or "Unknown Product"
+    ).strip()
 
-        return {
-            "name":                name,
-            "calories":            round(calories),
-            "protein":             round(protein, 1),
-            "carbs":               round(carbs, 1),
-            "fat":                 round(fat, 1),
-            "is_estimated":        False,
-            "source_type":         "barcode",
-            "barcode":             barcode.strip(),
-            "brand_name":          brand,
-            "serving_description": serving,
-        }
+    brand   = (product.get("brands")       or "").strip() or None
+    serving = (product.get("serving_size") or "").strip() or None
 
-    except Exception:
-        return None
+    return {
+        "name":                name,
+        "calories":            round(calories),
+        "protein":             round(protein, 1),
+        "carbs":               round(carbs, 1),
+        "fat":                 round(fat, 1),
+        "is_estimated":        False,
+        "source_type":         "barcode",
+        "barcode":             barcode.strip(),
+        "brand_name":          brand,
+        "serving_description": serving,
+    }

@@ -1,7 +1,7 @@
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel
 from app.services.nutrition_service import get_nutrition
-from app.services.barcode_service import lookup_barcode
+from app.services.barcode_service import lookup_barcode, BarcodeNotFoundError, BarcodeProviderError
 
 router = APIRouter()
 
@@ -27,12 +27,15 @@ def scan_barcode(body: BarcodeRequest):
     if not code:
         raise HTTPException(status_code=400, detail="Barcode must not be empty.")
 
-    result = lookup_barcode(code)
-
-    if result is None:
+    try:
+        return lookup_barcode(code)
+    except BarcodeNotFoundError:
         raise HTTPException(
             status_code=404,
             detail=f"No product found for barcode {code!r}.",
         )
-
-    return result
+    except BarcodeProviderError:
+        raise HTTPException(
+            status_code=502,
+            detail="Barcode lookup service is temporarily unavailable. Please try again.",
+        )

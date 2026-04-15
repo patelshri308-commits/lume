@@ -29,7 +29,9 @@ type NutritionResult = {
   carbs:        number;
   fat:          number;
   is_estimated: boolean;
-  source_type?: string;   // "barcode" for scanned results, absent for text search
+  source_type?:         string;   // "barcode" for scanned results, absent for text search
+  brand_name?:          string | null;
+  serving_description?: string | null;
 };
 
 type FoodLogEntry = NutritionResult & { id: number; created_at: string };
@@ -610,6 +612,11 @@ export default function App() {
         {result && adjusted && (
           <View style={styles.card}>
             <Text style={styles.cardTitle}>{result.name}</Text>
+            {result.source_type === "barcode" && (result.brand_name || result.serving_description) && (
+              <Text style={styles.barcodeSubtitle}>
+                {[result.brand_name, result.serving_description].filter(Boolean).join(" • ")}
+              </Text>
+            )}
             <View style={styles.macroRow}>
               <MacroItem label="Calories" value={`${adjusted.calories}`} unit="kcal" />
               <MacroItem label="Protein"  value={`${adjusted.protein}`}  unit="g" />
@@ -1069,8 +1076,14 @@ const styles = StyleSheet.create({
   cardTitle: {
     fontSize: 16,
     fontFamily: "Chillax-Medium",
-    marginBottom: 12,
+    marginBottom: 4,
     textTransform: "capitalize",
+  },
+  barcodeSubtitle: {
+    fontSize: 12,
+    fontFamily: "Inter-Variable",
+    color: "#aaa",
+    marginBottom: 10,
   },
   cardAction: {
     marginTop: 14,
