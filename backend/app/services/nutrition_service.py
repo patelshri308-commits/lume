@@ -199,7 +199,7 @@ def _get_fallback_nutrition(query: str) -> dict:  # always returns is_estimated:
         _diet_soda    = any(w in q for w in ("soda", "cola", "coke", "pepsi", "lemon lime", "sprite"))
         _diet_energy  = any(w in q for w in ("energy drink", "red bull", "monster", "energy"))
         if _diet_soda:
-            return {"calories": 5,  "protein": 0, "carbs": 1, "fat": 0}
+            return {"calories": 0,  "protein": 0, "carbs": 0, "fat": 0}
         if _diet_energy:
             return {"calories": 10, "protein": 0, "carbs": 1, "fat": 0}
 
