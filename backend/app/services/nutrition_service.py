@@ -256,20 +256,50 @@ def _extract_leading_quantity(query: str) -> int:
     Supports digit form ("2 donuts") and number words ("three tacos").
     Only inspects the first word so it never fires on mid-query numbers.
     Capped at 9 to avoid obviously nonsensical multiplications.
+
+    Safety guard: if the second token is a measurement/unit word (oz, cups,
+    slices, grams, etc.) the number describes a serving size, not a whole-item
+    count — return 1 so multiplication is skipped.
     """
     _WORD_TO_INT = {
         "two": 2, "three": 3, "four": 4, "five": 5,
         "six": 6, "seven": 7, "eight": 8, "nine": 9,
     }
+    # Unit words that signal the leading number is a measurement, not a count.
+    _UNITS = {
+        "oz", "ounce", "ounces",
+        "g", "gram", "grams",
+        "lb", "lbs", "pound", "pounds",
+        "cup", "cups",
+        "tbsp", "tsp",
+        "slice", "slices",
+        "fl", "floz", "ml", "l",
+        "serving", "servings",
+        "piece", "pieces",
+    }
     words = query.strip().lower().split()
     if not words:
         return 1
+
     first = words[0]
+
+    # Determine the raw candidate quantity
+    candidate = None
     if first.isdigit():
         n = int(first)
         if 2 <= n <= 9:
-            return n
-    return _WORD_TO_INT.get(first, 1)
+            candidate = n
+    else:
+        candidate = _WORD_TO_INT.get(first)
+
+    if candidate is None:
+        return 1
+
+    # Block scaling when the second token is a unit word
+    if len(words) >= 2 and words[1] in _UNITS:
+        return 1
+
+    return candidate
 
 
 # ---------------------------------------------------------------------------
