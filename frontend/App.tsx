@@ -1,5 +1,6 @@
-import { useState, useEffect } from "react";
-import { Platform } from "react-native";
+import { useState, useEffect, useRef } from "react";
+import { Platform, Modal } from "react-native";
+import { CameraView, useCameraPermissions } from "expo-camera";
 import { useFonts } from "expo-font";
 import DateTimePicker, { DateTimePickerAndroid } from "@react-native-community/datetimepicker";
 import {
@@ -27,6 +28,7 @@ type NutritionResult = {
   carbs:        number;
   fat:          number;
   is_estimated: boolean;
+  source_type?: string;   // "barcode" for scanned results, absent for text search
 };
 
 type FoodLogEntry = NutritionResult & { id: number; created_at: string };
@@ -113,7 +115,10 @@ export default function App() {
   const [editingLogId,  setEditingLogId]  = useState<number | null>(null);
   const [editFields,    setEditFields]    = useState({ name: "", calories: "", protein: "", carbs: "", fat: "" });
   const [savingEdit,    setSavingEdit]    = useState(false);
-  const [isScannerOpen, setIsScannerOpen] = useState(false);
+  const [isScannerOpen,  setIsScannerOpen]  = useState(false);
+  const [scannedBarcode, setScannedBarcode] = useState<string | null>(null);
+  const [cameraPermission, requestCameraPermission] = useCameraPermissions();
+  const scanLockRef = useRef(false);  // prevents duplicate scan callbacks
   const [weeklyData,    setWeeklyData]    = useState<WeeklyDay[]>([]);
   const [weeklyLoading, setWeeklyLoading] = useState(false);
   const [refreshing,    setRefreshing]    = useState(false);
@@ -379,6 +384,29 @@ export default function App() {
     }
   }, [session]); // eslint-disable-line react-hooks/exhaustive-deps
 
+  // When a barcode is scanned, look it up and feed the result into the
+  // existing result state so the normal card + log flow handles it.
+  useEffect(() => {
+    if (!scannedBarcode) return;
+    setLogMessage("");
+    setHasSearched(true);
+    setServings(1);
+    setSearching(true);
+    axios
+      .post(`${API_URL}/food/barcode`, { barcode: scannedBarcode })
+      .then((res) => {
+        setResult(res.data);
+      })
+      .catch(() => {
+        setResult(null);
+        setLogMessage("Barcode not found — try searching by name.");
+      })
+      .finally(() => {
+        setScannedBarcode(null);
+        setSearching(false);
+      });
+  }, [scannedBarcode]); // eslint-disable-line react-hooks/exhaustive-deps
+
   // Derived: adjusted nutrition values for the current serving count.
   // The original `result` object is never mutated.
   const adjusted = result
@@ -514,12 +542,60 @@ export default function App() {
           </View>
           <TouchableOpacity
             style={styles.scanButton}
-            onPress={() => setIsScannerOpen(true)}
+            onPress={async () => {
+              if (!cameraPermission?.granted) {
+                await requestCameraPermission();
+              }
+              setIsScannerOpen(true);
+            }}
           >
             <Text style={styles.scanButtonText}>Scan Barcode</Text>
           </TouchableOpacity>
           {searching && <Text style={styles.searchingText}>Searching...</Text>}
         </View>
+
+        {/* Barcode Scanner Modal */}
+        <Modal
+          visible={isScannerOpen}
+          animationType="slide"
+          onRequestClose={() => setIsScannerOpen(false)}
+        >
+          <View style={styles.scannerContainer}>
+            {!cameraPermission?.granted ? (
+              <View style={styles.scannerPermissionBox}>
+                <Text style={styles.scannerPermissionText}>
+                  Camera access is required to scan barcodes.
+                </Text>
+                <Button title="Grant Permission" onPress={requestCameraPermission} />
+                <View style={{ marginTop: 12 }}>
+                  <Button title="Cancel" onPress={() => setIsScannerOpen(false)} color="#aaa" />
+                </View>
+              </View>
+            ) : (
+              <>
+                <CameraView
+                  style={styles.scannerCamera}
+                  facing="back"
+                  barcodeScannerSettings={{ barcodeTypes: ["ean13", "ean8", "upc_a", "upc_e", "qr"] }}
+                  onBarcodeScanned={({ data }) => {
+                    if (scanLockRef.current) return;
+                    scanLockRef.current = true;
+                    setScannedBarcode(data);
+                    setIsScannerOpen(false);
+                    // reset lock after modal closes so scanner can be reused
+                    setTimeout(() => { scanLockRef.current = false; }, 1000);
+                  }}
+                />
+                <View style={styles.scannerOverlay}>
+                  <View style={styles.scannerReticle} />
+                </View>
+                <View style={styles.scannerActions}>
+                  <Button title="Cancel" onPress={() => setIsScannerOpen(false)} color="#aaa" />
+                </View>
+              </>
+            )}
+          </View>
+        </Modal>
 
         {/* Search Result */}
         {!result && !searching && !hasSearched && (
@@ -927,6 +1003,49 @@ const styles = StyleSheet.create({
     fontSize: 14,
     fontFamily: "Inter-Variable",
     color: "#555",
+  },
+
+  // Barcode scanner modal
+  scannerContainer: {
+    flex: 1,
+    backgroundColor: "#000",
+  },
+  scannerCamera: {
+    flex: 1,
+  },
+  scannerOverlay: {
+    ...StyleSheet.absoluteFillObject,
+    alignItems: "center",
+    justifyContent: "center",
+  },
+  scannerReticle: {
+    width: 240,
+    height: 160,
+    borderWidth: 2,
+    borderColor: "#fff",
+    borderRadius: 8,
+    opacity: 0.7,
+  },
+  scannerActions: {
+    position: "absolute",
+    bottom: 48,
+    left: 0,
+    right: 0,
+    alignItems: "center",
+  },
+  scannerPermissionBox: {
+    flex: 1,
+    alignItems: "center",
+    justifyContent: "center",
+    padding: 32,
+    backgroundColor: "#fff",
+  },
+  scannerPermissionText: {
+    fontSize: 15,
+    fontFamily: "Inter-Variable",
+    color: "#333",
+    textAlign: "center",
+    marginBottom: 20,
   },
 
   // Cards
