@@ -286,9 +286,36 @@ def get_nutrition(query: str) -> dict:
             return {**_get_fallback_nutrition(query), "is_estimated": True}
 
         nutrients = best_food.get("foodNutrients", [])
+        calories  = _extract_nutrient(nutrients, NUTRIENT_ID_CALORIES)
+
+        # Sanity check: for known meal/drink categories, reject USDA results
+        # whose calorie count is implausibly low.  This catches cases where a
+        # high-scoring ingredient (e.g. plain chicken) wins for a full-meal
+        # query (e.g. "chicken burrito") and returns ingredient-level data
+        # that looks precise but is clearly wrong for the whole dish.
+        # Thresholds are intentionally conservative — only block obvious misses.
+        _MEAL_CALORIE_FLOOR = {
+            "burrito":     300,
+            "taco":        100,
+            "sandwich":    200,
+            "wrap":        200,
+            "burger":      250,
+            "pizza":       200,
+            "smoothie":    150,
+            "latte":        80,
+            "cappuccino":   80,
+            "frappuccino": 250,
+            "milkshake":   250,
+            "ramen":       300,
+            "pasta":       250,
+            "spaghetti":   250,
+        }
+        for keyword, floor in _MEAL_CALORIE_FLOOR.items():
+            if keyword in query and calories < floor:
+                return {**_get_fallback_nutrition(query), "is_estimated": True}
 
         return {
-            "calories":     _extract_nutrient(nutrients, NUTRIENT_ID_CALORIES),
+            "calories":     calories,
             "protein":      _extract_nutrient(nutrients, NUTRIENT_ID_PROTEIN),
             "carbs":        _extract_nutrient(nutrients, NUTRIENT_ID_CARBS),
             "fat":          _extract_nutrient(nutrients, NUTRIENT_ID_FAT),
