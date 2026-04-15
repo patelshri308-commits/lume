@@ -168,6 +168,18 @@ def _get_fallback_nutrition(query: str) -> dict:  # always returns is_estimated:
         return {"calories": 200, "protein": 0,  "carbs": 35, "fat": 5}
 
     # ── Beverages ─────────────────────────────────────────────────────────────
+    # Diet / zero-sugar drinks must be checked FIRST so they do not fall
+    # through to the regular soda / energy-drink branches above.
+    _is_diet = ("diet" in q or "zero sugar" in q or "sugar free" in q
+                or "coke zero" in q or "pepsi zero" in q or "zero" in q.split())
+    if _is_diet:
+        _diet_soda    = any(w in q for w in ("soda", "cola", "coke", "pepsi", "lemon lime", "sprite"))
+        _diet_energy  = any(w in q for w in ("energy drink", "red bull", "monster", "energy"))
+        if _diet_soda:
+            return {"calories": 5,  "protein": 0, "carbs": 1, "fat": 0}
+        if _diet_energy:
+            return {"calories": 10, "protein": 0, "carbs": 1, "fat": 0}
+
     # Specific checks must precede their generic parent:
     #   frappuccino/frappe → before coffee
     #   iced tea           → before tea
@@ -186,7 +198,7 @@ def _get_fallback_nutrition(query: str) -> dict:  # always returns is_estimated:
         return {"calories": 110, "protein": 2,  "carbs": 26, "fat": 0}
     if "juice" in q:
         return {"calories": 120, "protein": 1,  "carbs": 28, "fat": 0}
-    if "soda" in q or "cola" in q:
+    if "soda" in q or "cola" in q or "coke" in q or "pepsi" in q or "sprite" in q:
         return {"calories": 150, "protein": 0,  "carbs": 40, "fat": 0}
     if "lemonade" in q:
         return {"calories": 150, "protein": 0,  "carbs": 38, "fat": 0}
