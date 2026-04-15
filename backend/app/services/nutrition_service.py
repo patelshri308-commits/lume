@@ -167,6 +167,38 @@ def _get_fallback_nutrition(query: str) -> dict:  # always returns is_estimated:
     if "candy" in q:
         return {"calories": 200, "protein": 0,  "carbs": 35, "fat": 5}
 
+    # ── Beverages ─────────────────────────────────────────────────────────────
+    # Specific checks must precede their generic parent:
+    #   frappuccino/frappe → before coffee
+    #   iced tea           → before tea
+    #   orange juice       → before juice   (note: "apple juice" is caught earlier by "apple")
+    if "frappuccino" in q or "frappe" in q:
+        return {"calories": 400, "protein": 5,  "carbs": 60, "fat": 15}
+    if "milkshake" in q or "milk shake" in q:
+        return {"calories": 500, "protein": 10, "carbs": 70, "fat": 20}
+    if "smoothie" in q:
+        return {"calories": 300, "protein": 5,  "carbs": 55, "fat": 5}
+    if "latte" in q or "cappuccino" in q:
+        return {"calories": 150, "protein": 8,  "carbs": 15, "fat": 6}
+    if "coffee" in q:
+        return {"calories": 50,  "protein": 1,  "carbs": 8,  "fat": 2}
+    if "orange juice" in q:
+        return {"calories": 110, "protein": 2,  "carbs": 26, "fat": 0}
+    if "juice" in q:
+        return {"calories": 120, "protein": 1,  "carbs": 28, "fat": 0}
+    if "soda" in q or "cola" in q:
+        return {"calories": 150, "protein": 0,  "carbs": 40, "fat": 0}
+    if "lemonade" in q:
+        return {"calories": 150, "protein": 0,  "carbs": 38, "fat": 0}
+    if "sports drink" in q or "gatorade" in q or "powerade" in q:
+        return {"calories": 100, "protein": 0,  "carbs": 25, "fat": 0}
+    if "energy drink" in q or "red bull" in q or "monster" in q:
+        return {"calories": 150, "protein": 1,  "carbs": 35, "fat": 0}
+    if "iced tea" in q:                              # must precede "tea" check
+        return {"calories": 100, "protein": 0,  "carbs": 25, "fat": 0}
+    if "tea" in q:
+        return {"calories": 0,   "protein": 0,  "carbs": 0,  "fat": 0}
+
     # ── Generic fallback ──────────────────────────────────────────────────────
     return {"calories": 250, "protein": 10, "carbs": 20, "fat": 15}
 
