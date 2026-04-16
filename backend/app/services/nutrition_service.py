@@ -424,9 +424,16 @@ def get_nutrition(query: str) -> dict:
     single-serving result via _fetch_nutrition, then scales all macros
     if qty > 1.  Quantity detection happens on the raw query before
     normalization strips the number.
+
+    Always stamps a "name" field (normalized query) so every response
+    from this service carries the full shape expected by POST /logs.
     """
     qty    = _extract_leading_quantity(query)
     result = _fetch_nutrition(query)
+
+    # Normalize the query for display: strips leading counts, size words,
+    # and "with ..." add-ons so the stored name is clean.
+    result["name"] = _normalize_query(query) or query.strip()
 
     if qty > 1:
         return {
