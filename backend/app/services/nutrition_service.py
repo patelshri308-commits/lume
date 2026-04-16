@@ -191,6 +191,11 @@ def _get_fallback_nutrition(query: str) -> dict:  # always returns is_estimated:
         return {"calories": 200, "protein": 0,  "carbs": 35, "fat": 5}
 
     # ── Beverages ─────────────────────────────────────────────────────────────
+    # Coconut water — must come BEFORE the plain-water rule so it is never
+    # zeroed by the " water" suffix match below.
+    if "coconut water" in q:
+        return {"calories": 45, "protein": 0, "carbs": 11, "fat": 0}
+
     # Plain water variants — checked before any other beverage rule so that
     # "sparkling water", "mineral water", etc. never hit the generic fallback.
     # "flavored water" is intentionally excluded here (may have calories).
