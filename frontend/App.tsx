@@ -130,6 +130,7 @@ export default function App() {
   const [result,     setResult]     = useState<NutritionResult | null>(null);
   const [logMessage, setLogMessage] = useState("");
   const [logs,       setLogs]       = useState<FoodLogEntry[]>([]);
+  const [showAllLogs, setShowAllLogs] = useState(false);
   const [summary,    setSummary]    = useState<DailySummary | null>(null);
   const [searching,     setSearching]     = useState(false);
   const [hasSearched,   setHasSearched]   = useState(false);
@@ -394,6 +395,7 @@ export default function App() {
   // as soon as a valid token arrives — no request is made until then.
   useEffect(() => {
     if (!session?.access_token || !isValidDate(selectedDate)) return;
+    setShowAllLogs(false);   // collapse when switching dates or on first load
     loadLogs(selectedDate);
     loadSummary(selectedDate);
   }, [selectedDate, session]); // eslint-disable-line react-hooks/exhaustive-deps
@@ -633,7 +635,7 @@ export default function App() {
           {!logsLoading && logs.length === 0 && (
             <Text style={styles.emptyState}>No food logged yet — let's get your first one in</Text>
           )}
-          {!logsLoading && logs.map((entry) => (
+          {!logsLoading && (showAllLogs ? logs : logs.slice(0, 1)).map((entry) => (
             <View key={entry.id} style={styles.logEntry}>
               {editingLogId === entry.id ? (
                 /* ── Inline edit form ── */
@@ -758,6 +760,16 @@ export default function App() {
               )}
             </View>
           ))}
+          {!logsLoading && logs.length > 1 && (
+            <TouchableOpacity
+              onPress={() => setShowAllLogs(v => !v)}
+              style={styles.logsToggle}
+            >
+              <Text style={styles.logsToggleText}>
+                {showAllLogs ? "Hide" : `Show all ${logs.length}`}
+              </Text>
+            </TouchableOpacity>
+          )}
         </View>
 
         {/* Weekly Analytics */}
@@ -1214,6 +1226,17 @@ const styles = StyleSheet.create({
     fontSize: 13,
     fontFamily: "Inter-Variable",
     color: "#555",
+  },
+
+  logsToggle: {
+    marginTop: 10,
+    alignSelf: "center",
+  },
+  logsToggleText: {
+    fontSize: 12,
+    fontFamily: "Inter-Variable",
+    color: COLORS.primary,
+    fontWeight: "600",
   },
 
   deleteButton: {
