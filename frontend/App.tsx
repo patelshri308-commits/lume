@@ -735,7 +735,10 @@ export default function App() {
 
         {/* Weekly Analytics */}
         <View style={styles.section}>
-          <Text style={styles.sectionLabel}>LAST 7 DAYS</Text>
+          <View style={{ flexDirection: "row", justifyContent: "space-between", alignItems: "center" }}>
+            <Text style={styles.sectionLabel}>LAST 7 DAYS</Text>
+            <Text style={styles.sectionLabel}>Cals</Text>
+          </View>
           {weeklyLoading && weeklyData.length === 0 && <Text style={styles.searchingText}>Loading...</Text>}
           {weeklyData.length > 0 && (() => {
             const max = Math.max(...weeklyData.map(d => d.total_calories), 1);
