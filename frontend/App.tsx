@@ -97,6 +97,28 @@ function formatDateLabel(dateStr: string): string {
   return `${month} ${day}${suffix}, ${date.getFullYear()}`;
 }
 
+// ---------------------------------------------------------------------------
+// Pure helper — no state dependency, lives outside the component.
+// Parses a leading quantity word or digit from the raw query string.
+// ---------------------------------------------------------------------------
+function _parseQuery(raw: string): { foodQuery: string; parsedServings: number } {
+  const NUMBER_WORDS: Record<string, number> = {
+    one: 1, two: 2, three: 3, four: 4,  five: 5,
+    six: 6, seven: 7, eight: 8, nine: 9, ten: 10,
+  };
+  const wordList = Object.keys(NUMBER_WORDS).join("|");
+  const pattern  = new RegExp(`^(\\d+|${wordList})\\s+(.+)$`, "i");
+  const match    = raw.trim().match(pattern);
+  if (match) {
+    const token = match[1].toLowerCase();
+    return {
+      parsedServings: NUMBER_WORDS[token] ?? parseInt(token, 10),
+      foodQuery:      match[2].trim(),
+    };
+  }
+  return { parsedServings: 1, foodQuery: raw.trim() };
+}
+
 export default function App() {
   const [fontsLoaded] = useFonts({
     "Chillax-Regular": require("./assets/fonts/Chillax-Regular.otf"),
@@ -175,27 +197,7 @@ export default function App() {
   const searchFood = async () => {
     setLogMessage("");
     setHasSearched(true);
-
-    // Map of supported number words to their integer values
-    const NUMBER_WORDS: Record<string, number> = {
-      one: 1, two: 2, three: 3, four: 4,  five: 5,
-      six: 6, seven: 7, eight: 8, nine: 9, ten: 10,
-    };
-
-    // Build a regex that matches a leading digit(s) OR a supported number word, followed by a space
-    const wordList   = Object.keys(NUMBER_WORDS).join("|");
-    const pattern    = new RegExp(`^(\\d+|${wordList})\\s+(.+)$`, "i");
-    const match      = query.trim().match(pattern);
-
-    let parsedServings = 1;
-    let foodQuery      = query.trim();
-
-    if (match) {
-      const token = match[1].toLowerCase();
-      parsedServings = NUMBER_WORDS[token] ?? parseInt(token, 10);
-      foodQuery      = match[2].trim();
-    }
-
+    const { foodQuery, parsedServings } = _parseQuery(query);
     setServings(parsedServings);
     setSearching(true);
     try {
@@ -205,6 +207,56 @@ export default function App() {
       setLogMessage("Failed to search");
     } finally {
       setSearching(false);
+    }
+  };
+
+  // Triggered by the keyboard Return/Search key.
+  // Searches and, on a valid result, immediately logs it and clears the input
+  // so the user can quickly move on to the next item.
+  const searchAndLog = async () => {
+    if (!query.trim()) return;
+    setLogMessage("");
+    setHasSearched(true);
+    const { foodQuery, parsedServings } = _parseQuery(query);
+    setServings(parsedServings);
+    setSearching(true);
+
+    let food: NutritionResult | null = null;
+    try {
+      const res = await axios.post(`${API_URL}/food/search`, { query: foodQuery });
+      food = res.data as NutritionResult;
+      setResult(food);
+    } catch {
+      setLogMessage("Failed to search");
+      setSearching(false);
+      return;
+    }
+    setSearching(false);
+
+    if (!food) return;
+    setLoggingFood(true);
+    try {
+      await axios.post(
+        `${API_URL}/logs`,
+        {
+          name:     food.name,
+          calories: food.calories * parsedServings,
+          protein:  food.protein  * parsedServings,
+          carbs:    food.carbs    * parsedServings,
+          fat:      food.fat      * parsedServings,
+          log_date: selectedDate,
+        },
+        { headers: await getAuthHeaders() },
+      );
+      setQuery("");      // clear input for next item
+      setLogMessage("Food logged");
+      await loadSummary();
+      await loadLogs();
+      await loadWeekly();
+    } catch {
+      setLogMessage("Failed to log food");
+    } finally {
+      setLoggingFood(false);
     }
   };
 
@@ -531,7 +583,7 @@ export default function App() {
               placeholderTextColor="#aaa"
               value={query}
               onChangeText={setQuery}
-              onSubmitEditing={searchFood}
+              onSubmitEditing={searchAndLog}
               returnKeyType="search"
               autoCapitalize="none"
               style={styles.input}
