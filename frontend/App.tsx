@@ -515,6 +515,7 @@ export default function App() {
     <SafeAreaProvider>
     <SafeAreaView style={styles.safe}>
       <ScrollView
+        style={styles.scrollView}
         contentContainerStyle={styles.container}
         refreshControl={
           <RefreshControl
@@ -555,40 +556,6 @@ export default function App() {
               style={styles.datePicker}
             />
           )}
-        </View>
-
-        {/* Search */}
-        <View style={styles.section}>
-          <Text style={styles.sectionLabel}>FOOD SEARCH</Text>
-          <View style={styles.inputRow}>
-            <TextInput
-              placeholder="e.g. banana, grilled chicken..."
-              placeholderTextColor="#aaa"
-              value={query}
-              onChangeText={setQuery}
-              onSubmitEditing={searchAndLog}
-              returnKeyType="search"
-              autoCapitalize="none"
-              style={styles.input}
-            />
-            <TouchableOpacity
-              style={styles.scanButton}
-              onPress={async () => {
-                if (!cameraPermission?.granted) {
-                  await requestCameraPermission();
-                }
-                setIsScannerOpen(true);
-              }}
-            >
-              <Image source={barcodIcon} style={styles.scanButtonIcon} />
-            </TouchableOpacity>
-          </View>
-          {searching && <Text style={styles.searchingText}>Searching...</Text>}
-          {!searching && logMessage ? (
-            <Text style={logMessage.startsWith("Logged") || logMessage === "Food logged" ? styles.success : styles.error}>
-              {logMessage}
-            </Text>
-          ) : null}
         </View>
 
         {/* Barcode Scanner Modal */}
@@ -818,6 +785,43 @@ export default function App() {
         </View>
 
       </ScrollView>
+
+      {/* Floating bottom search bar — lives outside the ScrollView so it
+          stays pinned at the bottom of the SafeAreaView on all screen sizes.
+          SafeAreaView already insets for the home indicator, so no extra
+          bottom padding is needed here. */}
+      <View style={styles.bottomBar}>
+        <View style={styles.inputRow}>
+          <TextInput
+            placeholder="e.g. banana, grilled chicken..."
+            placeholderTextColor="#aaa"
+            value={query}
+            onChangeText={setQuery}
+            onSubmitEditing={searchAndLog}
+            returnKeyType="search"
+            autoCapitalize="none"
+            style={styles.input}
+          />
+          <TouchableOpacity
+            style={styles.scanButton}
+            onPress={async () => {
+              if (!cameraPermission?.granted) {
+                await requestCameraPermission();
+              }
+              setIsScannerOpen(true);
+            }}
+          >
+            <Image source={barcodIcon} style={styles.scanButtonIcon} />
+          </TouchableOpacity>
+        </View>
+        {searching && <Text style={styles.searchingText}>Searching...</Text>}
+        {!searching && logMessage ? (
+          <Text style={logMessage.startsWith("Logged") || logMessage === "Food logged" ? styles.success : styles.error}>
+            {logMessage}
+          </Text>
+        ) : null}
+      </View>
+
     </SafeAreaView>
     </SafeAreaProvider>
   );
@@ -846,9 +850,25 @@ const styles = StyleSheet.create({
     flex: 1,
     backgroundColor: "#fff",
   },
+  // flex:1 ensures the ScrollView fills available space so the bottom bar
+  // is always pushed to the bottom rather than floating mid-screen.
+  scrollView: {
+    flex: 1,
+  },
   container: {
     padding: 20,
     paddingBottom: 48,
+  },
+  // Docked search bar — sits between the ScrollView and the safe-area bottom.
+  // Not absolutely positioned: keyboard avoidance works naturally because iOS
+  // pushes the whole SafeAreaView up when the keyboard opens.
+  bottomBar: {
+    borderTopWidth: 1,
+    borderTopColor: "#eee",
+    backgroundColor: "#fff",
+    paddingHorizontal: 16,
+    paddingTop: 10,
+    paddingBottom: 8,
   },
 
   // Auth screen
