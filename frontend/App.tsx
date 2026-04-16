@@ -131,6 +131,7 @@ export default function App() {
   const [logs,       setLogs]       = useState<FoodLogEntry[]>([]);
   const [showAllLogs, setShowAllLogs] = useState(false);
   const [summary,    setSummary]    = useState<DailySummary | null>(null);
+  const [todayCalories, setTodayCalories] = useState<number | null>(null);
   const [searching,     setSearching]     = useState(false);
   const [logsLoading,   setLogsLoading]   = useState(false);
   const [summaryLoading,setSummaryLoading]= useState(false);
@@ -230,6 +231,7 @@ export default function App() {
       await loadSummary();
       await loadLogs();
       await loadWeekly();
+      await loadTodayCalories();
     } catch {
       setLogMessage("Failed to log food");
     }
@@ -250,6 +252,20 @@ export default function App() {
     }
   };
 
+  // Always fetches today's total regardless of the selected viewing date,
+  // so the badge reflects live progress even when browsing other days.
+  const loadTodayCalories = async () => {
+    if (!session?.access_token) return;
+    try {
+      const res = await axios.get(`${API_URL}/dashboard/daily?date=${localToday()}`, {
+        headers: await getAuthHeaders(),
+      });
+      setTodayCalories(res.data.total_calories ?? 0);
+    } catch {
+      // silently fail — badge shows stale value until next successful fetch
+    }
+  };
+
   const deleteLog = async (id: number) => {
     setDeletingLogId(id);
     try {
@@ -259,6 +275,7 @@ export default function App() {
       await loadSummary();
       await loadLogs();
       await loadWeekly();
+      await loadTodayCalories();
     } catch (err) {
       setLogMessage("Failed to delete entry");
     } finally {
@@ -284,6 +301,7 @@ export default function App() {
       await loadSummary();
       await loadLogs();
       await loadWeekly();
+      await loadTodayCalories();
     } catch (err) {
       setLogMessage("Failed to update entry");
     } finally {
@@ -347,6 +365,7 @@ export default function App() {
         loadLogs(selectedDate),
         loadSummary(selectedDate),
         loadWeekly(),
+        loadTodayCalories(),
       ]);
     } finally {
       setRefreshing(false);
@@ -371,10 +390,12 @@ export default function App() {
       setLogs([]);
       setSummary(null);
       setWeeklyData([]);
+      setTodayCalories(null);
       setLogMessage("");
       setQuery("");
     } else {
       loadWeekly();
+      loadTodayCalories();
     }
   }, [session]); // eslint-disable-line react-hooks/exhaustive-deps
 
@@ -407,6 +428,7 @@ export default function App() {
           await loadSummary();
           await loadLogs();
           await loadWeekly();
+          await loadTodayCalories();
         } catch {
           setLogMessage("Failed to log scanned item.");
         }
@@ -506,7 +528,9 @@ export default function App() {
         <View style={styles.dateSection}>
           <Text style={styles.sectionLabel}>VIEWING DATE</Text>
           <TouchableOpacity style={styles.dateTrigger} onPress={openDatePicker}>
-            <Text style={styles.dateTriggerText}>{formatDateLabel(selectedDate)}</Text>
+            <View style={styles.dateTriggerUnderline}>
+              <Text style={styles.dateTriggerText}>{formatDateLabel(selectedDate)}</Text>
+            </View>
             <Text style={styles.dateTriggerIcon}>▾</Text>
           </TouchableOpacity>
           {showDatePicker && Platform.OS === "ios" && (
@@ -762,6 +786,19 @@ export default function App() {
 
       </ScrollView>
 
+      {/* Today's calorie badge — absolutely positioned so it stays fixed
+          while the ScrollView content scrolls beneath it.
+          top: 20 / right: 20 matches the container padding so it sits flush
+          with the right margin, vertically level with the header row.
+          pointerEvents="none" keeps it non-interactive. */}
+      {todayCalories !== null && (
+        <View style={styles.calorieBadge} pointerEvents="none">
+          <Text style={styles.calorieBadgeText}>
+            {`${Math.round(todayCalories)} cals`}
+          </Text>
+        </View>
+      )}
+
       {/* Floating bottom search bar — lives outside the ScrollView so it
           stays pinned at the bottom of the SafeAreaView on all screen sizes.
           SafeAreaView already insets for the home indicator, so no extra
@@ -898,6 +935,22 @@ const styles = StyleSheet.create({
     color: "#aaa",
     paddingTop: 8,
   },
+  calorieBadge: {
+    position: "absolute",
+    top: 48,
+    right: 20,
+    backgroundColor: COLORS.primary,
+    borderRadius: 12,
+    paddingHorizontal: 10,
+    paddingVertical: 5,
+    zIndex: 10,
+  },
+  calorieBadgeText: {
+    fontSize: 12,
+    fontFamily: "Inter-Variable",
+    fontWeight: "600",
+    color: "#111",
+  },
 
   // Date selector
   dateSection: {
@@ -905,13 +958,14 @@ const styles = StyleSheet.create({
   },
   dateTrigger: {
     flexDirection: "row",
-    justifyContent: "space-between",
     alignItems: "center",
-    borderWidth: 1,
-    borderColor: "#ddd",
-    borderRadius: 8,
-    padding: 12,
+    gap: 6,
     marginBottom: 4,
+    alignSelf: "flex-start",
+  },
+  dateTriggerUnderline: {
+    borderBottomWidth: 1,
+    borderBottomColor: COLORS.primary,
   },
   dateTriggerText: {
     fontSize: 15,
