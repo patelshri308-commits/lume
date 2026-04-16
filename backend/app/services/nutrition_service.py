@@ -191,6 +191,15 @@ def _get_fallback_nutrition(query: str) -> dict:  # always returns is_estimated:
         return {"calories": 200, "protein": 0,  "carbs": 35, "fat": 5}
 
     # ── Beverages ─────────────────────────────────────────────────────────────
+    # Plain water variants — checked before any other beverage rule so that
+    # "sparkling water", "mineral water", etc. never hit the generic fallback.
+    # "flavored water" is intentionally excluded here (may have calories).
+    if (
+        q == "water"
+        or (q.endswith(" water") and any(w in q for w in ("sparkling", "mineral", "bottled", "still", "tap", "plain", "distilled")))
+    ):
+        return {"calories": 0, "protein": 0, "carbs": 0, "fat": 0}
+
     # Diet / zero-sugar drinks must be checked FIRST so they do not fall
     # through to the regular soda / energy-drink branches above.
     _is_diet = ("diet" in q or "zero sugar" in q or "sugar free" in q
