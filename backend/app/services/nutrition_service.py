@@ -224,6 +224,16 @@ def _get_fallback_nutrition(query: str) -> dict:  # always returns is_estimated:
         return {"calories": 300, "protein": 5,  "carbs": 55, "fat": 5}
     if "latte" in q or "cappuccino" in q:
         return {"calories": 150, "protein": 8,  "carbs": 15, "fat": 6}
+    # Plain / black coffee — must come before the generic "coffee" branch so
+    # that explicit zero-calorie queries don't inherit the generic estimate.
+    # Conservative: only matches queries that are unambiguously black/plain.
+    # "iced coffee", "coffee with milk", "latte", "frappuccino" are all caught
+    # earlier or fall through to the generic coffee rule below.
+    if (
+        q in ("black coffee", "plain coffee", "coffee black", "coffee, black")
+        or q == "coffee"
+    ):
+        return {"calories": 0, "protein": 0, "carbs": 0, "fat": 0}
     if "coffee" in q:
         return {"calories": 50,  "protein": 1,  "carbs": 8,  "fat": 2}
     if "orange juice" in q:
