@@ -1,6 +1,7 @@
 from app.services.nutrition_service import get_nutrition
 from app.services.barcode_service import lookup_barcode, BarcodeNotFoundError, BarcodeProviderError
 from app.services.packaged_product_service import search_packaged_product
+from app.services.restaurant_service import search_restaurant_item
 
 
 # ---------------------------------------------------------------------------
@@ -119,8 +120,10 @@ def route_food_query(query: str) -> dict:
     ─────────────────────
     BARCODE_LIKE        → barcode_service (source_type="barcode", already set by service)
                           falls through to nutrition on miss (source_type="generic")
-    BRANDED_RESTAURANT  → nutrition_service  source_type="restaurant_guess"
-    PACKAGED_PRODUCT    → nutrition_service  source_type="packaged_guess"
+    BRANDED_RESTAURANT  → restaurant_service (source_type="restaurant", already set by service)
+                          falls through to nutrition on miss (source_type="restaurant_guess")
+    PACKAGED_PRODUCT    → packaged_product_service (source_type="packaged_product", already set)
+                          falls through to nutrition on miss (source_type="packaged_guess")
     GENERIC_FOOD        → nutrition_service  source_type="generic"
     """
     query_class = _classify_query(query)
@@ -131,6 +134,12 @@ def route_food_query(query: str) -> dict:
         except (BarcodeNotFoundError, BarcodeProviderError):
             pass   # miss or provider down — fall through as generic
 
+    if query_class == QueryClass.BRANDED_RESTAURANT:
+        result = search_restaurant_item(query)
+        if result is not None:
+            return result   # already carries source_type="restaurant"
+        # miss or provider failure — fall through to nutrition engine below
+
     if query_class == QueryClass.PACKAGED_PRODUCT:
         result = search_packaged_product(query)
         if result is not None:
@@ -138,7 +147,7 @@ def route_food_query(query: str) -> dict:
         # miss or provider failure — fall through to nutrition engine below
 
     result = get_nutrition(query)
-    # Barcode and packaged fall-throughs land here too; source_type reflects
-    # that we ended up using the text/estimation engine.
+    # Barcode, restaurant, and packaged fall-throughs land here too; source_type
+    # reflects that we ended up using the text/estimation engine.
     result["source_type"] = _SOURCE_TYPE.get(query_class, "generic")
     return result
