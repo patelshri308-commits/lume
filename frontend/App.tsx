@@ -543,7 +543,7 @@ export default function App() {
         <View style={styles.dateSection}>
           <Text style={styles.sectionLabel}>VIEWING DATE</Text>
           <TouchableOpacity style={styles.dateTrigger} onPress={openDatePicker}>
-            <Text style={styles.dateTriggerText}>{selectedDate}</Text>
+            <Text style={styles.dateTriggerText}>{formatDateLabel(selectedDate)}</Text>
             <Text style={styles.dateTriggerIcon}>▾</Text>
           </TouchableOpacity>
           {showDatePicker && Platform.OS === "ios" && (
