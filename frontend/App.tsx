@@ -127,16 +127,13 @@ export default function App() {
   });
 
   const [query,      setQuery]      = useState("");
-  const [result,     setResult]     = useState<NutritionResult | null>(null);
   const [logMessage, setLogMessage] = useState("");
   const [logs,       setLogs]       = useState<FoodLogEntry[]>([]);
   const [showAllLogs, setShowAllLogs] = useState(false);
   const [summary,    setSummary]    = useState<DailySummary | null>(null);
   const [searching,     setSearching]     = useState(false);
-  const [hasSearched,   setHasSearched]   = useState(false);
   const [logsLoading,   setLogsLoading]   = useState(false);
   const [summaryLoading,setSummaryLoading]= useState(false);
-  const [loggingFood,   setLoggingFood]   = useState(false);
   const [deletingLogId, setDeletingLogId] = useState<number | null>(null);
   const [editingLogId,  setEditingLogId]  = useState<number | null>(null);
   const [editFields,    setEditFields]    = useState({ name: "", calories: "", protein: "", carbs: "", fat: "" });
@@ -148,7 +145,6 @@ export default function App() {
   const [weeklyData,    setWeeklyData]    = useState<WeeklyDay[]>([]);
   const [weeklyLoading, setWeeklyLoading] = useState(false);
   const [refreshing,    setRefreshing]    = useState(false);
-  const [servings,      setServings]      = useState(1);
   const [selectedDate,    setSelectedDate]    = useState(localToday());
   const [showDatePicker,  setShowDatePicker]  = useState(false);
 
@@ -201,16 +197,13 @@ export default function App() {
   const searchAndLog = async () => {
     if (!query.trim()) return;
     setLogMessage("");
-    setHasSearched(true);
     const { foodQuery, parsedServings } = _parseQuery(query);
-    setServings(parsedServings);
     setSearching(true);
 
     let food: NutritionResult | null = null;
     try {
       const res = await axios.post(`${API_URL}/food/search`, { query: foodQuery });
       food = res.data as NutritionResult;
-      setResult(food);
     } catch {
       setLogMessage("Failed to search");
       setSearching(false);
@@ -219,7 +212,6 @@ export default function App() {
     setSearching(false);
 
     if (!food) return;
-    setLoggingFood(true);
     try {
       await axios.post(
         `${API_URL}/logs`,
@@ -240,35 +232,6 @@ export default function App() {
       await loadWeekly();
     } catch {
       setLogMessage("Failed to log food");
-    } finally {
-      setLoggingFood(false);
-    }
-  };
-
-  const logFood = async () => {
-    if (!result) return;
-    setLoggingFood(true);
-    try {
-      await axios.post(
-        `${API_URL}/logs`,
-        {
-          name:     result.name,
-          calories: result.calories * servings,
-          protein:  result.protein  * servings,
-          carbs:    result.carbs    * servings,
-          fat:      result.fat      * servings,
-          log_date: selectedDate,
-        },
-        { headers: await getAuthHeaders() },
-      );
-      setLogMessage("Food logged");
-      await loadSummary();
-      await loadLogs();
-      await loadWeekly();
-    } catch (err) {
-      setLogMessage("Failed to log food");
-    } finally {
-      setLoggingFood(false);
     }
   };
 
@@ -408,10 +371,8 @@ export default function App() {
       setLogs([]);
       setSummary(null);
       setWeeklyData([]);
-      setResult(null);
       setLogMessage("");
       setQuery("");
-      setServings(1);
     } else {
       loadWeekly();
     }
@@ -923,11 +884,6 @@ const styles = StyleSheet.create({
     marginTop: 12,
     marginBottom: 16,
   },
-  appTitle: {
-    fontSize: 34,
-    fontFamily: "Chillax-Medium",
-    letterSpacing: 1,
-  },
   appSubtitle: {
     fontSize: 14,
     fontFamily: "Inter-Variable",
@@ -1076,16 +1032,6 @@ const styles = StyleSheet.create({
     marginBottom: 4,
     textTransform: "capitalize",
   },
-  barcodeSubtitle: {
-    fontSize: 12,
-    fontFamily: "Inter-Variable",
-    color: "#aaa",
-    marginBottom: 10,
-  },
-  cardAction: {
-    marginTop: 14,
-  },
-
   // Macro grid
   macroRow: {
     flexDirection: "row",
@@ -1250,44 +1196,6 @@ const styles = StyleSheet.create({
     fontWeight: "600",
   },
 
-  perServing: {
-    marginTop: 6,
-    fontSize: 11,
-    fontFamily: "Inter-Variable",
-    color: "#bbb",
-    textAlign: "center",
-  },
-
-  // Serving control
-  servingRow: {
-    flexDirection: "row",
-    alignItems: "center",
-    justifyContent: "center",
-    marginTop: 14,
-    gap: 16,
-  },
-  servingButton: {
-    width: 32,
-    height: 32,
-    borderRadius: 16,
-    borderWidth: 1,
-    borderColor: "#ccc",
-    alignItems: "center",
-    justifyContent: "center",
-  },
-  servingButtonText: {
-    fontSize: 18,
-    color: "#333",
-    lineHeight: 22,
-  },
-  servingCount: {
-    fontSize: 14,
-    fontFamily: "Inter-Variable",
-    color: "#333",
-    minWidth: 80,
-    textAlign: "center",
-  },
-
   // Empty states
   emptyState: {
     marginTop: 10,
@@ -1328,23 +1236,6 @@ const styles = StyleSheet.create({
     color: "#555",
     width: 40,
     textAlign: "right",
-  },
-
-  disclaimer: {
-    marginTop: 12,
-    fontSize: 11,
-    fontFamily: "Inter-Variable",
-    color: "#bbb",
-    textAlign: "center",
-  },
-
-  estimatedLabel: {
-    marginTop: 10,
-    fontSize: 11,
-    fontFamily: "Inter-Variable",
-    color: "#aaa",
-    textAlign: "center",
-    fontStyle: "italic",
   },
 
   // Feedback
