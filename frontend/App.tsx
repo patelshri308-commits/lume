@@ -194,22 +194,6 @@ export default function App() {
     await supabase.auth.signOut();
   };
 
-  const searchFood = async () => {
-    setLogMessage("");
-    setHasSearched(true);
-    const { foodQuery, parsedServings } = _parseQuery(query);
-    setServings(parsedServings);
-    setSearching(true);
-    try {
-      const res = await axios.post(`${API_URL}/food/search`, { query: foodQuery });
-      setResult(res.data);
-    } catch (err) {
-      setLogMessage("Failed to search");
-    } finally {
-      setSearching(false);
-    }
-  };
-
   // Triggered by the keyboard Return/Search key.
   // Searches and, on a valid result, immediately logs it and clears the input
   // so the user can quickly move on to the next item.
@@ -405,14 +389,6 @@ export default function App() {
     }
   };
 
-  const clearSearch = () => {
-    setQuery("");
-    setResult(null);
-    setLogMessage("");
-    setServings(1);
-    setHasSearched(false);
-  };
-
   // Reload logs + summary whenever selectedDate OR session changes.
   // session is included so the effect re-runs (with a current, non-stale closure)
   // as soon as a valid token arrives — no request is made until then.
@@ -439,39 +415,46 @@ export default function App() {
     }
   }, [session]); // eslint-disable-line react-hooks/exhaustive-deps
 
-  // When a barcode is scanned, look it up and feed the result into the
-  // existing result state so the normal card + log flow handles it.
+  // When a barcode is scanned, look it up and immediately auto-log it —
+  // same pattern as searchAndLog so there is one consistent logging path.
   useEffect(() => {
     if (!scannedBarcode) return;
+    const barcode = scannedBarcode;
     setLogMessage("");
-    setHasSearched(true);
-    setServings(1);
     setSearching(true);
-    axios
-      .post(`${API_URL}/food/barcode`, { barcode: scannedBarcode })
-      .then((res) => {
-        setResult(res.data);
-      })
-      .catch(() => {
-        setResult(null);
+
+    (async () => {
+      try {
+        const res  = await axios.post(`${API_URL}/food/barcode`, { barcode });
+        const food = res.data as NutritionResult;
+        try {
+          await axios.post(
+            `${API_URL}/logs`,
+            {
+              name:     food.name,
+              calories: food.calories,
+              protein:  food.protein,
+              carbs:    food.carbs,
+              fat:      food.fat,
+              log_date: selectedDate,
+            },
+            { headers: await getAuthHeaders() },
+          );
+          setLogMessage(`Logged: ${food.name}`);
+          await loadSummary();
+          await loadLogs();
+          await loadWeekly();
+        } catch {
+          setLogMessage("Failed to log scanned item.");
+        }
+      } catch {
         setLogMessage("Barcode not found — try searching by name.");
-      })
-      .finally(() => {
+      } finally {
         setScannedBarcode(null);
         setSearching(false);
-      });
-  }, [scannedBarcode]); // eslint-disable-line react-hooks/exhaustive-deps
-
-  // Derived: adjusted nutrition values for the current serving count.
-  // The original `result` object is never mutated.
-  const adjusted = result
-    ? {
-        calories: parseFloat((result.calories * servings).toFixed(1)),
-        protein:  parseFloat((result.protein  * servings).toFixed(1)),
-        carbs:    parseFloat((result.carbs     * servings).toFixed(1)),
-        fat:      parseFloat((result.fat       * servings).toFixed(1)),
       }
-    : null;
+    })();
+  }, [scannedBarcode]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // Wait for custom fonts before rendering anything
   if (!fontsLoaded) return null;
@@ -532,6 +515,7 @@ export default function App() {
     <SafeAreaProvider>
     <SafeAreaView style={styles.safe}>
       <ScrollView
+        style={styles.scrollView}
         contentContainerStyle={styles.container}
         refreshControl={
           <RefreshControl
@@ -559,7 +543,7 @@ export default function App() {
         <View style={styles.dateSection}>
           <Text style={styles.sectionLabel}>VIEWING DATE</Text>
           <TouchableOpacity style={styles.dateTrigger} onPress={openDatePicker}>
-            <Text style={styles.dateTriggerText}>{selectedDate}</Text>
+            <Text style={styles.dateTriggerText}>{formatDateLabel(selectedDate)}</Text>
             <Text style={styles.dateTriggerIcon}>▾</Text>
           </TouchableOpacity>
           {showDatePicker && Platform.OS === "ios" && (
@@ -572,43 +556,6 @@ export default function App() {
               style={styles.datePicker}
             />
           )}
-        </View>
-
-        {/* Search */}
-        <View style={styles.section}>
-          <Text style={styles.sectionLabel}>FOOD SEARCH</Text>
-          <View style={styles.inputRow}>
-            <TextInput
-              placeholder="e.g. banana, grilled chicken..."
-              placeholderTextColor="#aaa"
-              value={query}
-              onChangeText={setQuery}
-              onSubmitEditing={searchAndLog}
-              returnKeyType="search"
-              autoCapitalize="none"
-              style={styles.input}
-            />
-            <TouchableOpacity
-              style={styles.scanButton}
-              onPress={async () => {
-                if (!cameraPermission?.granted) {
-                  await requestCameraPermission();
-                }
-                setIsScannerOpen(true);
-              }}
-            >
-              <Image source={barcodIcon} style={styles.scanButtonIcon} />
-            </TouchableOpacity>
-          </View>
-          <View style={styles.searchButtons}>
-            <View style={styles.searchButtonItem}>
-              <Button title="Search" onPress={searchFood} disabled={searching} />
-            </View>
-            <View style={styles.searchButtonItem}>
-              <Button title="Clear" onPress={clearSearch} color="#aaa" />
-            </View>
-          </View>
-          {searching && <Text style={styles.searchingText}>Searching...</Text>}
         </View>
 
         {/* Barcode Scanner Modal */}
@@ -654,64 +601,6 @@ export default function App() {
           </View>
         </Modal>
 
-        {/* Search Result */}
-        {!result && !searching && !hasSearched && (
-          <Text style={styles.emptyState}>Search for a food to see nutrition info</Text>
-        )}
-        {!result && !searching && hasSearched && (
-          <Text style={styles.emptyState}>No results found — try something simpler</Text>
-        )}
-        {result && adjusted && (
-          <View style={styles.card}>
-            <Text style={styles.cardTitle}>{result.name}</Text>
-            {result.source_type === "barcode" && (result.brand_name || result.serving_description) && (
-              <Text style={styles.barcodeSubtitle}>
-                {[result.brand_name, result.serving_description].filter(Boolean).join(" • ")}
-              </Text>
-            )}
-            <View style={styles.macroRow}>
-              <MacroItem label="Calories" value={`${adjusted.calories}`} unit="kcal" />
-              <MacroItem label="Protein"  value={`${adjusted.protein}`}  unit="g" />
-              <MacroItem label="Carbs"    value={`${adjusted.carbs}`}    unit="g" />
-              <MacroItem label="Fat"      value={`${adjusted.fat}`}      unit="g" />
-            </View>
-            {servings > 1 && (
-              <Text style={styles.perServing}>
-                {result.calories} kcal · {result.protein}g · {result.carbs}g · {result.fat}g per serving
-              </Text>
-            )}
-            <View style={styles.servingRow}>
-              <TouchableOpacity
-                style={styles.servingButton}
-                onPress={() => setServings(s => Math.max(1, s - 1))}
-              >
-                <Text style={styles.servingButtonText}>−</Text>
-              </TouchableOpacity>
-              <Text style={styles.servingCount}>{servings} {servings === 1 ? "serving" : "servings"}</Text>
-              <TouchableOpacity
-                style={styles.servingButton}
-                onPress={() => setServings(s => s + 1)}
-              >
-                <Text style={styles.servingButtonText}>+</Text>
-              </TouchableOpacity>
-            </View>
-
-            <View style={styles.cardAction}>
-              <Button title={loggingFood ? "Logging..." : "Log Food"} onPress={logFood} disabled={loggingFood} />
-            </View>
-            {result.is_estimated && (
-              <Text style={styles.estimatedLabel}>Estimated</Text>
-            )}
-            <Text style={styles.disclaimer}>
-              Nutrition data is estimated and may vary based on brand and preparation.
-            </Text>
-            {logMessage ? (
-              <Text style={!logMessage.startsWith("Failed") ? styles.success : styles.error}>
-                {logMessage}
-              </Text>
-            ) : null}
-          </View>
-        )}
 
         {/* Daily Summary */}
         <View style={styles.section}>
@@ -896,6 +785,43 @@ export default function App() {
         </View>
 
       </ScrollView>
+
+      {/* Floating bottom search bar — lives outside the ScrollView so it
+          stays pinned at the bottom of the SafeAreaView on all screen sizes.
+          SafeAreaView already insets for the home indicator, so no extra
+          bottom padding is needed here. */}
+      <View style={styles.bottomBar}>
+        <View style={styles.inputRow}>
+          <TextInput
+            placeholder="e.g. banana, grilled chicken..."
+            placeholderTextColor="#aaa"
+            value={query}
+            onChangeText={setQuery}
+            onSubmitEditing={searchAndLog}
+            returnKeyType="search"
+            autoCapitalize="none"
+            style={styles.input}
+          />
+          <TouchableOpacity
+            style={styles.scanButton}
+            onPress={async () => {
+              if (!cameraPermission?.granted) {
+                await requestCameraPermission();
+              }
+              setIsScannerOpen(true);
+            }}
+          >
+            <Image source={barcodIcon} style={styles.scanButtonIcon} />
+          </TouchableOpacity>
+        </View>
+        {searching && <Text style={styles.searchingText}>Searching...</Text>}
+        {!searching && logMessage ? (
+          <Text style={logMessage.startsWith("Logged") || logMessage === "Food logged" ? styles.success : styles.error}>
+            {logMessage}
+          </Text>
+        ) : null}
+      </View>
+
     </SafeAreaView>
     </SafeAreaProvider>
   );
@@ -924,9 +850,25 @@ const styles = StyleSheet.create({
     flex: 1,
     backgroundColor: "#fff",
   },
+  // flex:1 ensures the ScrollView fills available space so the bottom bar
+  // is always pushed to the bottom rather than floating mid-screen.
+  scrollView: {
+    flex: 1,
+  },
   container: {
     padding: 20,
     paddingBottom: 48,
+  },
+  // Docked search bar — sits between the ScrollView and the safe-area bottom.
+  // Not absolutely positioned: keyboard avoidance works naturally because iOS
+  // pushes the whole SafeAreaView up when the keyboard opens.
+  bottomBar: {
+    borderTopWidth: 1,
+    borderTopColor: "#eee",
+    backgroundColor: "#fff",
+    paddingHorizontal: 16,
+    paddingTop: 10,
+    paddingBottom: 8,
   },
 
   // Auth screen
@@ -1048,15 +990,6 @@ const styles = StyleSheet.create({
     fontSize: 13,
     fontFamily: "Inter-Variable",
     color: "#aaa",
-  },
-
-  // Search buttons
-  searchButtons: {
-    flexDirection: "row",
-    gap: 10,
-  },
-  searchButtonItem: {
-    flex: 1,
   },
 
   scanButton: {
