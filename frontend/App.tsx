@@ -794,7 +794,7 @@ export default function App() {
       {todayCalories !== null && (
         <View style={styles.calorieBadge} pointerEvents="none">
           <Text style={styles.calorieBadgeText}>
-            {`${Math.round(todayCalories)} cals`}
+            {`${Math.round(todayCalories)} Cals`}
           </Text>
         </View>
       )}
@@ -947,8 +947,7 @@ const styles = StyleSheet.create({
   },
   calorieBadgeText: {
     fontSize: 12,
-    fontFamily: "Inter-Variable",
-    fontWeight: "600",
+    fontFamily: "Chillax-Medium",
     color: "#111",
   },
 
