@@ -248,6 +248,8 @@ def _get_fallback_nutrition(query: str) -> dict:  # always returns is_estimated:
         return {"calories": 100, "protein": 0,  "carbs": 25, "fat": 0}
     if "energy drink" in q or "red bull" in q or "monster" in q:
         return {"calories": 150, "protein": 1,  "carbs": 35, "fat": 0}
+    if "sweet tea" in q or "sweetened tea" in q:    # must precede generic tea
+        return {"calories": 120, "protein": 0,  "carbs": 30, "fat": 0}
     if "iced tea" in q:                              # must precede "tea" check
         return {"calories": 100, "protein": 0,  "carbs": 25, "fat": 0}
     if "tea" in q:
