@@ -876,9 +876,6 @@ const styles = StyleSheet.create({
   // Not absolutely positioned: keyboard avoidance works naturally because iOS
   // pushes the whole SafeAreaView up when the keyboard opens.
   bottomBar: {
-    borderTopWidth: 1,
-    borderTopColor: "#eee",
-    backgroundColor: "#fff",
     paddingHorizontal: 16,
     paddingTop: 10,
     paddingBottom: 8,
