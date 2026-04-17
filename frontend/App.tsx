@@ -1425,7 +1425,7 @@ const styles = StyleSheet.create({
   },
   weekLabel: {
     fontSize: 12,
-    fontFamily: "Inter-Variable",
+    fontFamily: "Chillax-Regular",
     color: "#555",
     width: 72,
   },
@@ -1443,7 +1443,7 @@ const styles = StyleSheet.create({
   },
   weekCalories: {
     fontSize: 12,
-    fontFamily: "Inter-Variable",
+    fontFamily: "Chillax-SemiBold",
     color: "#555",
     width: 40,
     textAlign: "right",
