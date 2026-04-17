@@ -145,7 +145,8 @@ function AppInner() {
   const [query,      setQuery]      = useState("");
   const [logMessage, setLogMessage] = useState("");
   const [logs,       setLogs]       = useState<FoodLogEntry[]>([]);
-  const [showAllLogs, setShowAllLogs] = useState(false);
+  const [showAllLogs,    setShowAllLogs]    = useState(false);
+  const [expandedLogIds, setExpandedLogIds] = useState<Set<number>>(new Set());
   const [summary,    setSummary]    = useState<DailySummary | null>(null);
   const [todayCalories, setTodayCalories] = useState<number | null>(null);
   const [searching,       setSearching]       = useState(false);
@@ -626,20 +627,22 @@ function AppInner() {
           {summaryLoading && <Text style={styles.searchingText}>Loading summary...</Text>}
           {!summaryLoading && summary && (
             <View style={[styles.card, styles.summaryCard]}>
-              <Text style={styles.cardTitle}>
-                {selectedDate === localToday()
-                  ? "Today's Totals"
-                  : `Totals — ${formatDateLabel(selectedDate)}`}
-              </Text>
+              <View style={{ flexDirection: "row", justifyContent: "space-between", alignItems: "center" }}>
+                <Text style={styles.cardTitle}>
+                  {selectedDate === localToday()
+                    ? "Today's Totals"
+                    : `Totals — ${formatDateLabel(selectedDate)}`}
+                </Text>
+                <Text style={styles.entryCount}>
+                  {summary.entries_count} {summary.entries_count === 1 ? "entry" : "entries"}
+                </Text>
+              </View>
               <View style={styles.macroRow}>
                 <MacroItem label="Calories" value={`${summary.total_calories}`} unit="kcal" />
                 <MacroItem label="Protein"  value={`${summary.total_protein}`}  unit="g" />
                 <MacroItem label="Carbs"    value={`${summary.total_carbs}`}    unit="g" />
                 <MacroItem label="Fat"      value={`${summary.total_fat}`}      unit="g" />
               </View>
-              <Text style={styles.entryCount}>
-                {summary.entries_count} {summary.entries_count === 1 ? "entry" : "entries"} logged
-              </Text>
             </View>
           )}
         </View>
@@ -734,12 +737,27 @@ function AppInner() {
                 </View>
               ) : (
                 /* ── Normal view ── */
+                <TouchableOpacity
+                  activeOpacity={0.7}
+                  onPress={() => setExpandedLogIds(prev => {
+                    const next = new Set(prev);
+                    next.has(entry.id) ? next.delete(entry.id) : next.add(entry.id);
+                    return next;
+                  })}
+                >
                 <View style={styles.logEntryRow}>
                   <View style={styles.logEntryText}>
-                    <Text style={styles.logEntryName}>{entry.name}</Text>
-                    <Text style={styles.logEntryMacros}>
-                      {entry.calories} kcal · {entry.protein}g protein · {entry.carbs}g carbs · {entry.fat}g fat
-                    </Text>
+                    <View style={[
+                      styles.logEntryNameWrapper,
+                      expandedLogIds.has(entry.id) && styles.logEntryNameWrapperActive,
+                    ]}>
+                      <Text style={styles.logEntryName}>{entry.name}</Text>
+                    </View>
+                    {expandedLogIds.has(entry.id) && (
+                      <Text style={styles.logEntryMacros}>
+                        {entry.calories} kcal · {entry.protein}g protein · {entry.carbs}g carbs · {entry.fat}g fat
+                      </Text>
+                    )}
                     <Text style={styles.logEntryTime}>
                       {new Date(entry.created_at + "Z").toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}
                     </Text>
@@ -761,6 +779,7 @@ function AppInner() {
                     </TouchableOpacity>
                   </View>
                 </View>
+                </TouchableOpacity>
               )}
             </View>
             </SwipeableRow>
@@ -770,9 +789,11 @@ function AppInner() {
               onPress={() => setShowAllLogs(v => !v)}
               style={styles.logsToggle}
             >
-              <Text style={styles.logsToggleText}>
-                {showAllLogs ? "Hide" : `Show all ${logs.length}`}
-              </Text>
+              <Ionicons
+                name={showAllLogs ? "chevron-up" : "chevron-down"}
+                size={22}
+                color={COLORS.primary}
+              />
             </TouchableOpacity>
           )}
         </View>
@@ -1077,7 +1098,7 @@ const styles = StyleSheet.create({
   },
   calorieBadge: {
     position: "absolute",
-    top: 48,
+    top: 72,
     right: 20,
     backgroundColor: COLORS.primary,
     borderRadius: 12,
@@ -1272,11 +1293,10 @@ const styles = StyleSheet.create({
 
   // Summary
   entryCount: {
-    marginTop: 12,
     fontSize: 12,
-    fontFamily: "Inter-Variable",
-    color: "#555",
-    textAlign: "center",
+    fontFamily: "Chillax-Medium",
+    color: "#111",
+    textAlign: "right",
   },
 
   // Log list
@@ -1284,8 +1304,6 @@ const styles = StyleSheet.create({
     padding: 12,
     borderRadius: 8,
     backgroundColor: "#f9f9f9",
-    borderWidth: 1,
-    borderColor: "#eee",
   },
   logEntryRow: {
     flexDirection: "row",
@@ -1296,10 +1314,22 @@ const styles = StyleSheet.create({
     flex: 1,
     marginRight: 12,
   },
+  logEntryNameWrapper: {
+    alignSelf: "flex-start",
+    borderBottomWidth: 1.5,
+    borderBottomColor: COLORS.primary,
+    marginBottom: 3,
+  },
+  logEntryNameWrapperActive: {
+    borderBottomWidth: 2.5,
+    shadowColor: COLORS.primary,
+    shadowOpacity: 0.45,
+    shadowRadius: 4,
+    shadowOffset: { width: 0, height: 1 },
+  },
   logEntryName: {
     fontSize: 14,
     fontFamily: "Chillax-Medium",
-    marginBottom: 3,
     textTransform: "capitalize",
   },
   logEntryMacros: {
