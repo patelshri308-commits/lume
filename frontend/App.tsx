@@ -21,6 +21,7 @@ import {
   TouchableOpacity,
 } from "react-native";
 import { SafeAreaProvider, SafeAreaView, useSafeAreaInsets } from "react-native-safe-area-context";
+import { LinearGradient } from "expo-linear-gradient";
 import axios from "axios";
 import { Session } from "@supabase/supabase-js";
 import { supabase } from "./lib/supabase";
@@ -137,9 +138,11 @@ function AppInner() {
   const insets = useSafeAreaInsets();
 
   const [fontsLoaded] = useFonts({
-    "Chillax-Regular": require("./assets/fonts/Chillax-Regular.otf"),
-    "Chillax-Medium":  require("./assets/fonts/Chillax-Medium.otf"),
-    "Inter-Variable":  require("./assets/fonts/Inter-VariableFont_opsz,wght.ttf"),
+    "Chillax-Regular":  require("./assets/fonts/Chillax-Regular.otf"),
+    "Chillax-Medium":   require("./assets/fonts/Chillax-Medium.otf"),
+    "Chillax-SemiBold": require("./assets/fonts/Chillax-Semibold.otf"),
+    "Chillax-Bold":     require("./assets/fonts/Chillax-Bold.otf"),
+    "Inter-Variable":   require("./assets/fonts/Inter-VariableFont_opsz,wght.ttf"),
   });
 
   const [query,      setQuery]      = useState("");
@@ -164,6 +167,11 @@ function AppInner() {
   const [cameraPermission, requestCameraPermission] = useCameraPermissions();
   const scanLockRef  = useRef(false);                          // prevents duplicate scan callbacks
   const sidebarAnim  = useRef(new Animated.Value(0)).current;  // 0 = closed, 1 = open
+  // Solar Bloom animated glow values — each loops 0→1→0 at a different duration
+  const glowOuter   = useRef(new Animated.Value(0)).current;  // 7 s
+  const glowMid     = useRef(new Animated.Value(0)).current;  // 5.5 s
+  const glowCore    = useRef(new Animated.Value(0)).current;  // 4 s
+  const glowShimmer = useRef(new Animated.Value(0)).current;  // 6.5 s
   const [weeklyData,    setWeeklyData]    = useState<WeeklyDay[]>([]);
   const [weeklyLoading, setWeeklyLoading] = useState(false);
   const [refreshing,    setRefreshing]    = useState(false);
@@ -175,6 +183,25 @@ function AppInner() {
   const [authEmail,     setAuthEmail]     = useState("");
   const [authPassword,  setAuthPassword]  = useState("");
   const [authMessage,   setAuthMessage]   = useState("");
+
+  // Solar Bloom breathing glow — loops indefinitely from mount.
+  useEffect(() => {
+    const breathe = (val: Animated.Value, duration: number) =>
+      Animated.loop(
+        Animated.sequence([
+          Animated.timing(val, { toValue: 1, duration: duration / 2, useNativeDriver: true }),
+          Animated.timing(val, { toValue: 0, duration: duration / 2, useNativeDriver: true }),
+        ])
+      );
+    const anims = [
+      breathe(glowOuter,   7000),
+      breathe(glowMid,     5500),
+      breathe(glowCore,    4000),
+      breathe(glowShimmer, 6500),
+    ];
+    anims.forEach(a => a.start());
+    return () => anims.forEach(a => a.stop());
+  }, []); // eslint-disable-line react-hooks/exhaustive-deps
 
   // Sidebar open/close animation.
   useEffect(() => {
@@ -488,25 +515,55 @@ function AppInner() {
   // Wait for custom fonts before rendering anything
   if (!fontsLoaded) return null;
 
-  // ── Auth screen ────────────────────────────────────────────────────────────
+  // ── Auth screen — Solar Bloom design ──────────────────────────────────────
   if (!session) {
     return (
       <SafeAreaView style={styles.authSafe}>
-        <View style={styles.authContainer}>
-          <View style={styles.logoContainer}>
-            <Image
-              source={require("./assets/Lume.png")}
-              style={styles.logo}
-              resizeMode="contain"
-            />
-          </View>
-          <View style={styles.authContent}>
-            <Text style={styles.appSubtitle}>Track what you eat</Text>
+        {/* Solar Bloom background gradient */}
+        <LinearGradient
+          colors={["#FFFBEC", "#FDF2D8", "#F7E7BD", "#E9D69A"]}
+          locations={[0, 0.35, 0.65, 1]}
+          style={StyleSheet.absoluteFillObject}
+        />
 
+        {/* Solar Bloom — animated breathing glow layers */}
+        <Animated.View pointerEvents="none" style={[styles.authGlowOuter, {
+          opacity: glowOuter.interpolate({ inputRange: [0, 1], outputRange: [0.85, 1] }),
+          transform: [{ scale: glowOuter.interpolate({ inputRange: [0, 1], outputRange: [1, 1.06] }) }],
+        }]} />
+        <Animated.View pointerEvents="none" style={[styles.authGlowMid, {
+          opacity: glowMid.interpolate({ inputRange: [0, 1], outputRange: [0.9, 1] }),
+          transform: [{ scale: glowMid.interpolate({ inputRange: [0, 1], outputRange: [1, 1.04] }) }],
+        }]} />
+        <Animated.View pointerEvents="none" style={[styles.authGlowCore, {
+          opacity: glowCore.interpolate({ inputRange: [0, 1], outputRange: [0.85, 1] }),
+          transform: [{ scale: glowCore.interpolate({ inputRange: [0, 1], outputRange: [0.98, 1.03] }) }],
+        }]} />
+        {/* Shimmer flare */}
+        <Animated.View pointerEvents="none" style={[styles.authGlowShimmer, {
+          opacity: glowShimmer.interpolate({ inputRange: [0, 1], outputRange: [0, 0.28] }),
+        }]} />
+
+        {/* Warm ground wash below horizon */}
+        <View style={styles.authGroundWash} pointerEvents="none" />
+
+        {/* Horizon hairline */}
+        <View style={styles.authHorizon} pointerEvents="none" />
+
+        {/* Content */}
+        <View style={styles.authContainer}>
+          {/* Hero wordmark — Lume is the light source */}
+          <View style={styles.authLogoArea}>
+            <Text style={styles.authWordmark}>Lume</Text>
+            <Text style={styles.authTagline}>Illuminate what you eat.</Text>
+          </View>
+
+          {/* Form pushed to bottom */}
+          <View style={styles.authForm}>
             <TextInput
               style={styles.authInput}
               placeholder="Email"
-              placeholderTextColor="#aaa"
+              placeholderTextColor="rgba(26,26,20,0.4)"
               value={authEmail}
               onChangeText={setAuthEmail}
               autoCapitalize="none"
@@ -515,20 +572,26 @@ function AppInner() {
             <TextInput
               style={styles.authInput}
               placeholder="Password"
-              placeholderTextColor="#aaa"
+              placeholderTextColor="rgba(26,26,20,0.4)"
               value={authPassword}
               onChangeText={setAuthPassword}
               secureTextEntry
             />
 
-            <View style={styles.authButtons}>
-              <View style={styles.authButtonItem}>
-                <Button title="Log In" onPress={logIn} />
-              </View>
-              <View style={styles.authButtonItem}>
-                <Button title="Sign Up" onPress={signUp} color="#aaa" />
-              </View>
+            <TouchableOpacity style={styles.authSignInButton} onPress={logIn} activeOpacity={0.85}>
+              <Text style={styles.authSignInText}>Log In</Text>
+            </TouchableOpacity>
+
+            {/* Divider */}
+            <View style={styles.authDivider}>
+              <View style={styles.authDividerLine} />
+              <Text style={styles.authDividerText}>or</Text>
+              <View style={styles.authDividerLine} />
             </View>
+
+            <TouchableOpacity style={styles.authSignUpButton} onPress={signUp} activeOpacity={0.85}>
+              <Text style={styles.authSignUpText}>Create account</Text>
+            </TouchableOpacity>
 
             {authMessage ? (
               <Text style={styles.authMessage}>{authMessage}</Text>
@@ -1063,46 +1126,175 @@ const styles = StyleSheet.create({
     // device's home-indicator safe-area on every device.
   },
 
-  // Auth screen
+  // Auth screen — Solar Bloom design
   authSafe: {
     flex: 1,
-    backgroundColor: "#FAFAF7",
+    backgroundColor: "#FFFBEC",   // fallback before gradient renders
+  },
+  // Outer radial glow — large soft halo
+  authGlowOuter: {
+    position: "absolute",
+    width: 340,
+    height: 280,
+    borderRadius: 170,
+    top: "14%",
+    left: "50%",
+    marginLeft: -170,
+    backgroundColor: "rgba(250,230,90,0.28)",
+  },
+  // Mid glow — tighter fill
+  authGlowMid: {
+    position: "absolute",
+    width: 220,
+    height: 160,
+    borderRadius: 110,
+    top: "18%",
+    left: "50%",
+    marginLeft: -110,
+    backgroundColor: "rgba(255,245,150,0.40)",
+  },
+  // Hot core highlight
+  authGlowCore: {
+    position: "absolute",
+    width: 100,
+    height: 70,
+    borderRadius: 50,
+    top: "22%",
+    left: "50%",
+    marginLeft: -50,
+    backgroundColor: "rgba(255,252,200,0.55)",
+  },
+  // Shimmer flare — extra soft pulse layer
+  authGlowShimmer: {
+    position: "absolute",
+    width: 300,
+    height: 220,
+    borderRadius: 150,
+    top: "17%",
+    left: "50%",
+    marginLeft: -150,
+    backgroundColor: "rgba(255,250,200,0.55)",
+  },
+  // Warm ground wash below horizon
+  authGroundWash: {
+    position: "absolute",
+    left: 0,
+    right: 0,
+    top: "46%",
+    bottom: 0,
+    backgroundColor: "rgba(230,180,100,0.12)",
+  },
+  // Thin horizon hairline just below the logo
+  authHorizon: {
+    position: "absolute",
+    left: 0,
+    right: 0,
+    top: "46%",
+    height: 1,
+    backgroundColor: "rgba(180,150,60,0.18)",
   },
   authContainer: {
     flex: 1,
     paddingHorizontal: 28,
-    justifyContent: "center",
-    backgroundColor: "#FAFAF7",
     width: "100%",
+    justifyContent: "space-between",
   },
-  authContent: {
+  // Upper hero area — wordmark + tagline
+  authLogoArea: {
+    flex: 1,
+    alignItems: "center",
+    justifyContent: "center",
+    paddingTop: 40,
+  },
+  authWordmark: {
+    fontFamily: "Chillax-Bold",
+    fontSize: 72,
+    color: "#F5D834",
+    letterSpacing: -1.5,
+    textShadowColor: "rgba(255,220,60,0.85)",
+    textShadowOffset: { width: 0, height: 0 },
+    textShadowRadius: 28,
+  },
+  authTagline: {
+    fontFamily: "Chillax-Regular",
+    fontSize: 16,
+    color: "rgba(60,40,10,0.65)",
+    marginTop: 8,
+    letterSpacing: -0.2,
+    textAlign: "center",
+  },
+  // Bottom form area
+  authForm: {
+    paddingBottom: 20,
     width: "100%",
-    alignSelf: "stretch",
   },
   authInput: {
     width: "100%",
-    paddingVertical: 12,
-    paddingHorizontal: 4,
+    paddingVertical: 14,
+    paddingHorizontal: 16,
     fontSize: 15,
     fontFamily: "Inter-Variable",
-    color: "#111",
-    borderBottomWidth: 1,
-    borderBottomColor: "#ddd",
-    marginBottom: 16,
+    color: "#1A1A14",
+    backgroundColor: "rgba(255,255,255,0.55)",
+    borderWidth: 1,
+    borderColor: "rgba(26,26,20,0.10)",
+    borderRadius: 12,
+    marginBottom: 12,
   },
-  authButtons: {
-    flexDirection: "row",
-    gap: 10,
+  authSignInButton: {
+    height: 56,
+    borderRadius: 16,
+    backgroundColor: "#1A1A14",
+    alignItems: "center",
+    justifyContent: "center",
     marginTop: 4,
+    shadowColor: "#1A1A14",
+    shadowOpacity: 0.25,
+    shadowRadius: 12,
+    shadowOffset: { width: 0, height: 8 },
+    elevation: 6,
   },
-  authButtonItem: {
+  authSignInText: {
+    fontFamily: "Chillax-SemiBold",
+    fontSize: 17,
+    color: "#F8E94A",
+    letterSpacing: -0.2,
+  },
+  authDivider: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 12,
+    marginVertical: 12,
+  },
+  authDividerLine: {
     flex: 1,
+    height: 1,
+    backgroundColor: "rgba(26,26,20,0.10)",
+  },
+  authDividerText: {
+    fontSize: 13,
+    fontFamily: "Inter-Variable",
+    color: "rgba(26,26,20,0.5)",
+  },
+  authSignUpButton: {
+    height: 52,
+    borderRadius: 16,
+    borderWidth: 1,
+    borderColor: "rgba(26,26,20,0.15)",
+    backgroundColor: "rgba(255,255,255,0.45)",
+    alignItems: "center",
+    justifyContent: "center",
+  },
+  authSignUpText: {
+    fontFamily: "Chillax-Medium",
+    fontSize: 16,
+    color: "#1A1A14",
   },
   authMessage: {
     marginTop: 14,
     fontSize: 13,
     fontFamily: "Inter-Variable",
-    color: "#555",
+    color: "rgba(26,26,20,0.6)",
     textAlign: "center",
   },
 
