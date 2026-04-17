@@ -985,7 +985,7 @@ const styles = StyleSheet.create({
   // is always pushed to the bottom rather than floating mid-screen.
   scrollView: {
     flex: 1,
-    backgroundColor: "#fff",
+    backgroundColor: "#FAFAF7",
   },
   container: {
     padding: 20,
@@ -1006,13 +1006,13 @@ const styles = StyleSheet.create({
   // Auth screen
   authSafe: {
     flex: 1,
-    backgroundColor: "#fff",
+    backgroundColor: "#FAFAF7",
   },
   authContainer: {
     flex: 1,
     paddingHorizontal: 28,
     justifyContent: "center",
-    backgroundColor: "#fff",
+    backgroundColor: "#FAFAF7",
     width: "100%",
   },
   authContent: {
@@ -1067,12 +1067,12 @@ const styles = StyleSheet.create({
   appSubtitle: {
     fontSize: 14,
     fontFamily: "Inter-Variable",
-    color: "#999",
+    color: "#555",
     marginBottom: 16,
   },
   logOutText: {
     fontSize: 13,
-    color: "#aaa",
+    color: "#555",
     paddingTop: 8,
   },
   calorieBadge: {
@@ -1113,7 +1113,7 @@ const styles = StyleSheet.create({
   },
   dateTriggerIcon: {
     fontSize: 14,
-    color: "#999",
+    color: "#555",
   },
   datePicker: {
     marginTop: 4,
@@ -1126,7 +1126,7 @@ const styles = StyleSheet.create({
   sectionLabel: {
     fontSize: 11,
     fontFamily: "Chillax-Medium",
-    color: "#aaa",
+    color: "#555",
     letterSpacing: 1.2,
     marginBottom: 10,
   },
@@ -1169,7 +1169,7 @@ const styles = StyleSheet.create({
     marginTop: 8,
     fontSize: 13,
     fontFamily: "Inter-Variable",
-    color: "#aaa",
+    color: "#555",
   },
 
   scanButton: {
@@ -1261,12 +1261,12 @@ const styles = StyleSheet.create({
   macroUnit: {
     fontSize: 10,
     fontFamily: "Inter-Variable",
-    color: "#888",
+    color: "#555",
   },
   macroLabel: {
     fontSize: 11,
     fontFamily: "Inter-Variable",
-    color: "#aaa",
+    color: "#555",
     marginTop: 2,
   },
 
@@ -1275,7 +1275,7 @@ const styles = StyleSheet.create({
     marginTop: 12,
     fontSize: 12,
     fontFamily: "Inter-Variable",
-    color: "#888",
+    color: "#555",
     textAlign: "center",
   },
 
@@ -1346,7 +1346,7 @@ const styles = StyleSheet.create({
   editMacroLabel: {
     fontSize: 10,
     fontFamily: "Inter-Variable",
-    color: "#999",
+    color: "#555",
     marginBottom: 3,
   },
   editMacroInput: {
