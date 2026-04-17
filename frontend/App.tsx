@@ -16,7 +16,7 @@ import {
   ScrollView,
   TouchableOpacity,
 } from "react-native";
-import { SafeAreaProvider, SafeAreaView } from "react-native-safe-area-context";
+import { SafeAreaProvider, SafeAreaView, useSafeAreaInsets } from "react-native-safe-area-context";
 import axios from "axios";
 import { Session } from "@supabase/supabase-js";
 import { supabase } from "./lib/supabase";
@@ -119,7 +119,19 @@ function _parseQuery(raw: string): { foodQuery: string; parsedServings: number }
   return { parsedServings: 1, foodQuery: raw.trim() };
 }
 
+// Thin shell — SafeAreaProvider must be an ancestor of any component that
+// calls useSafeAreaInsets(), so it lives here, above AppInner.
 export default function App() {
+  return (
+    <SafeAreaProvider>
+      <AppInner />
+    </SafeAreaProvider>
+  );
+}
+
+function AppInner() {
+  const insets = useSafeAreaInsets();
+
   const [fontsLoaded] = useFonts({
     "Chillax-Regular": require("./assets/fonts/Chillax-Regular.otf"),
     "Chillax-Medium":  require("./assets/fonts/Chillax-Medium.otf"),
@@ -447,7 +459,6 @@ export default function App() {
   // ── Auth screen ────────────────────────────────────────────────────────────
   if (!session) {
     return (
-      <SafeAreaProvider>
       <SafeAreaView style={styles.safe}>
         <View style={styles.authContainer}>
           <View style={styles.logoContainer}>
@@ -491,13 +502,11 @@ export default function App() {
           ) : null}
         </View>
       </SafeAreaView>
-      </SafeAreaProvider>
     );
   }
 
   // ── Tracker screen (logged in) ──────────────────────────────────────────────
   return (
-    <SafeAreaProvider>
     <SafeAreaView style={styles.safe}>
       <ScrollView
         style={styles.scrollView}
@@ -799,11 +808,11 @@ export default function App() {
         </View>
       )}
 
-      {/* Floating bottom search bar — lives outside the ScrollView so it
-          stays pinned at the bottom of the SafeAreaView on all screen sizes.
-          SafeAreaView already insets for the home indicator, so no extra
-          bottom padding is needed here. */}
-      <View style={styles.bottomBar}>
+      {/* Floating bottom search bar — absolutely positioned so it overlays
+          the scroll content with no background panel beneath it.
+          paddingBottom uses the device's bottom safe-area inset so the input
+          clears the home indicator on all devices. */}
+      <View style={[styles.bottomBar, { paddingBottom: insets.bottom || 8 }]}>
         <View style={styles.inputRow}>
           <TextInput
             placeholder="e.g. banana, grilled chicken..."
@@ -836,7 +845,6 @@ export default function App() {
       </View>
 
     </SafeAreaView>
-    </SafeAreaProvider>
   );
 }
 
@@ -861,24 +869,28 @@ const COLORS = {
 const styles = StyleSheet.create({
   safe: {
     flex: 1,
-    backgroundColor: "#fff",
+    backgroundColor: "transparent",
   },
   // flex:1 ensures the ScrollView fills available space so the bottom bar
   // is always pushed to the bottom rather than floating mid-screen.
   scrollView: {
     flex: 1,
+    backgroundColor: "#fff",
   },
   container: {
     padding: 20,
-    paddingBottom: 48,
+    paddingBottom: 96,   // extra room so last item scrolls above the floating bar
   },
-  // Docked search bar — sits between the ScrollView and the safe-area bottom.
-  // Not absolutely positioned: keyboard avoidance works naturally because iOS
-  // pushes the whole SafeAreaView up when the keyboard opens.
+  // True floating overlay — absolutely positioned so the scroll content
+  // extends fully behind it with no panel or footer effect underneath.
   bottomBar: {
+    position: "absolute",
+    left: 0,
+    right: 0,
+    bottom: 0,
     paddingHorizontal: 16,
-    paddingTop: 10,
-    paddingBottom: 8,
+    // paddingBottom is set inline via insets.bottom so it respects the
+    // device's home-indicator safe-area on every device.
   },
 
   // Auth screen
@@ -992,9 +1004,10 @@ const styles = StyleSheet.create({
   inputRow: {
     flexDirection: "row",
     alignItems: "center",
-    borderWidth: 1,
-    borderColor: "#ddd",
-    borderRadius: 8,
+    backgroundColor: "#fff",
+    borderWidth: 1.5,
+    borderColor: COLORS.primary,
+    borderRadius: 999,
     paddingHorizontal: 12,
     marginBottom: 10,
   },
