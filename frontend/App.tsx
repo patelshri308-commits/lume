@@ -147,6 +147,7 @@ function AppInner() {
   const [logs,       setLogs]       = useState<FoodLogEntry[]>([]);
   const [showAllLogs,    setShowAllLogs]    = useState(false);
   const [expandedLogIds, setExpandedLogIds] = useState<Set<number>>(new Set());
+  const [isSidebarOpen,  setIsSidebarOpen]  = useState(false);
   const [summary,    setSummary]    = useState<DailySummary | null>(null);
   const [todayCalories, setTodayCalories] = useState<number | null>(null);
   const [searching,       setSearching]       = useState(false);
@@ -161,7 +162,8 @@ function AppInner() {
   const [isScannerOpen,  setIsScannerOpen]  = useState(false);
   const [scannedBarcode, setScannedBarcode] = useState<string | null>(null);
   const [cameraPermission, requestCameraPermission] = useCameraPermissions();
-  const scanLockRef = useRef(false);  // prevents duplicate scan callbacks
+  const scanLockRef  = useRef(false);                          // prevents duplicate scan callbacks
+  const sidebarAnim  = useRef(new Animated.Value(0)).current;  // 0 = closed, 1 = open
   const [weeklyData,    setWeeklyData]    = useState<WeeklyDay[]>([]);
   const [weeklyLoading, setWeeklyLoading] = useState(false);
   const [refreshing,    setRefreshing]    = useState(false);
@@ -173,6 +175,15 @@ function AppInner() {
   const [authEmail,     setAuthEmail]     = useState("");
   const [authPassword,  setAuthPassword]  = useState("");
   const [authMessage,   setAuthMessage]   = useState("");
+
+  // Sidebar open/close animation.
+  useEffect(() => {
+    Animated.timing(sidebarAnim, {
+      toValue: isSidebarOpen ? 1 : 0,
+      duration: 250,
+      useNativeDriver: true,
+    }).start();
+  }, [isSidebarOpen]);
 
   // iOS keyboard listeners — lift the floating search bar above the keyboard.
   useEffect(() => {
@@ -546,13 +557,12 @@ function AppInner() {
 
         {/* Header */}
         <View style={styles.headerRow}>
-          <Image
-            source={require("./assets/Lume.png")}
-            style={styles.logo}
-            resizeMode="contain"
-          />
-          <TouchableOpacity onPress={logOut}>
-            <Text style={styles.logOutText}>Log Out</Text>
+          <TouchableOpacity onPress={() => setIsSidebarOpen(true)} activeOpacity={0.8}>
+            <Image
+              source={require("./assets/Lume.png")}
+              style={styles.logo}
+              resizeMode="contain"
+            />
           </TouchableOpacity>
         </View>
 
@@ -878,6 +888,35 @@ function AppInner() {
         ) : null}
       </View>
 
+      {/* Sidebar backdrop — fades in/out; tapping closes the drawer */}
+      <Animated.View
+        pointerEvents={isSidebarOpen ? "auto" : "none"}
+        style={[styles.sidebarBackdrop, { opacity: sidebarAnim }]}
+      >
+        <TouchableOpacity
+          style={StyleSheet.absoluteFillObject}
+          activeOpacity={1}
+          onPress={() => setIsSidebarOpen(false)}
+        />
+      </Animated.View>
+
+      {/* Left sidebar drawer — slides in/out from the left */}
+      <Animated.View
+        style={[
+          styles.sidebar,
+          { transform: [{ translateX: sidebarAnim.interpolate({ inputRange: [0, 1], outputRange: [-220, 0] }) }] },
+        ]}
+        pointerEvents={isSidebarOpen ? "auto" : "none"}
+      >
+        <Text style={styles.sidebarTitle}>Lume</Text>
+        <View style={styles.sidebarDivider} />
+        <TouchableOpacity onPress={() => { setIsSidebarOpen(false); logOut(); }}>
+          <View style={styles.sidebarLogOutWrapper}>
+            <Text style={styles.sidebarLogOut}>Log out</Text>
+          </View>
+        </TouchableOpacity>
+      </Animated.View>
+
     </SafeAreaView>
   );
 }
@@ -1095,6 +1134,53 @@ const styles = StyleSheet.create({
     fontSize: 13,
     color: "#555",
     paddingTop: 8,
+  },
+  sidebarBackdrop: {
+    position: "absolute",
+    top: 0,
+    left: 0,
+    right: 0,
+    bottom: 0,
+    backgroundColor: "rgba(0,0,0,0.28)",
+    zIndex: 20,
+  },
+  sidebar: {
+    position: "absolute",
+    top: 0,
+    left: 0,
+    bottom: 0,
+    width: 220,
+    backgroundColor: "#FAFAF7",
+    paddingTop: 64,
+    paddingHorizontal: 24,
+    zIndex: 21,
+    shadowColor: "#000",
+    shadowOpacity: 0.12,
+    shadowRadius: 12,
+    shadowOffset: { width: 4, height: 0 },
+    elevation: 8,
+  },
+  sidebarTitle: {
+    fontSize: 22,
+    fontFamily: "Chillax-SemiBold",
+    color: "#111",
+    marginBottom: 32,
+  },
+  sidebarDivider: {
+    height: 1,
+    backgroundColor: "#eee",
+    marginBottom: 20,
+  },
+  sidebarLogOutWrapper: {
+    alignSelf: "flex-start",
+    borderBottomWidth: 1.5,
+    borderBottomColor: COLORS.primary,
+    paddingBottom: 1,
+  },
+  sidebarLogOut: {
+    fontSize: 15,
+    fontFamily: "Chillax-Medium",
+    color: "#111",
   },
   calorieBadge: {
     position: "absolute",
