@@ -22,6 +22,7 @@ import {
 } from "react-native";
 import { SafeAreaProvider, SafeAreaView, useSafeAreaInsets } from "react-native-safe-area-context";
 import { LinearGradient } from "expo-linear-gradient";
+import Svg, { Circle, G } from "react-native-svg";
 import axios from "axios";
 import { Session } from "@supabase/supabase-js";
 import { supabase } from "./lib/supabase";
@@ -699,24 +700,7 @@ function AppInner() {
           <Text style={styles.sectionLabel}>DAILY SUMMARY</Text>
           {summaryLoading && <Text style={styles.searchingText}>Loading summary...</Text>}
           {!summaryLoading && summary && (
-            <View style={[styles.card, styles.summaryCard]}>
-              <View style={{ flexDirection: "row", justifyContent: "space-between", alignItems: "center" }}>
-                <Text style={styles.cardTitle}>
-                  {selectedDate === localToday()
-                    ? "Today's Totals"
-                    : `Totals — ${formatDateLabel(selectedDate)}`}
-                </Text>
-                <Text style={styles.entryCount}>
-                  {summary.entries_count} {summary.entries_count === 1 ? "entry" : "entries"}
-                </Text>
-              </View>
-              <View style={styles.macroRow}>
-                <MacroItem label="Calories" value={`${summary.total_calories}`} unit="kcal" />
-                <MacroItem label="Protein"  value={`${summary.total_protein}`}  unit="g" />
-                <MacroItem label="Carbs"    value={`${summary.total_carbs}`}    unit="g" />
-                <MacroItem label="Fat"      value={`${summary.total_fat}`}      unit="g" />
-              </View>
-            </View>
+            <TotalsRadialRings summary={summary} selectedDate={selectedDate} />
           )}
         </View>
 
@@ -1089,6 +1073,114 @@ function MacroItem({ label, value, unit }: { label: string; value: string; unit:
       <Text style={styles.macroUnit}>{unit}</Text>
       <Text style={styles.macroLabel}>{label}</Text>
     </View>
+  );
+}
+
+// ---------------------------------------------------------------------------
+// TotalsRadialRings — "Radial Rings" design from Claude Design.
+// Three concentric SVG rings (Protein / Carbs / Fat) around a central
+// calorie count. Warm cream-to-gold gradient background (Sunrise Arc style).
+// Hardcoded macro targets — backend is unchanged.
+// ---------------------------------------------------------------------------
+const CALORIE_GOAL   = 2000;
+const MACRO_TARGETS  = { protein: 140, carbs: 220, fat: 70 };
+
+function TotalsRadialRings({ summary, selectedDate }: { summary: DailySummary; selectedDate: string }) {
+  const { total_calories, total_protein, total_carbs, total_fat, entries_count } = summary;
+  const calPct = Math.min(1, total_calories / CALORIE_GOAL);
+  const pctLabel = `${Math.round(calPct * 100)}%`;
+  const isToday = selectedDate === localToday();
+
+  const rings = [
+    { label: "Protein", value: total_protein, target: MACRO_TARGETS.protein, r: 78, color: "#8B5A0F" },
+    { label: "Carbs",   value: total_carbs,   target: MACRO_TARGETS.carbs,   r: 64, color: "#1A1A14" },
+    { label: "Fat",     value: total_fat,     target: MACRO_TARGETS.fat,     r: 50, color: "#C48A1A" },
+  ];
+
+  return (
+    <LinearGradient
+      colors={["#FFF8D4", "#FDEFA5", "#F7DF6A"]}
+      locations={[0, 0.55, 1]}
+      start={{ x: 0.1, y: 0 }} end={{ x: 1, y: 1 }}
+      style={styles.ringsCard}
+    >
+      {/* Soft glow highlight at top */}
+      <View style={styles.ringsGlow} pointerEvents="none" />
+
+      {/* Header row */}
+      <View style={styles.ringsHeader}>
+        <View>
+          <Text style={styles.ringsTitle}>
+            {isToday ? "Today's Totals" : `Totals — ${formatDateLabel(selectedDate)}`}
+          </Text>
+          <Text style={styles.ringsEntryCount}>
+            {entries_count} {entries_count === 1 ? "entry" : "entries"} logged
+          </Text>
+        </View>
+        <View style={styles.ringsPctBadge}>
+          <Text style={styles.ringsPctText}>{pctLabel}</Text>
+        </View>
+      </View>
+
+      {/* Rings + legend row */}
+      <View style={styles.ringsBody}>
+        {/* SVG ring stack */}
+        <View style={styles.ringsSvgWrap}>
+          <Svg width={180} height={180} viewBox="0 0 180 180">
+            {rings.map((ring) => {
+              const circumference = 2 * Math.PI * ring.r;
+              const dash = circumference * Math.min(1, ring.value / ring.target);
+              return (
+                <G key={ring.label} rotation="-90" origin="90, 90">
+                  {/* track */}
+                  <Circle
+                    cx={90} cy={90} r={ring.r}
+                    fill="none"
+                    stroke="rgba(26,26,20,0.10)"
+                    strokeWidth={8}
+                  />
+                  {/* filled arc */}
+                  <Circle
+                    cx={90} cy={90} r={ring.r}
+                    fill="none"
+                    stroke={ring.color}
+                    strokeWidth={8}
+                    strokeDasharray={`${dash} ${circumference}`}
+                    strokeLinecap="round"
+                  />
+                </G>
+              );
+            })}
+          </Svg>
+          {/* Center label */}
+          <View style={styles.ringsCenterLabel}>
+            <Text style={styles.ringsCenterCals}>{Math.round(total_calories).toLocaleString()}</Text>
+            <Text style={styles.ringsCenterUnit}>kcal</Text>
+            <Text style={styles.ringsCenterGoal}>/{(CALORIE_GOAL / 1000)}k goal</Text>
+          </View>
+        </View>
+
+        {/* Legend */}
+        <View style={styles.ringsLegend}>
+          {rings.map((ring) => {
+            const p = Math.round(Math.min(1, ring.value / ring.target) * 100);
+            return (
+              <View key={ring.label} style={styles.ringsLegendItem}>
+                <View style={styles.ringsLegendRow}>
+                  <View style={[styles.ringsLegendDot, { backgroundColor: ring.color }]} />
+                  <Text style={styles.ringsLegendLabel}>{ring.label.toUpperCase()}</Text>
+                </View>
+                <Text style={styles.ringsLegendValue}>
+                  {ring.value}
+                  <Text style={styles.ringsLegendUnit}>g</Text>
+                  <Text style={styles.ringsLegendPct}>  · {p}%</Text>
+                </Text>
+              </View>
+            );
+          })}
+        </View>
+      </View>
+    </LinearGradient>
   );
 }
 
@@ -1542,6 +1634,141 @@ const styles = StyleSheet.create({
     fontFamily: "Chillax-Medium",
     marginBottom: 4,
     textTransform: "capitalize",
+  },
+
+  // Radial Rings card
+  ringsCard: {
+    marginTop: 14,
+    borderRadius: 24,
+    padding: 20,
+    overflow: "hidden",
+    shadowColor: "rgba(200,160,20,1)",
+    shadowOpacity: 0.18,
+    shadowRadius: 24,
+    shadowOffset: { width: 0, height: 8 },
+    elevation: 4,
+  },
+  ringsGlow: {
+    position: "absolute",
+    left: "50%",
+    top: -60,
+    width: 260,
+    height: 260,
+    marginLeft: -130,
+    borderRadius: 130,
+    backgroundColor: "rgba(255,250,200,0.7)",
+  },
+  ringsHeader: {
+    flexDirection: "row",
+    justifyContent: "space-between",
+    alignItems: "flex-start",
+    marginBottom: 12,
+  },
+  ringsTitle: {
+    fontFamily: "Chillax-SemiBold",
+    fontSize: 17,
+    letterSpacing: -0.3,
+    color: "#1A1A14",
+  },
+  ringsEntryCount: {
+    fontFamily: "Inter-Variable",
+    fontSize: 11,
+    color: "rgba(26,26,20,0.55)",
+    letterSpacing: 0.4,
+    marginTop: 2,
+  },
+  ringsPctBadge: {
+    paddingHorizontal: 10,
+    paddingVertical: 4,
+    borderRadius: 999,
+    backgroundColor: "#1A1A14",
+  },
+  ringsPctText: {
+    fontFamily: "Chillax-SemiBold",
+    fontSize: 11,
+    color: "#F5D834",
+    letterSpacing: 0.4,
+  },
+  ringsBody: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 16,
+  },
+  ringsSvgWrap: {
+    width: 180,
+    height: 180,
+    flexShrink: 0,
+  },
+  ringsCenterLabel: {
+    position: "absolute",
+    top: 0,
+    left: 0,
+    width: 180,
+    height: 180,
+    alignItems: "center",
+    justifyContent: "center",
+  },
+  ringsCenterCals: {
+    fontFamily: "Chillax-Bold",
+    fontSize: 28,
+    lineHeight: 28,
+    letterSpacing: -0.8,
+    color: "#1A1A14",
+  },
+  ringsCenterUnit: {
+    fontFamily: "Inter-Variable",
+    fontSize: 9,
+    color: "rgba(26,26,20,0.55)",
+    letterSpacing: 0.8,
+    textTransform: "uppercase",
+    marginTop: 3,
+  },
+  ringsCenterGoal: {
+    fontFamily: "Inter-Variable",
+    fontSize: 10,
+    color: "rgba(26,26,20,0.45)",
+    marginTop: 2,
+  },
+  ringsLegend: {
+    flex: 1,
+    gap: 10,
+  },
+  ringsLegendItem: {
+    gap: 1,
+  },
+  ringsLegendRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 6,
+  },
+  ringsLegendDot: {
+    width: 8,
+    height: 8,
+    borderRadius: 2,
+  },
+  ringsLegendLabel: {
+    fontFamily: "Inter-Variable",
+    fontSize: 10,
+    color: "rgba(26,26,20,0.6)",
+    letterSpacing: 0.6,
+  },
+  ringsLegendValue: {
+    fontFamily: "Chillax-SemiBold",
+    fontSize: 20,
+    letterSpacing: -0.5,
+    color: "#1A1A14",
+    marginTop: 1,
+  },
+  ringsLegendUnit: {
+    fontFamily: "Inter-Variable",
+    fontSize: 12,
+    color: "rgba(26,26,20,0.45)",
+  },
+  ringsLegendPct: {
+    fontFamily: "Inter-Variable",
+    fontSize: 11,
+    color: "rgba(26,26,20,0.4)",
+    letterSpacing: 0,
   },
   // Macro grid
   macroRow: {
