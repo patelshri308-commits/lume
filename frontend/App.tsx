@@ -1,12 +1,16 @@
-import { useState, useEffect, useRef } from "react";
-import { Platform, Modal } from "react-native";
+import React, { useState, useEffect, useRef } from "react";
+import { Keyboard, Platform, Modal } from "react-native";
 import { CameraView, useCameraPermissions } from "expo-camera";
 const barcodIcon = require("./assets/barcode.png");
 import { useFonts } from "expo-font";
+import { Ionicons } from "@expo/vector-icons";
+import * as Haptics from "expo-haptics";
 import DateTimePicker, { DateTimePickerAndroid } from "@react-native-community/datetimepicker";
 import {
   Alert,
+  Animated,
   Image,
+  PanResponder,
   RefreshControl,
   View,
   Text,
@@ -145,7 +149,8 @@ function AppInner() {
   const [summary,    setSummary]    = useState<DailySummary | null>(null);
   const [todayCalories, setTodayCalories] = useState<number | null>(null);
   const [searching,       setSearching]       = useState(false);
-  const [isSearchFocused, setIsSearchFocused] = useState(false);
+  const [isSearchFocused,  setIsSearchFocused]  = useState(false);
+  const [keyboardHeight,   setKeyboardHeight]   = useState(0);
   const [logsLoading,   setLogsLoading]   = useState(false);
   const [summaryLoading,setSummaryLoading]= useState(false);
   const [deletingLogId, setDeletingLogId] = useState<number | null>(null);
@@ -167,6 +172,18 @@ function AppInner() {
   const [authEmail,     setAuthEmail]     = useState("");
   const [authPassword,  setAuthPassword]  = useState("");
   const [authMessage,   setAuthMessage]   = useState("");
+
+  // iOS keyboard listeners — lift the floating search bar above the keyboard.
+  useEffect(() => {
+    if (Platform.OS !== "ios") return;
+    const show = Keyboard.addListener("keyboardWillShow", (e) => {
+      setKeyboardHeight(e.endCoordinates.height);
+    });
+    const hide = Keyboard.addListener("keyboardWillHide", () => {
+      setKeyboardHeight(0);
+    });
+    return () => { show.remove(); hide.remove(); };
+  }, []);
 
   // Initialise session on mount and listen for auth changes.
   // onAuthStateChange fires INITIAL_SESSION immediately on subscription (Supabase v2),
@@ -240,6 +257,7 @@ function AppInner() {
         { headers: await getAuthHeaders() },
       );
       setQuery("");      // clear input for next item
+      Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
       setLogMessage("Food logged");
       await loadSummary();
       await loadLogs();
@@ -437,6 +455,7 @@ function AppInner() {
             },
             { headers: await getAuthHeaders() },
           );
+          Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
           setLogMessage(`Logged: ${food.name}`);
           await loadSummary();
           await loadLogs();
@@ -460,7 +479,7 @@ function AppInner() {
   // ── Auth screen ────────────────────────────────────────────────────────────
   if (!session) {
     return (
-      <SafeAreaView style={styles.safe}>
+      <SafeAreaView style={styles.authSafe}>
         <View style={styles.authContainer}>
           <View style={styles.logoContainer}>
             <Image
@@ -469,38 +488,40 @@ function AppInner() {
               resizeMode="contain"
             />
           </View>
-          <Text style={styles.appSubtitle}>Track what you eat</Text>
+          <View style={styles.authContent}>
+            <Text style={styles.appSubtitle}>Track what you eat</Text>
 
-          <TextInput
-            style={styles.input}
-            placeholder="Email"
-            placeholderTextColor="#aaa"
-            value={authEmail}
-            onChangeText={setAuthEmail}
-            autoCapitalize="none"
-            keyboardType="email-address"
-          />
-          <TextInput
-            style={styles.input}
-            placeholder="Password"
-            placeholderTextColor="#aaa"
-            value={authPassword}
-            onChangeText={setAuthPassword}
-            secureTextEntry
-          />
+            <TextInput
+              style={styles.authInput}
+              placeholder="Email"
+              placeholderTextColor="#aaa"
+              value={authEmail}
+              onChangeText={setAuthEmail}
+              autoCapitalize="none"
+              keyboardType="email-address"
+            />
+            <TextInput
+              style={styles.authInput}
+              placeholder="Password"
+              placeholderTextColor="#aaa"
+              value={authPassword}
+              onChangeText={setAuthPassword}
+              secureTextEntry
+            />
 
-          <View style={styles.authButtons}>
-            <View style={styles.authButtonItem}>
-              <Button title="Log In" onPress={logIn} />
+            <View style={styles.authButtons}>
+              <View style={styles.authButtonItem}>
+                <Button title="Log In" onPress={logIn} />
+              </View>
+              <View style={styles.authButtonItem}>
+                <Button title="Sign Up" onPress={signUp} color="#aaa" />
+              </View>
             </View>
-            <View style={styles.authButtonItem}>
-              <Button title="Sign Up" onPress={signUp} color="#aaa" />
-            </View>
+
+            {authMessage ? (
+              <Text style={styles.authMessage}>{authMessage}</Text>
+            ) : null}
           </View>
-
-          {authMessage ? (
-            <Text style={styles.authMessage}>{authMessage}</Text>
-          ) : null}
         </View>
       </SafeAreaView>
     );
@@ -631,7 +652,12 @@ function AppInner() {
             <Text style={styles.emptyState}>No food logged yet — let's get your first one in</Text>
           )}
           {!logsLoading && (showAllLogs ? logs : logs.slice(0, 1)).map((entry) => (
-            <View key={entry.id} style={styles.logEntry}>
+            <SwipeableRow
+              key={entry.id}
+              onDelete={() => deleteLog(entry.id)}
+              disabled={editingLogId === entry.id}
+            >
+            <View style={styles.logEntry}>
               {editingLogId === entry.id ? (
                 /* ── Inline edit form ── */
                 <View>
@@ -731,29 +757,13 @@ function AppInner() {
                         });
                       }}
                     >
-                      <Text style={styles.editButton}>Edit</Text>
-                    </TouchableOpacity>
-                    <TouchableOpacity
-                      onPress={() => {
-                        Alert.alert(
-                          "Delete entry",
-                          `Remove "${entry.name}" from your log?`,
-                          [
-                            { text: "Cancel", style: "cancel" },
-                            { text: "Delete", style: "destructive", onPress: () => deleteLog(entry.id) },
-                          ],
-                        );
-                      }}
-                      disabled={deletingLogId === entry.id}
-                    >
-                      <Text style={deletingLogId === entry.id ? styles.deleteButtonDisabled : styles.deleteButton}>
-                        {deletingLogId === entry.id ? "..." : "Delete"}
-                      </Text>
+                      <Ionicons name="create-outline" size={19} color={COLORS.primary} />
                     </TouchableOpacity>
                   </View>
                 </View>
               )}
             </View>
+            </SwipeableRow>
           ))}
           {!logsLoading && logs.length > 1 && (
             <TouchableOpacity
@@ -813,7 +823,7 @@ function AppInner() {
           the scroll content with no background panel beneath it.
           paddingBottom uses the device's bottom safe-area inset so the input
           clears the home indicator on all devices. */}
-      <View style={[styles.bottomBar, { paddingBottom: insets.bottom || 8 }]}>
+      <View style={[styles.bottomBar, { bottom: keyboardHeight, paddingBottom: keyboardHeight > 0 ? 8 : (insets.bottom || 8) }]}>
         <View style={[styles.inputRow, isSearchFocused && styles.inputRowFocused]}>
           <TextInput
             placeholder="e.g. banana, grilled chicken..."
@@ -850,6 +860,103 @@ function AppInner() {
     </SafeAreaView>
   );
 }
+
+// ---------------------------------------------------------------------------
+// SwipeableRow — wraps a list item and reveals a Delete action on swipe-left.
+// Uses only built-in Animated + PanResponder (no extra dependency).
+// ---------------------------------------------------------------------------
+const SWIPE_THRESHOLD = 60;   // px to drag before the Delete button locks open
+const DELETE_WIDTH    = 64;   // width of the revealed Delete button
+
+function SwipeableRow({
+  children,
+  onDelete,
+  disabled = false,
+}: {
+  children: React.ReactNode;
+  onDelete: () => void;
+  disabled?: boolean;
+}) {
+  const translateX = useRef(new Animated.Value(0)).current;
+
+  const panResponder = useRef(
+    PanResponder.create({
+      onMoveShouldSetPanResponder: (_e, gs) =>
+        !disabled && Math.abs(gs.dx) > 6 && Math.abs(gs.dx) > Math.abs(gs.dy),
+      onPanResponderMove: (_e, gs) => {
+        const clamped = Math.max(-DELETE_WIDTH, Math.min(0, gs.dx));
+        translateX.setValue(clamped);
+      },
+      onPanResponderRelease: (_e, gs) => {
+        if (gs.dx < -SWIPE_THRESHOLD) {
+          Animated.spring(translateX, { toValue: -DELETE_WIDTH, useNativeDriver: true }).start();
+        } else {
+          Animated.spring(translateX, { toValue: 0, useNativeDriver: true }).start();
+        }
+      },
+    })
+  ).current;
+
+  const close = () =>
+    Animated.spring(translateX, { toValue: 0, useNativeDriver: true }).start();
+
+  return (
+    // Outer row: delete button lives here at natural right-edge position.
+    // overflow:"hidden" is NOT set here so the button is invisible until the
+    // content slides; the content View below clips itself instead.
+    <View style={swipeStyles.outerRow}>
+      {/* Delete button — fixed at the right, always behind the content */}
+      <View style={swipeStyles.deleteAction}>
+        <TouchableOpacity
+          style={swipeStyles.deleteButton}
+          onPress={() => { Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium); close(); onDelete(); }}
+        >
+          <Ionicons name="trash-outline" size={22} color="#fff" />
+        </TouchableOpacity>
+      </View>
+
+      {/* Sliding content — starts flush, covers the delete button completely.
+          Its own overflow:"hidden" prevents it from drawing outside the row. */}
+      <Animated.View
+        style={[swipeStyles.contentSlider, { transform: [{ translateX }] }]}
+        {...panResponder.panHandlers}
+      >
+        {children}
+      </Animated.View>
+    </View>
+  );
+}
+
+const swipeStyles = StyleSheet.create({
+  // Outer container — clips rounded corners and the delete zone behind the card.
+  // marginTop lives here (not on logEntry) so the gap never exposes red background.
+  outerRow: {
+    marginTop: 10,
+    borderRadius: 8,
+    overflow: "hidden",
+  },
+  // Red delete zone — no borderRadius needed; outerRow clips it cleanly.
+  deleteAction: {
+    position: "absolute",
+    right: 0,
+    top: 0,
+    bottom: 0,
+    width: DELETE_WIDTH,
+    justifyContent: "center",
+    alignItems: "center",
+    backgroundColor: "#c62828",
+  },
+  deleteButton: {
+    flex: 1,
+    width: "100%",
+    justifyContent: "center",
+    alignItems: "center",
+  },
+  // Content fills full width so it perfectly covers the delete zone at rest.
+  contentSlider: {
+    width: "100%",
+  },
+});
 
 // Small reusable component for displaying a single macro value
 function MacroItem({ label, value, unit }: { label: string; value: string; unit: string }) {
@@ -897,10 +1004,31 @@ const styles = StyleSheet.create({
   },
 
   // Auth screen
+  authSafe: {
+    flex: 1,
+    backgroundColor: "#fff",
+  },
   authContainer: {
     flex: 1,
-    padding: 28,
+    paddingHorizontal: 28,
     justifyContent: "center",
+    backgroundColor: "#fff",
+    width: "100%",
+  },
+  authContent: {
+    width: "100%",
+    alignSelf: "stretch",
+  },
+  authInput: {
+    width: "100%",
+    paddingVertical: 12,
+    paddingHorizontal: 4,
+    fontSize: 15,
+    fontFamily: "Inter-Variable",
+    color: "#111",
+    borderBottomWidth: 1,
+    borderBottomColor: "#ddd",
+    marginBottom: 16,
   },
   authButtons: {
     flexDirection: "row",
@@ -1153,7 +1281,6 @@ const styles = StyleSheet.create({
 
   // Log list
   logEntry: {
-    marginTop: 10,
     padding: 12,
     borderRadius: 8,
     backgroundColor: "#f9f9f9",
