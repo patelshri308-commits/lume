@@ -1010,6 +1010,12 @@ const styles = StyleSheet.create({
     borderRadius: 999,
     paddingHorizontal: 12,
     marginBottom: 10,
+    // Subtle elevation so the bar feels slightly lifted above the content
+    shadowColor: "#000",
+    shadowOpacity: 0.08,
+    shadowRadius: 6,
+    shadowOffset: { width: 0, height: 2 },
+    elevation: 3,
   },
   input: {
     flex: 1,
