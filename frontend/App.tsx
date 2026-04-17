@@ -144,7 +144,8 @@ function AppInner() {
   const [showAllLogs, setShowAllLogs] = useState(false);
   const [summary,    setSummary]    = useState<DailySummary | null>(null);
   const [todayCalories, setTodayCalories] = useState<number | null>(null);
-  const [searching,     setSearching]     = useState(false);
+  const [searching,       setSearching]       = useState(false);
+  const [isSearchFocused, setIsSearchFocused] = useState(false);
   const [logsLoading,   setLogsLoading]   = useState(false);
   const [summaryLoading,setSummaryLoading]= useState(false);
   const [deletingLogId, setDeletingLogId] = useState<number | null>(null);
@@ -813,13 +814,15 @@ function AppInner() {
           paddingBottom uses the device's bottom safe-area inset so the input
           clears the home indicator on all devices. */}
       <View style={[styles.bottomBar, { paddingBottom: insets.bottom || 8 }]}>
-        <View style={styles.inputRow}>
+        <View style={[styles.inputRow, isSearchFocused && styles.inputRowFocused]}>
           <TextInput
             placeholder="e.g. banana, grilled chicken..."
             placeholderTextColor="#aaa"
             value={query}
             onChangeText={setQuery}
             onSubmitEditing={searchAndLog}
+            onFocus={() => setIsSearchFocused(true)}
+            onBlur={() => setIsSearchFocused(false)}
             returnKeyType="search"
             autoCapitalize="none"
             style={styles.input}
@@ -1016,6 +1019,15 @@ const styles = StyleSheet.create({
     shadowRadius: 6,
     shadowOffset: { width: 0, height: 2 },
     elevation: 3,
+  },
+  // Applied on top of inputRow when the TextInput is focused.
+  inputRowFocused: {
+    borderWidth: 3,
+    borderColor: COLORS.primary,
+    shadowOpacity: 0.22,
+    shadowRadius: 12,
+    shadowOffset: { width: 0, height: 4 },
+    elevation: 8,
   },
   input: {
     flex: 1,
