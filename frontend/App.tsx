@@ -148,6 +148,56 @@ function _parseQuery(raw: string): { foodQuery: string; parsedServings: number }
   return { parsedServings: 1, foodQuery: raw.trim() };
 }
 
+// ---------------------------------------------------------------------------
+// computeCalorieTarget — pure function, no side effects.
+// Derives a personalized daily calorie target from the user's saved profile
+// using Mifflin–St Jeor BMR → TDEE → goal adjustment → safety floor.
+// ---------------------------------------------------------------------------
+function computeCalorieTarget(profile: UserProfile): number {
+  const { weight_kg, height_cm, age, sex, activity_level, goal_type } = profile;
+
+  // Guard: if any required biometric is missing, fall back to safe default.
+  if (!weight_kg || !height_cm || !age) return 2000;
+
+  // ── Mifflin–St Jeor BMR ──────────────────────────────────────────────────
+  let bmr: number;
+  if (sex === "male") {
+    bmr = 10 * weight_kg + 6.25 * height_cm - 5 * age + 5;
+  } else if (sex === "female") {
+    bmr = 10 * weight_kg + 6.25 * height_cm - 5 * age - 161;
+  } else {
+    // "other" — V1 midpoint between male (+5) and female (−161) constants
+    bmr = 10 * weight_kg + 6.25 * height_cm - 5 * age - 78;
+  }
+
+  // ── TDEE via activity multiplier ─────────────────────────────────────────
+  const multipliers: Record<string, number> = {
+    sedentary:  1.2,
+    light:      1.35,
+    moderate:   1.5,
+    active:     1.65,
+    very_active: 1.8,
+  };
+  const tdee = bmr * (multipliers[activity_level] ?? 1.5);
+
+  // ── Goal adjustment ───────────────────────────────────────────────────────
+  let targetCalories: number;
+  if (goal_type === "lose") {
+    const weight_lbs   = weight_kg * 2.20462;
+    const weeklyDeficit = weight_lbs * 0.006 * 3500;
+    const dailyDeficit  = Math.min(700, Math.max(300, weeklyDeficit / 7));
+    targetCalories = tdee - dailyDeficit;
+  } else if (goal_type === "gain") {
+    targetCalories = tdee + 250;
+  } else {
+    // maintain
+    targetCalories = tdee;
+  }
+
+  // ── Safety floor: never below 1 200 kcal ─────────────────────────────────
+  return Math.round(Math.max(1200, targetCalories));
+}
+
 // Thin shell — SafeAreaProvider must be an ancestor of any component that
 // calls useSafeAreaInsets(), so it lives here, above AppInner.
 export default function App() {
@@ -892,6 +942,9 @@ function AppInner() {
   }
 
   // ── Tracker screen (logged in) ──────────────────────────────────────────────
+  // profile is guaranteed non-null here (the setup gate above would have caught it).
+  const calorieGoal = profile ? computeCalorieTarget(profile) : CALORIE_GOAL;
+
   return (
     <SafeAreaView style={styles.safe}>
       <ScrollView
@@ -988,7 +1041,7 @@ function AppInner() {
           <Text style={styles.sectionLabel}>DAILY SUMMARY</Text>
           {summaryLoading && <Text style={styles.searchingText}>Loading summary...</Text>}
           {!summaryLoading && summary && (
-            <TotalsRadialRings summary={summary} selectedDate={selectedDate} />
+            <TotalsRadialRings summary={summary} selectedDate={selectedDate} goal={calorieGoal} />
           )}
         </View>
 
@@ -1149,7 +1202,7 @@ function AppInner() {
           {weeklyLoading && weeklyData.length === 0 && (
             <Text style={styles.searchingText}>Loading...</Text>
           )}
-          {weeklyData.length > 0 && <WeeklyGlowLine data={weeklyData} />}
+          {weeklyData.length > 0 && <WeeklyGlowLine data={weeklyData} goal={calorieGoal} />}
         </View>
 
       </ScrollView>
@@ -1743,9 +1796,9 @@ function MacroItem({ label, value, unit }: { label: string; value: string; unit:
 const CALORIE_GOAL   = 2000;
 const MACRO_TARGETS  = { protein: 140, carbs: 220, fat: 70 };
 
-function TotalsRadialRings({ summary, selectedDate }: { summary: DailySummary; selectedDate: string }) {
+function TotalsRadialRings({ summary, selectedDate, goal = CALORIE_GOAL }: { summary: DailySummary; selectedDate: string; goal?: number }) {
   const { total_calories, total_protein, total_carbs, total_fat, entries_count } = summary;
-  const calPct = Math.min(1, total_calories / CALORIE_GOAL);
+  const calPct = Math.min(1, total_calories / goal);
   const pctLabel = `${Math.round(calPct * 100)}%`;
   const isToday = selectedDate === localToday();
 
@@ -1814,7 +1867,7 @@ function TotalsRadialRings({ summary, selectedDate }: { summary: DailySummary; s
           <View style={styles.ringsCenterLabel}>
             <Text style={styles.ringsCenterCals}>{Math.round(total_calories).toLocaleString()}</Text>
             <Text style={styles.ringsCenterUnit}>kcal</Text>
-            <Text style={styles.ringsCenterGoal}>/{(CALORIE_GOAL / 1000)}k goal</Text>
+            <Text style={styles.ringsCenterGoal}>/{(goal / 1000).toFixed(1)}k goal</Text>
           </View>
         </View>
 
@@ -1850,18 +1903,30 @@ function TotalsRadialRings({ summary, selectedDate }: { summary: DailySummary; s
 function WeeklyGlowLine({ data, goal = CALORIE_GOAL }: { data: WeeklyDay[]; goal?: number }) {
   if (!data.length) return null;
 
-  const max = Math.max(...data.map(d => d.total_calories), goal) * 1.05;
+  // Scale is always goal × 1.5 so every day is measured against the same
+  // target-relative axis rather than the tallest bar in the current week.
+  const maxScale = goal * 1.5;
   const avg = Math.round(data.reduce((s, d) => s + d.total_calories, 0) / data.length);
 
   // Fixed SVG coordinate space — scales to container width via viewBox.
   const W = 300, H = 110, P = 8;
   const step = data.length > 1 ? (W - P * 2) / (data.length - 1) : 0;
 
-  const pts = data.map((d, i) => ({
-    x: P + i * step,
-    y: max === 0 ? H - P : H - P - (d.total_calories / max) * (H - P * 2),
-    date: d.date,
-  }));
+  const pts = data.map((d, i) => {
+    // Normalise to [0, 1] against the fixed scale; clamp so overflow is capped.
+    const norm = maxScale === 0 ? 0 : Math.min(d.total_calories / maxScale, 1);
+    // Color each dot by how the day compares to the goal.
+    let dotColor: string;
+    if (d.total_calories <= goal)        dotColor = COLORS.primary; // yellow — on target
+    else if (d.total_calories <= goal * 1.2) dotColor = "#FFA500"; // orange — slight over
+    else                                 dotColor = "#FF4D4D";     // red   — well over
+    return {
+      x: P + i * step,
+      y: H - P - norm * (H - P * 2),
+      date: d.date,
+      dotColor,
+    };
+  });
 
   const linePath = pts
     .map((p, i) => `${i === 0 ? "M" : "L"}${p.x.toFixed(1)},${p.y.toFixed(1)}`)
@@ -1869,7 +1934,7 @@ function WeeklyGlowLine({ data, goal = CALORIE_GOAL }: { data: WeeklyDay[]; goal
   const areaPath =
     `${linePath} L${pts[pts.length - 1].x.toFixed(1)},${(H - P).toFixed(1)}` +
     ` L${pts[0].x.toFixed(1)},${(H - P).toFixed(1)} Z`;
-  const goalY = max === 0 ? H - P : H - P - (goal / max) * (H - P * 2);
+  const goalY = maxScale === 0 ? H - P : H - P - (goal / maxScale) * (H - P * 2);
 
   return (
     <LinearGradient
@@ -1931,7 +1996,7 @@ function WeeklyGlowLine({ data, goal = CALORIE_GOAL }: { data: WeeklyDay[]; goal
           strokeLinejoin="round"
         />
 
-        {/* Dots — today (last point) gets a larger dot + outer ring */}
+        {/* Dots — color reflects calories vs goal; today gets a larger dot + outer ring */}
         {pts.map((p, i) => {
           const isToday = i === pts.length - 1;
           return (
@@ -1940,12 +2005,12 @@ function WeeklyGlowLine({ data, goal = CALORIE_GOAL }: { data: WeeklyDay[]; goal
                 <Circle
                   cx={p.x} cy={p.y} r={7}
                   fill="none"
-                  stroke="#1A1A14"
-                  strokeOpacity={0.25}
-                  strokeWidth={1}
+                  stroke={p.dotColor}
+                  strokeOpacity={0.35}
+                  strokeWidth={1.5}
                 />
               )}
-              <Circle cx={p.x} cy={p.y} r={isToday ? 4.5 : 3} fill="#1A1A14" />
+              <Circle cx={p.x} cy={p.y} r={isToday ? 4.5 : 3} fill={p.dotColor} />
             </G>
           );
         })}
