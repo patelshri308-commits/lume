@@ -74,6 +74,34 @@ def _get_macros(nutriments: dict) -> tuple | None:
 
 
 # ---------------------------------------------------------------------------
+# Phase 2: serving-tier detection
+# ---------------------------------------------------------------------------
+
+def _nutrition_tier(nutriments: dict) -> str:
+    """
+    Return '_serving' if per-serving calorie data is present and positive,
+    otherwise '_100g'.
+
+    Mirrors the tier-selection logic in _get_macros so callers can determine
+    which tier was actually used without having to re-parse the nutriments dict.
+    This drives correct serving_description labelling: when only per-100g data
+    is available, the response must say so explicitly rather than leaving
+    serving_description=None (which the consumer would misinterpret as
+    "per serving, serving size unknown").
+    """
+    for suffix in ("_serving", "_100g"):
+        cal_raw = nutriments.get(f"energy-kcal{suffix}")
+        if cal_raw is not None:
+            if _safe_float(cal_raw) > 0:
+                return suffix
+        else:
+            kj = nutriments.get(f"energy{suffix}")
+            if kj is not None and _safe_float(kj) / 4.184 > 0:
+                return suffix
+    return "_100g"  # fallback assumption when neither tier has positive cal data
+
+
+# ---------------------------------------------------------------------------
 # Public function — called by the router
 # ---------------------------------------------------------------------------
 
@@ -122,8 +150,25 @@ def lookup_barcode(barcode: str) -> dict:
         or "Unknown Product"
     ).strip()
 
-    brand   = (product.get("brands")       or "").strip() or None
-    serving = (product.get("serving_size") or "").strip() or None
+    brand            = (product.get("brands")       or "").strip() or None
+    provided_serving = (product.get("serving_size") or "").strip() or None
+
+    # Phase 2: determine which data tier _get_macros actually used, and
+    # make the serving context explicit so consumers are never misled.
+    #
+    #   _serving tier → label is the product's stated serving size (e.g. "30g")
+    #   _100g    tier → per-serving data was absent; label says "per 100g" so
+    #                   the consumer knows the macros are not per-item/serving.
+    tier = _nutrition_tier(nutriments)
+    if tier == "_100g":
+        if provided_serving:
+            # Serving size is labelled on the pack but the database only has
+            # per-100g nutrition — make that mismatch visible.
+            serving_description = f"{provided_serving} (nutrition per 100g)"
+        else:
+            serving_description = "per 100g"
+    else:
+        serving_description = provided_serving
 
     return {
         "name":                name,
@@ -133,7 +178,8 @@ def lookup_barcode(barcode: str) -> dict:
         "fat":                 round(fat, 1),
         "is_estimated":        False,
         "source_type":         "barcode",
+        "source_name":         "Open Food Facts",
         "barcode":             barcode.strip(),
         "brand_name":          brand,
-        "serving_description": serving,
+        "serving_description": serving_description,
     }

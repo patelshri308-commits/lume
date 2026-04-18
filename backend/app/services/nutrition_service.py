@@ -49,6 +49,16 @@ def _score_food(food: dict, query: str) -> int:
     """
     Assign a score to a USDA result. Higher score = better match for a generic query.
     This is used to pick the best result from a list of candidates.
+
+    Phase 2 additions
+    ─────────────────
+    • Zero-match penalty: if NO query word appears anywhere in the description,
+      deduct 40 points.  This prevents irrelevant Foundation items from clearing
+      the threshold on data-type score alone when the query is unrelated.
+    • Primary-word bonus (+10): if the first comma-delimited segment of the
+      description starts with a query word, the result is likely the main food
+      (e.g. "Bananas, raw" for query "banana") rather than a dish that contains
+      the food as an ingredient.
     """
     score       = 0
     description = food.get("description", "").lower()
@@ -61,10 +71,28 @@ def _score_food(food: dict, query: str) -> int:
     # Reward every query word that appears in the description.
     # Also try a simple singular form (strip trailing "s") so that
     # "eggs" matches "egg, whole, raw, fresh", "oats" matches "oat", etc.
+    word_matches = 0
     for word in query_words:
         stem = word[:-1] if len(word) > 3 and word.endswith("s") else word
         if word in description or stem in description:
             score += 15
+            word_matches += 1
+
+    # Phase 2: hard penalty for zero-match results.
+    # Without this, a Foundation item for an unrelated food can score ~28
+    # (30 - len//10) and narrowly pass the CONFIDENCE_THRESHOLD of 30.
+    if word_matches == 0:
+        score -= 40
+
+    # Phase 2: primary-word bonus.
+    # "Bananas, raw" → primary segment = "bananas" → matches query "banana" → +10.
+    # Rewards results where the food IS the main subject, not just an ingredient.
+    primary_segment = description.split(",")[0].strip().rstrip("s")
+    for word in query_words:
+        stem = word[:-1] if len(word) > 3 and word.endswith("s") else word
+        if stem == primary_segment or word == primary_segment:
+            score += 10
+            break  # only once regardless of how many query words match
 
     # Penalise descriptions that contain processed-food keywords —
     # but only when those keywords were NOT part of the user's query.
@@ -281,9 +309,13 @@ def _normalize_query(query: str) -> str:
     """
     q = query.lower().strip()
 
-    # Remove "with ..." add-on phrases — keep only the core food
-    if " with " in q:
-        q = q[:q.index(" with ")].strip()
+    # NOTE: "with ..." clauses are intentionally NOT stripped here.
+    # The query router (Phase 1) now classifies queries with "with" components
+    # as COMPOSITE_MEAL and passes the full text so nothing meaningful is lost.
+    # Stripping "with milk" from "coffee with milk" was returning black-coffee
+    # nutrition (0 cal) instead of a correct estimate — that bug is fixed by
+    # preserving the clause and letting the USDA query and fallback rules
+    # match against the full phrase.
 
     # Strip a leading standalone digit: "2 donuts" → "donuts"
     words = q.split()
@@ -437,31 +469,43 @@ def _fetch_nutrition(query: str) -> dict:
             "carbs":        _extract_nutrient(nutrients, NUTRIENT_ID_CARBS),
             "fat":          _extract_nutrient(nutrients, NUTRIENT_ID_FAT),
             "is_estimated": False,
+            "source_name":  best_food.get("description", ""),  # USDA item description
         }
 
     except Exception:
         return {**_get_fallback_nutrition(query), "is_estimated": True}
 
 
-def get_nutrition(query: str) -> dict:
+def get_nutrition(query: str, *, quantity: float = 0.0) -> dict:
     """
     Public entry point called by the router.
-    Extracts a leading quantity (e.g. "2 donuts" → qty=2), fetches a
-    single-serving result via _fetch_nutrition, then scales all macros
-    if qty > 1.  Quantity detection happens on the raw query before
-    normalization strips the number.
 
-    Always stamps a "name" field (normalized query) so every response
-    from this service carries the full shape expected by POST /logs.
+    Fetches single-serving nutrition via _fetch_nutrition, then scales
+    all macros by the resolved quantity.
+
+    quantity keyword argument (Phase 2)
+    ────────────────────────────────────
+    When the caller provides a pre-parsed quantity > 0 (e.g. from the Phase 1
+    ParsedQuery), that value is used directly.  This enables decimal quantities
+    ("2.5 cups rice" → 2.5) and number words ("half" → 0.5) that the legacy
+    integer extractor below cannot produce.
+
+    When quantity is 0.0 (default), the legacy _extract_leading_quantity()
+    is used on the raw query text for backward compatibility with callers
+    (COMPOSITE_MEAL, AMBIGUOUS) that still pass the full query.
+
+    Always stamps a "name" field so every response carries the full shape
+    expected by POST /logs.  The caller (router) may override "name" afterward
+    with the original user-facing text if desired.
     """
-    qty    = _extract_leading_quantity(query)
+    qty = quantity if quantity > 0.0 else float(_extract_leading_quantity(query))
+
     result = _fetch_nutrition(query)
 
-    # Normalize the query for display: strips leading counts, size words,
-    # and "with ..." add-ons so the stored name is clean.
+    # Normalize the query for display: strips leading counts and size words.
     result["name"] = _normalize_query(query) or query.strip()
 
-    if qty > 1:
+    if qty != 1.0:
         return {
             **result,
             "calories": round(result["calories"] * qty, 1),
