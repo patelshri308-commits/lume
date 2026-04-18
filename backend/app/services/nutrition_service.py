@@ -476,12 +476,43 @@ def _fetch_nutrition(query: str) -> dict:
         return {**_get_fallback_nutrition(query), "is_estimated": True}
 
 
-def get_nutrition(query: str, *, quantity: float = 0.0) -> dict:
-    """
-    Public entry point called by the router.
+# ---------------------------------------------------------------------------
+# Phase 4: size-modifier multipliers
+# ---------------------------------------------------------------------------
 
-    Fetches single-serving nutrition via _fetch_nutrition, then scales
-    all macros by the resolved quantity.
+# Maps a parsed size_modifier string to a serving-scale multiplier relative
+# to the default/medium serving returned by USDA or the fallback rules.
+# "medium" / "regular" are the baseline (1.0×).  Starbucks sizes use the
+# 12-oz Tall as baseline so Grande (16 oz) ≈ 1.33×, Venti (20 oz) ≈ 1.67×
+# — rounded to clean values that absorb the real-world calorie variance.
+_SIZE_MULTIPLIERS: dict[str, float] = {
+    "mini":         0.60,
+    "small":        0.75,
+    "tall":         1.00,   # Starbucks small (12 oz) — used as baseline
+    "medium":       1.00,
+    "regular":      1.00,
+    "large":        1.35,
+    "grande":       1.15,   # Starbucks medium (16 oz)
+    "venti":        1.50,   # Starbucks large  (20 oz)
+    "jumbo":        1.60,
+    "extra large":  1.60,
+    "extra-large":  1.60,
+    "king size":    1.50,
+    "king-size":    1.50,
+}
+
+
+def get_nutrition(
+    query: str,
+    *,
+    quantity: float = 0.0,
+    size_modifier: str | None = None,
+) -> dict:
+    """
+    Public entry point called by the router and composite service.
+
+    Fetches single-serving nutrition via _fetch_nutrition, then scales all
+    macros by an effective multiplier derived from quantity × size_modifier.
 
     quantity keyword argument (Phase 2)
     ────────────────────────────────────
@@ -494,23 +525,33 @@ def get_nutrition(query: str, *, quantity: float = 0.0) -> dict:
     is used on the raw query text for backward compatibility with callers
     (COMPOSITE_MEAL, AMBIGUOUS) that still pass the full query.
 
+    size_modifier keyword argument (Phase 4)
+    ─────────────────────────────────────────
+    When a size word is provided (e.g. "large", "small", "venti"), the result
+    is further scaled by the corresponding multiplier in _SIZE_MULTIPLIERS.
+    The size multiplier is applied after — and multiplied with — the quantity
+    scale factor, so "2 large lattes" uses effective_qty = 2 × 1.35 = 2.70.
+    Unrecognised size words default to 1.0× (no change).
+
     Always stamps a "name" field so every response carries the full shape
     expected by POST /logs.  The caller (router) may override "name" afterward
     with the original user-facing text if desired.
     """
-    qty = quantity if quantity > 0.0 else float(_extract_leading_quantity(query))
+    qty       = quantity if quantity > 0.0 else float(_extract_leading_quantity(query))
+    size_mult = _SIZE_MULTIPLIERS.get(size_modifier.lower(), 1.0) if size_modifier else 1.0
+    eff_qty   = qty * size_mult
 
     result = _fetch_nutrition(query)
 
     # Normalize the query for display: strips leading counts and size words.
     result["name"] = _normalize_query(query) or query.strip()
 
-    if qty != 1.0:
+    if eff_qty != 1.0:
         return {
             **result,
-            "calories": round(result["calories"] * qty, 1),
-            "protein":  round(result["protein"]  * qty, 1),
-            "carbs":    round(result["carbs"]     * qty, 1),
-            "fat":      round(result["fat"]       * qty, 1),
+            "calories": round(result["calories"] * eff_qty, 1),
+            "protein":  round(result["protein"]  * eff_qty, 1),
+            "carbs":    round(result["carbs"]     * eff_qty, 1),
+            "fat":      round(result["fat"]       * eff_qty, 1),
         }
     return result

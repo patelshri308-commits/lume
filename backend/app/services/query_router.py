@@ -49,9 +49,18 @@ Restaurant item (score-based, Phase 3):
 0.55  score ≥ 10  — weak but above threshold
 0.35  score  < 10 / service miss — nutrition engine fallback
 
-0.45  USDA / fallback match for COMPOSITE_MEAL or AMBIGUOUS
+Composite meal (decomposition-quality-based, Phase 4):
+0.72  all components resolved via USDA, none estimated
+0.55  all components resolved, ≥1 used rule-based fallback
+0.42  partial decomposition — ≥1 component failed entirely
+0.35  decomposition failed — single full-query estimate used
+
 0.40  AMBIGUOUS query routed to nutrition engine
 0.00  barcode not found (clean failure, no substitute data)
+
+Note: size_modifier ("large", "small", "venti" …) is passed as a keyword
+argument to get_nutrition on all paths that reach it via the router.  The
+composite service forwards size_modifier to the first component only.
 """
 from __future__ import annotations
 
@@ -65,6 +74,7 @@ from app.services.barcode_service import (
 )
 from app.services.packaged_product_service import search_packaged_product
 from app.services.restaurant_service import search_restaurant_item
+from app.services.composite_service import decompose_composite
 
 
 # ---------------------------------------------------------------------------
@@ -100,8 +110,9 @@ def route_food_query(query: str) -> dict:
         if result is not None:
             score = result.pop("_internal_score", 0)
             return {**result, "confidence": _packaged_confidence(score)}
-        # Service miss — fall back to nutrition engine at low confidence
-        result = get_nutrition(query)
+        # Service miss — fall back to nutrition engine at low confidence.
+        # Pass size_modifier so "large bag of X" scales correctly if OFF missed.
+        result = get_nutrition(query, size_modifier=parsed.size_modifier)
         return {**result, "source_type": "packaged_guess", "confidence": 0.35}
 
     # ── RESTAURANT_ITEM ──────────────────────────────────────────────────────
@@ -111,32 +122,37 @@ def route_food_query(query: str) -> dict:
         if result is not None:
             score = result.pop("_internal_score", 0)
             return {**result, "confidence": _restaurant_confidence(score)}
-        # Service miss — generic estimate only as last resort, clearly labelled
-        result = get_nutrition(query)
+        # Service miss — generic estimate only as last resort, clearly labelled.
+        # Pass size_modifier so "large fries" scales the fallback estimate.
+        result = get_nutrition(query, size_modifier=parsed.size_modifier)
         return {**result, "source_type": "restaurant_guess", "confidence": 0.35}
 
     # ── COMPOSITE_MEAL ───────────────────────────────────────────────────────
-    # Phase 1: classify and preserve the full query; route conservatively.
-    # The FULL query (including "with" components) is passed so nothing is
-    # silently discarded.  Full decomposition is deferred to a later phase.
+    # Phase 4: decompose into individual components, resolve each, aggregate.
+    # The composite service handles "and"-splits, "with" add-ins, and
+    # bread/base modifiers as described in composite_service.py.
     if query_class == QueryClass.COMPOSITE_MEAL:
-        result = get_nutrition(query)   # passes "coffee with milk", not "coffee"
-        return {**result, "source_type": "composite_estimate", "confidence": 0.45}
+        result = decompose_composite(parsed, query)
+        meta   = result.pop("_decomposition_meta", {})
+        return {**result, "confidence": _composite_confidence(meta)}
 
     # ── AMBIGUOUS ────────────────────────────────────────────────────────────
-    # Phase 1: classify correctly; route but cap confidence to signal uncertainty.
+    # Classify correctly; route but cap confidence to signal uncertainty.
+    # Pass size_modifier so "small smoothie" returns a scaled estimate.
     if query_class == QueryClass.AMBIGUOUS:
-        result = get_nutrition(query)
+        result = get_nutrition(query, size_modifier=parsed.size_modifier)
         return {**result, "source_type": "ambiguous_estimate", "confidence": 0.40}
 
     # ── GENERIC_FOOD (default) ───────────────────────────────────────────────
-    # Phase 2: use the Phase 1 parser's core_food as the USDA search term so
-    # that "2 eggs" searches for "eggs" (not "2 eggs"), and "2.5 cups rice"
-    # searches for "rice" (not "2.5 cups rice").  Pass parsed.quantity so the
-    # nutrition service can scale by the exact parsed value — including decimals
-    # and number words that the legacy integer extractor cannot handle.
+    # Phase 2: use the parser's core_food as the USDA search term so that
+    # "2 eggs" searches for "eggs", and "2.5 cups rice" searches for "rice".
+    # Phase 4: also pass size_modifier so "large latte" scales the result.
     search_query = parsed.core_food if parsed.core_food else query
-    result = get_nutrition(search_query, quantity=parsed.quantity)
+    result = get_nutrition(
+        search_query,
+        quantity=parsed.quantity,
+        size_modifier=parsed.size_modifier,
+    )
     # Display name: keep the full original input ("2 eggs", not just "eggs").
     result["name"] = parsed.clean
     confidence = 0.45 if result.get("is_estimated") else 0.85
@@ -150,6 +166,33 @@ def route_food_query(query: str) -> dict:
 # ---------------------------------------------------------------------------
 # Internal helpers
 # ---------------------------------------------------------------------------
+
+def _composite_confidence(meta: dict) -> float:
+    """
+    Map composite decomposition metadata to a confidence value.
+
+    The composite service reports how many components were attempted, how many
+    resolved successfully, and whether any used the rule-based fallback estimator.
+    These three dimensions produce four quality tiers:
+
+      all USDA, none estimated  → 0.72   strongest multi-component result
+      all resolved, some est.   → 0.55   complete but some macros are estimates
+      partial (some failed)     → 0.42   macros are a lower-bound — missing items
+      all failed / no comps.    → 0.35   full-query fallback, single estimate
+    """
+    n_total    = meta.get("component_count", 0)
+    n_resolved = meta.get("resolved_count",  0)
+    n_failed   = meta.get("failed_count",    0)
+    any_est    = meta.get("any_estimated",   True)
+
+    if n_total == 0 or n_resolved == 0:
+        return 0.35   # decomposition failed — single full-query estimate used
+    if n_failed > 0:
+        return 0.42   # partial — at least one component completely unresolved
+    if any_est:
+        return 0.55   # all resolved, but ≥1 component used rule-based fallback
+    return 0.72       # all components resolved via USDA — highest composite tier
+
 
 def _packaged_confidence(score: int) -> float:
     """
