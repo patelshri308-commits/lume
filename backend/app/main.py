@@ -1,7 +1,7 @@
 import os
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
-from app.routers import health, food, logs, dashboard
+from app.routers import health, food, logs, dashboard, profile
 from app.database import engine, Base
 from app import models  # noqa: F401 — registers models with Base before create_all
 
@@ -27,3 +27,4 @@ app.include_router(health.router)
 app.include_router(food.router)
 app.include_router(logs.router)
 app.include_router(dashboard.router)
+app.include_router(profile.router)

@@ -1,5 +1,5 @@
 import datetime
-from sqlalchemy import Column, Integer, Float, String, Date, DateTime
+from sqlalchemy import Boolean, Column, Integer, Float, Numeric, String, Date, DateTime
 from app.database import Base
 
 
@@ -16,3 +16,24 @@ class FoodLog(Base):
     fat        = Column(Float,    nullable=False)
     log_date   = Column(Date,     nullable=False, default=datetime.date.today)
     created_at = Column(DateTime, nullable=False, default=datetime.datetime.utcnow)
+
+
+class UserProfile(Base):
+    """One row per Supabase auth user — stores profile data used for calorie targets."""
+    __tablename__ = "user_profiles"
+
+    # UUID stored as String, consistent with FoodLog.user_id
+    user_id              = Column(String,               primary_key=True)
+    display_name         = Column(String,               nullable=True)
+    sex                  = Column(String,               nullable=True)   # 'male' | 'female' | 'other'
+    age                  = Column(Integer,              nullable=True)
+    height_cm            = Column(Numeric,              nullable=True)
+    weight_kg            = Column(Numeric,              nullable=True)
+    goal_type            = Column(String,               nullable=False, default="maintain")
+    activity_level       = Column(String,               nullable=False, default="moderate")
+    onboarding_completed = Column(Boolean,              nullable=False, default=False)
+    # TIMESTAMPTZ — store and retrieve as timezone-aware UTC datetimes
+    created_at           = Column(DateTime(timezone=True), nullable=False,
+                                  default=lambda: datetime.datetime.now(datetime.timezone.utc))
+    updated_at           = Column(DateTime(timezone=True), nullable=False,
+                                  default=lambda: datetime.datetime.now(datetime.timezone.utc))

@@ -55,6 +55,29 @@ type WeeklyDay = {
   total_calories: number;
 };
 
+type UserProfile = {
+  user_id:              string;
+  display_name:         string | null;
+  sex:                  string | null;
+  age:                  number | null;
+  height_cm:            number | null;
+  weight_kg:            number | null;
+  goal_type:            string;
+  activity_level:       string;
+  onboarding_completed: boolean;
+};
+
+// Mirrors the setup form fields as strings so TextInputs work naturally.
+type SetupFields = {
+  display_name:   string;
+  sex:            string;
+  age:            string;
+  height_cm:      string;
+  weight_kg:      string;
+  goal_type:      string;
+  activity_level: string;
+};
+
 // ── Date helpers ─────────────────────────────────────────────────────────────
 
 // Converts a JS Date to a YYYY-MM-DD string using local (device) time.
@@ -190,6 +213,24 @@ function AppInner() {
   const [resetPassword,        setResetPassword]        = useState("");
   const [resetPasswordConfirm, setResetPasswordConfirm] = useState("");
 
+  // Profile state
+  // profileFetched gates the render: false = still fetching (show loading),
+  // true = settled (show setup screen or tracker based on onboarding_completed).
+  const [profile,        setProfile]        = useState<UserProfile | null>(null);
+  const [profileFetched, setProfileFetched] = useState(false);
+  const [profileSaving,  setProfileSaving]  = useState(false);
+  const [profileMessage, setProfileMessage] = useState("");
+  const [isAccountOpen,  setIsAccountOpen]  = useState(false);
+  const [setupFields,    setSetupFields]    = useState<SetupFields>({
+    display_name:   "",
+    sex:            "",
+    age:            "",
+    height_cm:      "",
+    weight_kg:      "",
+    goal_type:      "maintain",
+    activity_level: "moderate",
+  });
+
   // Solar Bloom breathing glow — loops indefinitely from mount.
   useEffect(() => {
     const breathe = (val: Animated.Value, duration: number) =>
@@ -293,6 +334,57 @@ function AppInner() {
 
   const logOut = async () => {
     await supabase.auth.signOut();
+  };
+
+  const saveProfile = async () => {
+    if (!setupFields.sex) {
+      setProfileMessage("Please select your sex.");
+      return;
+    }
+    if (!setupFields.age || isNaN(Number(setupFields.age))) {
+      setProfileMessage("Please enter a valid age.");
+      return;
+    }
+    if (!setupFields.height_cm || isNaN(Number(setupFields.height_cm))) {
+      setProfileMessage("Please enter a valid height.");
+      return;
+    }
+    if (!setupFields.weight_kg || isNaN(Number(setupFields.weight_kg))) {
+      setProfileMessage("Please enter a valid weight.");
+      return;
+    }
+    setProfileSaving(true);
+    setProfileMessage("");
+    try {
+      const res = await axios.put(
+        `${API_URL}/profile`,
+        {
+          display_name:         setupFields.display_name.trim() || null,
+          sex:                  setupFields.sex,
+          age:                  parseInt(setupFields.age, 10),
+          height_cm:            parseFloat(setupFields.height_cm),
+          weight_kg:            parseFloat(setupFields.weight_kg),
+          goal_type:            setupFields.goal_type,
+          activity_level:       setupFields.activity_level,
+          onboarding_completed: true,
+        },
+        { headers: await getAuthHeaders() },
+      );
+      // Updating profile state causes the render to skip the setup gate
+      // and enter the tracker — no navigation needed.
+      setProfile(res.data.profile as UserProfile);
+      setProfileMessage("Profile saved.");
+    } catch (err: unknown) {
+      // Log the real server response so any remaining issues are immediately visible.
+      const axErr = err as { response?: { status?: number; data?: unknown } };
+      console.error(
+        "[saveProfile] failed — status:", axErr?.response?.status,
+        "| body:", axErr?.response?.data ?? err,
+      );
+      setProfileMessage("Failed to save profile. Please try again.");
+    } finally {
+      setProfileSaving(false);
+    }
   };
 
   const sendResetEmail = async () => {
@@ -534,10 +626,48 @@ function AppInner() {
       setTodayCalories(null);
       setLogMessage("");
       setQuery("");
+      // Clear profile so a subsequent login fetches fresh data.
+      setProfile(null);
+      setProfileFetched(false);
+      setProfileMessage("");
     } else {
       loadWeekly();
       loadTodayCalories();
     }
+  }, [session]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  // Fetch the user's profile whenever a valid session arrives.
+  // profileFetched is set to false before the request and true once it settles,
+  // which drives the loading → setup/tracker decision in the render below.
+  useEffect(() => {
+    if (!session?.access_token) return;
+    setProfileFetched(false);
+    (async () => {
+      try {
+        const res = await axios.get(`${API_URL}/profile`, {
+          headers: await getAuthHeaders(),
+        });
+        const p = res.data.profile as UserProfile | null;
+        setProfile(p);
+        // Pre-fill the setup form with any values already stored.
+        if (p) {
+          setSetupFields({
+            display_name:   p.display_name   ?? "",
+            sex:            p.sex            ?? "",
+            age:            p.age            != null ? String(p.age)       : "",
+            height_cm:      p.height_cm      != null ? String(p.height_cm) : "",
+            weight_kg:      p.weight_kg      != null ? String(p.weight_kg) : "",
+            goal_type:      p.goal_type      ?? "maintain",
+            activity_level: p.activity_level ?? "moderate",
+          });
+        }
+      } catch {
+        // Treat a failed fetch the same as no profile — show setup.
+        setProfile(null);
+      } finally {
+        setProfileFetched(true);
+      }
+    })();
   }, [session]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // When a barcode is scanned, look it up and immediately auto-log it —
@@ -715,6 +845,49 @@ function AppInner() {
           </View>
         </View>
       </AuthShell>
+    );
+  }
+
+  // ── Profile loading — wait for GET /profile to settle ───────────────────────
+  // Shown briefly after login while the profile fetch is in-flight.
+  if (!profileFetched) {
+    return (
+      <SafeAreaView style={styles.profileLoadingSafe}>
+        <Text style={styles.profileLoadingText}>Loading…</Text>
+      </SafeAreaView>
+    );
+  }
+
+  // ── Profile setup — new user or incomplete onboarding ────────────────────────
+  if (!profile || !profile.onboarding_completed) {
+    return (
+      <ProfileSetupScreen
+        fields={setupFields}
+        onChange={(field, value) =>
+          setSetupFields(prev => ({ ...prev, [field]: value }))
+        }
+        onSave={saveProfile}
+        saving={profileSaving}
+        message={profileMessage}
+      />
+    );
+  }
+
+  // ── Account screen ───────────────────────────────────────────────────────────
+  if (isAccountOpen) {
+    return (
+      <AccountScreen
+        profile={profile}
+        fields={setupFields}
+        onChange={(field, value) =>
+          setSetupFields(prev => ({ ...prev, [field]: value }))
+        }
+        onSave={saveProfile}
+        onBack={() => { setIsAccountOpen(false); setProfileMessage(""); }}
+        onLogOut={() => { setIsAccountOpen(false); logOut(); }}
+        saving={profileSaving}
+        message={profileMessage}
+      />
     );
   }
 
@@ -1076,6 +1249,33 @@ function AppInner() {
       >
         <Text style={styles.sidebarTitle}>Lume</Text>
         <View style={styles.sidebarDivider} />
+
+        {/* Account — syncs edit buffer from current profile before opening */}
+        <TouchableOpacity
+          style={{ marginBottom: 16 }}
+          activeOpacity={0.7}
+          onPress={() => {
+            if (profile) {
+              setSetupFields({
+                display_name:   profile.display_name   ?? "",
+                sex:            profile.sex            ?? "",
+                age:            profile.age            != null ? String(profile.age)       : "",
+                height_cm:      profile.height_cm      != null ? String(profile.height_cm) : "",
+                weight_kg:      profile.weight_kg      != null ? String(profile.weight_kg) : "",
+                goal_type:      profile.goal_type      ?? "maintain",
+                activity_level: profile.activity_level ?? "moderate",
+              });
+            }
+            setProfileMessage("");
+            setIsSidebarOpen(false);
+            setIsAccountOpen(true);
+          }}
+        >
+          <Text style={styles.sidebarItem}>Account</Text>
+        </TouchableOpacity>
+
+        <View style={styles.sidebarDivider} />
+
         <TouchableOpacity onPress={() => { setIsSidebarOpen(false); logOut(); }}>
           <View style={styles.sidebarLogOutWrapper}>
             <Text style={styles.sidebarLogOut}>Log out</Text>
@@ -1135,6 +1335,310 @@ function AuthShell({ glowOuter, glowMid, glowCore, glowShimmer, children }: Auth
         behavior={Platform.OS === "ios" ? "padding" : "height"}
       >
         {children}
+      </KeyboardAvoidingView>
+    </SafeAreaView>
+  );
+}
+
+// ---------------------------------------------------------------------------
+// OptionPills — reusable segmented-button row for enum profile fields.
+// Module-level so its identity is stable across AppInner re-renders.
+// ---------------------------------------------------------------------------
+type OptionPillsProps = {
+  options:  string[];
+  labels:   string[];
+  value:    string;
+  onSelect: (val: string) => void;
+};
+
+function OptionPills({ options, labels, value, onSelect }: OptionPillsProps) {
+  return (
+    <View style={setupStyles.pillRow}>
+      {options.map((opt, i) => (
+        <TouchableOpacity
+          key={opt}
+          style={[setupStyles.pill, value === opt && setupStyles.pillSelected]}
+          onPress={() => onSelect(opt)}
+          activeOpacity={0.75}
+        >
+          <Text style={[setupStyles.pillText, value === opt && setupStyles.pillTextSelected]}>
+            {labels[i]}
+          </Text>
+        </TouchableOpacity>
+      ))}
+    </View>
+  );
+}
+
+// ---------------------------------------------------------------------------
+// ProfileSetupScreen — post-login interstitial shown when GET /profile returns
+// null or onboarding_completed === false.  Submits to PUT /profile and sets
+// onboarding_completed: true, which causes AppInner to render the tracker.
+// ---------------------------------------------------------------------------
+type ProfileSetupProps = {
+  fields:   SetupFields;
+  onChange: (field: keyof SetupFields, value: string) => void;
+  onSave:   () => void;
+  saving:   boolean;
+  message:  string;
+};
+
+function ProfileSetupScreen({ fields, onChange, onSave, saving, message }: ProfileSetupProps) {
+  return (
+    <SafeAreaView style={setupStyles.safe}>
+      <KeyboardAvoidingView
+        style={{ flex: 1 }}
+        behavior={Platform.OS === "ios" ? "padding" : "height"}
+      >
+        <ScrollView
+          style={setupStyles.scroll}
+          contentContainerStyle={setupStyles.container}
+          keyboardShouldPersistTaps="handled"
+        >
+
+          {/* Header */}
+          <Text style={setupStyles.wordmark}>Lume</Text>
+          <Text style={setupStyles.headline}>Set up your profile</Text>
+          <Text style={setupStyles.subhead}>
+            This helps Lume calculate accurate calorie targets for you.
+          </Text>
+
+          {/* Display name */}
+          <Text style={setupStyles.label}>Name (optional)</Text>
+          <TextInput
+            style={setupStyles.input}
+            placeholder="What should we call you?"
+            placeholderTextColor="#bbb"
+            value={fields.display_name}
+            onChangeText={v => onChange("display_name", v)}
+            autoCapitalize="words"
+          />
+
+          {/* Sex */}
+          <Text style={setupStyles.label}>Sex</Text>
+          <OptionPills
+            options={["male", "female", "other"]}
+            labels={["Male", "Female", "Other"]}
+            value={fields.sex}
+            onSelect={v => onChange("sex", v)}
+          />
+
+          {/* Age */}
+          <Text style={setupStyles.label}>Age</Text>
+          <TextInput
+            style={[setupStyles.input, setupStyles.inputShort]}
+            placeholder="e.g. 28"
+            placeholderTextColor="#bbb"
+            value={fields.age}
+            onChangeText={v => onChange("age", v.replace(/[^0-9]/g, ""))}
+            keyboardType="number-pad"
+          />
+
+          {/* Height */}
+          <Text style={setupStyles.label}>Height (cm)</Text>
+          <TextInput
+            style={[setupStyles.input, setupStyles.inputShort]}
+            placeholder="e.g. 175"
+            placeholderTextColor="#bbb"
+            value={fields.height_cm}
+            onChangeText={v => onChange("height_cm", v.replace(/[^0-9.]/g, ""))}
+            keyboardType="decimal-pad"
+          />
+
+          {/* Weight */}
+          <Text style={setupStyles.label}>Current weight (kg)</Text>
+          <TextInput
+            style={[setupStyles.input, setupStyles.inputShort]}
+            placeholder="e.g. 72"
+            placeholderTextColor="#bbb"
+            value={fields.weight_kg}
+            onChangeText={v => onChange("weight_kg", v.replace(/[^0-9.]/g, ""))}
+            keyboardType="decimal-pad"
+          />
+
+          {/* Goal type */}
+          <Text style={setupStyles.label}>Goal</Text>
+          <OptionPills
+            options={["lose", "maintain", "gain"]}
+            labels={["Lose weight", "Maintain", "Gain weight"]}
+            value={fields.goal_type}
+            onSelect={v => onChange("goal_type", v)}
+          />
+
+          {/* Activity level */}
+          <Text style={setupStyles.label}>Activity level</Text>
+          <OptionPills
+            options={["sedentary", "light", "moderate", "active", "very_active"]}
+            labels={["Sedentary", "Light", "Moderate", "Active", "Very active"]}
+            value={fields.activity_level}
+            onSelect={v => onChange("activity_level", v)}
+          />
+
+          {/* Validation / error message */}
+          {message ? <Text style={setupStyles.message}>{message}</Text> : null}
+
+          {/* Submit */}
+          <TouchableOpacity
+            style={[setupStyles.saveButton, saving && setupStyles.saveButtonDisabled]}
+            onPress={onSave}
+            disabled={saving}
+            activeOpacity={0.85}
+          >
+            <Text style={setupStyles.saveButtonText}>
+              {saving ? "Saving…" : "Continue to Lume →"}
+            </Text>
+          </TouchableOpacity>
+
+        </ScrollView>
+      </KeyboardAvoidingView>
+    </SafeAreaView>
+  );
+}
+
+// ---------------------------------------------------------------------------
+// AccountScreen — lets the logged-in user view/edit their profile and log out.
+// Module-level for stable identity (same rule as AuthShell / ProfileSetupScreen).
+// Reuses OptionPills, setupStyles, and the same SetupFields buffer as setup.
+// ---------------------------------------------------------------------------
+type AccountScreenProps = {
+  profile:  UserProfile | null;
+  fields:   SetupFields;
+  onChange: (field: keyof SetupFields, value: string) => void;
+  onSave:   () => void;
+  onBack:   () => void;
+  onLogOut: () => void;
+  saving:   boolean;
+  message:  string;
+};
+
+function AccountScreen({ profile, fields, onChange, onSave, onBack, onLogOut, saving, message }: AccountScreenProps) {
+  const isSuccess = message === "Profile saved.";
+  return (
+    <SafeAreaView style={setupStyles.safe}>
+      <KeyboardAvoidingView
+        style={{ flex: 1 }}
+        behavior={Platform.OS === "ios" ? "padding" : "height"}
+      >
+        <ScrollView
+          style={setupStyles.scroll}
+          contentContainerStyle={setupStyles.container}
+          keyboardShouldPersistTaps="handled"
+        >
+
+          {/* Back navigation */}
+          <TouchableOpacity onPress={onBack} style={setupStyles.acctBackButton} activeOpacity={0.7}>
+            <Ionicons name="arrow-back" size={18} color="#555" />
+            <Text style={setupStyles.acctBackText}>Back</Text>
+          </TouchableOpacity>
+
+          {/* Header */}
+          <Text style={setupStyles.headline}>Account</Text>
+          {profile?.display_name ? (
+            <Text style={setupStyles.acctGreeting}>
+              {profile.display_name}
+            </Text>
+          ) : null}
+
+          {/* Display name */}
+          <Text style={setupStyles.label}>Name (optional)</Text>
+          <TextInput
+            style={setupStyles.input}
+            placeholder="What should we call you?"
+            placeholderTextColor="#bbb"
+            value={fields.display_name}
+            onChangeText={v => onChange("display_name", v)}
+            autoCapitalize="words"
+          />
+
+          {/* Sex */}
+          <Text style={setupStyles.label}>Sex</Text>
+          <OptionPills
+            options={["male", "female", "other"]}
+            labels={["Male", "Female", "Other"]}
+            value={fields.sex}
+            onSelect={v => onChange("sex", v)}
+          />
+
+          {/* Age */}
+          <Text style={setupStyles.label}>Age</Text>
+          <TextInput
+            style={[setupStyles.input, setupStyles.inputShort]}
+            placeholder="e.g. 28"
+            placeholderTextColor="#bbb"
+            value={fields.age}
+            onChangeText={v => onChange("age", v.replace(/[^0-9]/g, ""))}
+            keyboardType="number-pad"
+          />
+
+          {/* Height */}
+          <Text style={setupStyles.label}>Height (cm)</Text>
+          <TextInput
+            style={[setupStyles.input, setupStyles.inputShort]}
+            placeholder="e.g. 175"
+            placeholderTextColor="#bbb"
+            value={fields.height_cm}
+            onChangeText={v => onChange("height_cm", v.replace(/[^0-9.]/g, ""))}
+            keyboardType="decimal-pad"
+          />
+
+          {/* Weight */}
+          <Text style={setupStyles.label}>Current weight (kg)</Text>
+          <TextInput
+            style={[setupStyles.input, setupStyles.inputShort]}
+            placeholder="e.g. 72"
+            placeholderTextColor="#bbb"
+            value={fields.weight_kg}
+            onChangeText={v => onChange("weight_kg", v.replace(/[^0-9.]/g, ""))}
+            keyboardType="decimal-pad"
+          />
+
+          {/* Goal type */}
+          <Text style={setupStyles.label}>Goal</Text>
+          <OptionPills
+            options={["lose", "maintain", "gain"]}
+            labels={["Lose weight", "Maintain", "Gain weight"]}
+            value={fields.goal_type}
+            onSelect={v => onChange("goal_type", v)}
+          />
+
+          {/* Activity level */}
+          <Text style={setupStyles.label}>Activity level</Text>
+          <OptionPills
+            options={["sedentary", "light", "moderate", "active", "very_active"]}
+            labels={["Sedentary", "Light", "Moderate", "Active", "Very active"]}
+            value={fields.activity_level}
+            onSelect={v => onChange("activity_level", v)}
+          />
+
+          {/* Save */}
+          <TouchableOpacity
+            style={[setupStyles.saveButton, saving && setupStyles.saveButtonDisabled]}
+            onPress={onSave}
+            disabled={saving}
+            activeOpacity={0.85}
+          >
+            <Text style={setupStyles.saveButtonText}>
+              {saving ? "Saving…" : "Save changes"}
+            </Text>
+          </TouchableOpacity>
+
+          {/* Feedback message */}
+          {message ? (
+            <Text style={[setupStyles.message, isSuccess && setupStyles.acctMessageSuccess]}>
+              {message}
+            </Text>
+          ) : null}
+
+          {/* Log out */}
+          <TouchableOpacity
+            style={setupStyles.acctLogOutButton}
+            onPress={onLogOut}
+            activeOpacity={0.75}
+          >
+            <Text style={setupStyles.acctLogOutText}>Log out</Text>
+          </TouchableOpacity>
+
+        </ScrollView>
       </KeyboardAvoidingView>
     </SafeAreaView>
   );
@@ -1641,6 +2145,11 @@ const styles = StyleSheet.create({
     height: 1,
     backgroundColor: "#eee",
     marginBottom: 20,
+  },
+  sidebarItem: {
+    fontSize: 15,
+    fontFamily: "Chillax-Medium",
+    color: "#111",
   },
   sidebarLogOutWrapper: {
     alignSelf: "flex-start",
@@ -2183,5 +2692,178 @@ const styles = StyleSheet.create({
     marginTop: 10,
     fontSize: 13,
     fontFamily: "Inter-Variable",
+  },
+
+  // Profile loading screen (shown while GET /profile is in-flight)
+  profileLoadingSafe: {
+    flex: 1,
+    backgroundColor: "#FAFAF7",
+    alignItems: "center",
+    justifyContent: "center",
+  },
+  profileLoadingText: {
+    fontSize: 14,
+    fontFamily: "Inter-Variable",
+    color: "#555",
+  },
+});
+
+// ---------------------------------------------------------------------------
+// setupStyles — scoped to ProfileSetupScreen and OptionPills.
+// Defined after COLORS so it can reference them.
+// ---------------------------------------------------------------------------
+const setupStyles = StyleSheet.create({
+  safe: {
+    flex: 1,
+    backgroundColor: "#FAFAF7",
+  },
+  scroll: {
+    flex: 1,
+  },
+  container: {
+    paddingHorizontal: 24,
+    paddingTop: 32,
+    paddingBottom: 48,
+  },
+  wordmark: {
+    fontFamily: "Chillax-Bold",
+    fontSize: 32,
+    color: COLORS.primary,
+    letterSpacing: -0.8,
+    marginBottom: 6,
+  },
+  headline: {
+    fontFamily: "Chillax-SemiBold",
+    fontSize: 22,
+    color: "#111",
+    letterSpacing: -0.4,
+    marginBottom: 6,
+  },
+  subhead: {
+    fontFamily: "Inter-Variable",
+    fontSize: 14,
+    color: "#666",
+    marginBottom: 32,
+    lineHeight: 20,
+  },
+  label: {
+    fontFamily: "Chillax-Medium",
+    fontSize: 12,
+    color: "#555",
+    letterSpacing: 0.8,
+    textTransform: "uppercase",
+    marginBottom: 8,
+  },
+  input: {
+    backgroundColor: "#fff",
+    borderWidth: 1.5,
+    borderColor: "#e5e5e0",
+    borderRadius: 10,
+    paddingHorizontal: 14,
+    paddingVertical: 12,
+    fontSize: 15,
+    fontFamily: "Inter-Variable",
+    color: "#111",
+    marginBottom: 20,
+  },
+  // Narrower variant for numeric fields (age, height, weight)
+  inputShort: {
+    width: 140,
+  },
+  // Pill row wraps so long option sets (e.g. activity level) flow onto two lines.
+  pillRow: {
+    flexDirection: "row",
+    flexWrap: "wrap",
+    gap: 8,
+    marginBottom: 20,
+  },
+  pill: {
+    paddingHorizontal: 14,
+    paddingVertical: 9,
+    borderRadius: 20,
+    borderWidth: 1.5,
+    borderColor: "#ddd",
+    backgroundColor: "#fff",
+  },
+  pillSelected: {
+    backgroundColor: "#1A1A14",
+    borderColor: "#1A1A14",
+  },
+  pillText: {
+    fontFamily: "Inter-Variable",
+    fontSize: 14,
+    color: "#555",
+  },
+  pillTextSelected: {
+    color: "#F8E94A",
+    fontFamily: "Chillax-Medium",
+  },
+  message: {
+    fontSize: 13,
+    fontFamily: "Inter-Variable",
+    color: "#c62828",
+    marginBottom: 12,
+    textAlign: "center",
+  },
+  saveButton: {
+    marginTop: 8,
+    height: 56,
+    borderRadius: 16,
+    backgroundColor: "#1A1A14",
+    alignItems: "center",
+    justifyContent: "center",
+    shadowColor: "#000",
+    shadowOpacity: 0.15,
+    shadowRadius: 10,
+    shadowOffset: { width: 0, height: 6 },
+    elevation: 5,
+  },
+  saveButtonDisabled: {
+    opacity: 0.5,
+  },
+  saveButtonText: {
+    fontFamily: "Chillax-SemiBold",
+    fontSize: 17,
+    color: "#F8E94A",
+    letterSpacing: -0.2,
+  },
+
+  // ── Account screen extras ──────────────────────────────────────────────────
+  acctBackButton: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 6,
+    marginBottom: 24,
+    alignSelf: "flex-start",
+  },
+  acctBackText: {
+    fontFamily: "Inter-Variable",
+    fontSize: 14,
+    color: "#555",
+  },
+  acctGreeting: {
+    fontFamily: "Chillax-Medium",
+    fontSize: 15,
+    color: "#555",
+    marginTop: -4,
+    marginBottom: 24,
+  },
+  // Override setupStyles.message color for success state
+  acctMessageSuccess: {
+    color: "#2e7d32",
+  },
+  acctLogOutButton: {
+    marginTop: 24,
+    paddingVertical: 14,
+    borderRadius: 12,
+    borderWidth: 1.5,
+    borderColor: "#e5e5e0",
+    alignItems: "center",
+    backgroundColor: "#fff",
+  },
+  acctLogOutText: {
+    fontFamily: "Chillax-Medium",
+    fontSize: 15,
+    color: "#c62828",
   },
 });
