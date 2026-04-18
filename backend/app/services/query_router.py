@@ -36,10 +36,21 @@ Confidence values
 ─────────────────
 0.95  exact barcode hit
 0.85  USDA match for GENERIC_FOOD
-0.75  packaged product text match
-0.70  restaurant item text match
+
+Packaged product (score-based, Phase 3):
+0.88  score ≥ 55  — near-exact brand + all tokens present
+0.75  score ≥ 30  — solid partial match
+0.58  score ≥ 10  — weak but above threshold
+0.35  score  < 10 / service miss — nutrition engine fallback
+
+Restaurant item (score-based, Phase 3):
+0.82  score ≥ 50  — chain brand + item tokens present
+0.70  score ≥ 25  — solid partial match
+0.55  score ≥ 10  — weak but above threshold
+0.35  score  < 10 / service miss — nutrition engine fallback
+
 0.45  USDA / fallback match for COMPOSITE_MEAL or AMBIGUOUS
-0.35  nutrition engine fallback for a branded/restaurant miss
+0.40  AMBIGUOUS query routed to nutrition engine
 0.00  barcode not found (clean failure, no substitute data)
 """
 from __future__ import annotations
@@ -87,7 +98,8 @@ def route_food_query(query: str) -> dict:
     if query_class == QueryClass.BRANDED_PACKAGED:
         result = search_packaged_product(query)
         if result is not None:
-            return {**result, "confidence": 0.75}
+            score = result.pop("_internal_score", 0)
+            return {**result, "confidence": _packaged_confidence(score)}
         # Service miss — fall back to nutrition engine at low confidence
         result = get_nutrition(query)
         return {**result, "source_type": "packaged_guess", "confidence": 0.35}
@@ -97,7 +109,8 @@ def route_food_query(query: str) -> dict:
     if query_class == QueryClass.RESTAURANT_ITEM:
         result = search_restaurant_item(query)
         if result is not None:
-            return {**result, "confidence": 0.70}
+            score = result.pop("_internal_score", 0)
+            return {**result, "confidence": _restaurant_confidence(score)}
         # Service miss — generic estimate only as last resort, clearly labelled
         result = get_nutrition(query)
         return {**result, "source_type": "restaurant_guess", "confidence": 0.35}
@@ -137,6 +150,42 @@ def route_food_query(query: str) -> dict:
 # ---------------------------------------------------------------------------
 # Internal helpers
 # ---------------------------------------------------------------------------
+
+def _packaged_confidence(score: int) -> float:
+    """
+    Map a candidate_scorer score to a confidence value for BRANDED_PACKAGED
+    results.
+
+    Tiers are calibrated so that a perfect-coverage result (score ≥ 55) is
+    treated almost as confidently as a barcode hit, while a borderline pass
+    (score 10–29) is flagged as uncertain.
+    """
+    if score >= 55:
+        return 0.88
+    if score >= 30:
+        return 0.75
+    if score >= 10:
+        return 0.58
+    return 0.45   # should not be reached (service rejects scores < MIN_SCORE)
+
+
+def _restaurant_confidence(score: int) -> float:
+    """
+    Map a candidate_scorer score to a confidence value for RESTAURANT_ITEM
+    results.
+
+    Restaurant OFF entries tend to be noisier than packaged-product entries
+    (chain nutritional info is often community-submitted), so the ceiling is
+    slightly lower than the packaged tier.
+    """
+    if score >= 50:
+        return 0.82
+    if score >= 25:
+        return 0.70
+    if score >= 10:
+        return 0.55
+    return 0.45   # should not be reached (service rejects scores < MIN_SCORE)
+
 
 def _barcode_not_found(raw_query: str) -> dict:
     """

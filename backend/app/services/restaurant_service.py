@@ -3,6 +3,7 @@ import httpx
 # Reuse macro extraction helpers from barcode_service — same provider, same
 # nutriments structure, no need to duplicate the logic.
 from app.services.barcode_service import _get_macros, _safe_float
+from app.services.candidate_scorer import score_candidate
 
 # ---------------------------------------------------------------------------
 # Open Food Facts text search API (v2)
@@ -12,26 +13,17 @@ from app.services.barcode_service import _get_macros, _safe_float
 # ---------------------------------------------------------------------------
 OPENFOODFACTS_SEARCH_URL = "https://world.openfoodfacts.org/api/v2/search"
 REQUEST_TIMEOUT          = 8.0
-MAX_CANDIDATES           = 5   # fetch a small pool; stop at first usable hit
+MAX_CANDIDATES           = 10   # wider pool so the scorer has real options
+
+# Phase 3: minimum acceptable relevance score.  Restaurant queries tend to
+# produce noisier OFF results than packaged products, so we keep the same
+# floor but rely on the scorer's brand-token bonus to surface the right item.
+MIN_SCORE = 10
 
 
 # ---------------------------------------------------------------------------
 # Internal helpers
 # ---------------------------------------------------------------------------
-
-def _is_plausible_match(product_name: str, query: str) -> bool:
-    """
-    Return True if at least one meaningful query word appears in the product
-    name.  Guards against returning a wildly off-topic first result.
-    Ignores short filler words (≤ 2 chars) such as "a", "of", "or".
-    """
-    name_lower = product_name.lower()
-    meaningful = [w for w in query.lower().split() if len(w) > 2]
-    # If every query word is short (edge case), accept without checking
-    if not meaningful:
-        return True
-    return any(w in name_lower for w in meaningful)
-
 
 def _normalize_product(product: dict) -> dict | None:
     """
@@ -64,6 +56,7 @@ def _normalize_product(product: dict) -> dict | None:
         "fat":                 round(fat, 1),
         "is_estimated":        False,
         "source_type":         "restaurant",
+        "source_name":         "Open Food Facts",
         "brand_name":          brand,
         "serving_description": serving,
     }
@@ -75,15 +68,22 @@ def _normalize_product(product: dict) -> dict | None:
 
 def search_restaurant_item(query: str) -> dict | None:
     """
-    Search Open Food Facts by product name and return the best usable result
-    for a restaurant / fast-food typed query.
+    Search Open Food Facts by product name and return the highest-scoring
+    usable result for a restaurant / fast-food typed query.
 
-    Candidates are sorted by scan popularity (most recognised product first).
-    The first candidate that passes plausibility and has complete macro data
-    is returned.  Returns None if:
+    Phase 3: all usable candidates in the pool are normalized and scored via
+    candidate_scorer.score_candidate.  The best-scoring result is returned
+    only if its score meets MIN_SCORE — below that threshold the product is
+    likely irrelevant and the caller should fall back.
+
+    Returns None if:
       - no products match the query
-      - all candidates lack sufficient nutrition data
+      - all candidates lack sufficient nutrition data or score below MIN_SCORE
       - the request fails for any reason
+
+    The returned dict includes an `_internal_score` key that the router uses
+    to map score → confidence tier.  The router must pop this key before
+    returning to the caller.
     """
     try:
         response = httpx.get(
@@ -104,18 +104,20 @@ def search_restaurant_item(query: str) -> dict | None:
     except Exception:
         return None   # network / HTTP / parse failure — caller falls back
 
-    for product in products:
-        name = (
-            product.get("product_name")
-            or product.get("product_name_en")
-            or ""
-        ).strip()
+    best_result = None
+    best_score  = MIN_SCORE - 1   # must beat this to be accepted
 
-        if not _is_plausible_match(name, query):
+    for product in products:
+        result = _normalize_product(product)
+        if result is None:
             continue
 
-        result = _normalize_product(product)
-        if result is not None:
-            return result
+        s = score_candidate(result["name"], result["brand_name"], query)
+        if s > best_score:
+            best_score  = s
+            best_result = result
 
-    return None   # no usable hit in the candidate pool
+    if best_result is None:
+        return None   # no usable hit above the minimum threshold
+
+    return {**best_result, "_internal_score": best_score}
