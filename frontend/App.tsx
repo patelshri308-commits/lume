@@ -22,7 +22,7 @@ import {
 } from "react-native";
 import { SafeAreaProvider, SafeAreaView, useSafeAreaInsets } from "react-native-safe-area-context";
 import { LinearGradient } from "expo-linear-gradient";
-import Svg, { Circle, G } from "react-native-svg";
+import Svg, { Circle, G, Defs, LinearGradient as SvgLinearGradient, Stop, Line as SvgLine, Path as SvgPath } from "react-native-svg";
 import axios from "axios";
 import { Session } from "@supabase/supabase-js";
 import { supabase } from "./lib/supabase";
@@ -1145,29 +1145,11 @@ function AppInner() {
 
         {/* Weekly Analytics */}
         <View style={styles.section}>
-          <View style={{ flexDirection: "row", justifyContent: "space-between", alignItems: "center" }}>
-            <Text style={styles.sectionLabel}>LAST 7 DAYS</Text>
-            <Text style={styles.sectionLabel}>Cals</Text>
-          </View>
-          {weeklyLoading && weeklyData.length === 0 && <Text style={styles.searchingText}>Loading...</Text>}
-          {weeklyData.length > 0 && (() => {
-            const max = Math.max(...weeklyData.map(d => d.total_calories), 1);
-            return weeklyData.map((day) => {
-              const label = new Date(day.date + "T00:00:00").toLocaleDateString([], { weekday: "short", month: "numeric", day: "numeric" });
-              const barWidth = `${Math.round((day.total_calories / max) * 100)}%` as `${number}%`;
-              return (
-                <View key={day.date} style={styles.weekRow}>
-                  <Text style={styles.weekLabel}>{label}</Text>
-                  <View style={styles.weekBarTrack}>
-                    <View style={[styles.weekBarFill, { width: barWidth }]} />
-                  </View>
-                  <Text style={styles.weekCalories}>
-                    {day.total_calories === 0 ? "—" : `${Math.round(day.total_calories)}`}
-                  </Text>
-                </View>
-              );
-            });
-          })()}
+          <Text style={styles.sectionLabel}>LAST 7 DAYS</Text>
+          {weeklyLoading && weeklyData.length === 0 && (
+            <Text style={styles.searchingText}>Loading...</Text>
+          )}
+          {weeklyData.length > 0 && <WeeklyGlowLine data={weeklyData} />}
         </View>
 
       </ScrollView>
@@ -1855,6 +1837,135 @@ function TotalsRadialRings({ summary, selectedDate }: { summary: DailySummary; s
             );
           })}
         </View>
+      </View>
+    </LinearGradient>
+  );
+}
+
+// ---------------------------------------------------------------------------
+// WeeklyGlowLine — "Glow Line" design replacing the horizontal bar chart.
+// Consumes WeeklyDay[] (same shape as before). Warm gradient card, smooth
+// SVG line, area fill, dashed goal line, day labels. No backend changes.
+// ---------------------------------------------------------------------------
+function WeeklyGlowLine({ data, goal = CALORIE_GOAL }: { data: WeeklyDay[]; goal?: number }) {
+  if (!data.length) return null;
+
+  const max = Math.max(...data.map(d => d.total_calories), goal) * 1.05;
+  const avg = Math.round(data.reduce((s, d) => s + d.total_calories, 0) / data.length);
+
+  // Fixed SVG coordinate space — scales to container width via viewBox.
+  const W = 300, H = 110, P = 8;
+  const step = data.length > 1 ? (W - P * 2) / (data.length - 1) : 0;
+
+  const pts = data.map((d, i) => ({
+    x: P + i * step,
+    y: max === 0 ? H - P : H - P - (d.total_calories / max) * (H - P * 2),
+    date: d.date,
+  }));
+
+  const linePath = pts
+    .map((p, i) => `${i === 0 ? "M" : "L"}${p.x.toFixed(1)},${p.y.toFixed(1)}`)
+    .join(" ");
+  const areaPath =
+    `${linePath} L${pts[pts.length - 1].x.toFixed(1)},${(H - P).toFixed(1)}` +
+    ` L${pts[0].x.toFixed(1)},${(H - P).toFixed(1)} Z`;
+  const goalY = max === 0 ? H - P : H - P - (goal / max) * (H - P * 2);
+
+  return (
+    <LinearGradient
+      colors={["#FFF8D4", "#FDEFA5", "#F7DF6A"]}
+      locations={[0, 0.55, 1]}
+      start={{ x: 0.1, y: 0 }}
+      end={{ x: 1, y: 1 }}
+      style={styles.weekGlowCard}
+    >
+      {/* Header */}
+      <View style={styles.weekGlowHeader}>
+        <View>
+          <Text style={styles.weekGlowTitle}>Last 7 days</Text>
+          <Text style={styles.weekGlowAvg}>
+            {"Avg "}
+            <Text style={styles.weekGlowAvgBold}>{avg}</Text>
+            {" kcal/day"}
+          </Text>
+        </View>
+        <View style={styles.weekGlowGoalBadge}>
+          <Text style={styles.weekGlowGoalText}>Goal {goal}</Text>
+        </View>
+      </View>
+
+      {/* SVG chart */}
+      <Svg width="100%" height={H} viewBox={`0 0 ${W} ${H}`}>
+        <Defs>
+          <SvgLinearGradient id="wgl-area" x1="0" y1="0" x2="0" y2="1">
+            <Stop offset="0%" stopColor="#F5D834" stopOpacity={0.55} />
+            <Stop offset="100%" stopColor="#F5D834" stopOpacity={0} />
+          </SvgLinearGradient>
+        </Defs>
+
+        {/* Baseline */}
+        <SvgLine
+          x1={P} y1={H - P} x2={W - P} y2={H - P}
+          stroke="rgba(26,26,20,0.15)" strokeWidth={1}
+        />
+
+        {/* Dashed goal line — only drawn when it falls within the chart area */}
+        {goalY > P && goalY < H - P && (
+          <SvgLine
+            x1={P} y1={goalY} x2={W - P} y2={goalY}
+            stroke="rgba(26,26,20,0.35)" strokeWidth={1}
+            strokeDasharray="3,3"
+          />
+        )}
+
+        {/* Area fill under the line */}
+        <SvgPath d={areaPath} fill="url(#wgl-area)" />
+
+        {/* Line */}
+        <SvgPath
+          d={linePath}
+          fill="none"
+          stroke="#1A1A14"
+          strokeWidth={2.25}
+          strokeLinecap="round"
+          strokeLinejoin="round"
+        />
+
+        {/* Dots — today (last point) gets a larger dot + outer ring */}
+        {pts.map((p, i) => {
+          const isToday = i === pts.length - 1;
+          return (
+            <G key={p.date}>
+              {isToday && (
+                <Circle
+                  cx={p.x} cy={p.y} r={7}
+                  fill="none"
+                  stroke="#1A1A14"
+                  strokeOpacity={0.25}
+                  strokeWidth={1}
+                />
+              )}
+              <Circle cx={p.x} cy={p.y} r={isToday ? 4.5 : 3} fill="#1A1A14" />
+            </G>
+          );
+        })}
+      </Svg>
+
+      {/* Day labels */}
+      <View style={styles.weekGlowLabels}>
+        {data.map((d, i) => (
+          <Text
+            key={d.date}
+            style={[
+              styles.weekGlowDayLabel,
+              i === data.length - 1 && styles.weekGlowDayLabelToday,
+            ]}
+          >
+            {new Date(d.date + "T00:00:00")
+              .toLocaleDateString([], { weekday: "short" })
+              .slice(0, 3)}
+          </Text>
+        ))}
       </View>
     </LinearGradient>
   );
@@ -2692,6 +2803,67 @@ const styles = StyleSheet.create({
     marginTop: 10,
     fontSize: 13,
     fontFamily: "Inter-Variable",
+  },
+
+  // Weekly Glow Line card
+  weekGlowCard: {
+    marginTop: 14,
+    borderRadius: 24,
+    padding: 18,
+    overflow: "hidden",
+    shadowColor: "rgba(200,160,20,1)",
+    shadowOpacity: 0.18,
+    shadowRadius: 24,
+    shadowOffset: { width: 0, height: 8 },
+    elevation: 4,
+  },
+  weekGlowHeader: {
+    flexDirection: "row",
+    justifyContent: "space-between",
+    alignItems: "flex-end",
+    marginBottom: 10,
+  },
+  weekGlowTitle: {
+    fontFamily: "Chillax-SemiBold",
+    fontSize: 16,
+    letterSpacing: -0.3,
+    color: "#1A1A14",
+  },
+  weekGlowAvg: {
+    fontFamily: "Inter-Variable",
+    fontSize: 11,
+    color: "rgba(26,26,20,0.55)",
+    marginTop: 2,
+  },
+  weekGlowAvgBold: {
+    fontFamily: "Chillax-SemiBold",
+    color: "#1A1A14",
+  },
+  weekGlowGoalBadge: {
+    paddingHorizontal: 10,
+    paddingVertical: 4,
+    borderRadius: 999,
+    backgroundColor: "#1A1A14",
+  },
+  weekGlowGoalText: {
+    fontFamily: "Chillax-SemiBold",
+    fontSize: 11,
+    color: "#F5D834",
+    letterSpacing: 0.4,
+  },
+  weekGlowLabels: {
+    flexDirection: "row",
+    marginTop: 6,
+  },
+  weekGlowDayLabel: {
+    flex: 1,
+    textAlign: "center",
+    fontFamily: "Chillax-Medium",
+    fontSize: 11,
+    color: "rgba(26,26,20,0.55)",
+  },
+  weekGlowDayLabelToday: {
+    color: "#1A1A14",
   },
 
   // Profile loading screen (shown while GET /profile is in-flight)
