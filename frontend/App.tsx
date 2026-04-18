@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useRef } from "react";
-import { Keyboard, Platform, Modal } from "react-native";
+import { Keyboard, KeyboardAvoidingView, Platform, Modal, Linking } from "react-native";
 import { CameraView, useCameraPermissions } from "expo-camera";
 const barcodIcon = require("./assets/barcode.png");
 import { useFonts } from "expo-font";
@@ -184,6 +184,11 @@ function AppInner() {
   const [authEmail,     setAuthEmail]     = useState("");
   const [authPassword,  setAuthPassword]  = useState("");
   const [authMessage,   setAuthMessage]   = useState("");
+  // "login" | "forgot" | "reset"
+  const [authMode,             setAuthMode]             = useState<"login" | "forgot" | "reset">("login");
+  const [resetEmail,           setResetEmail]           = useState("");
+  const [resetPassword,        setResetPassword]        = useState("");
+  const [resetPasswordConfirm, setResetPasswordConfirm] = useState("");
 
   // Solar Bloom breathing glow — loops indefinitely from mount.
   useEffect(() => {
@@ -229,10 +234,38 @@ function AppInner() {
   // onAuthStateChange fires INITIAL_SESSION immediately on subscription (Supabase v2),
   // so a separate getSession() call is not needed and would cause a duplicate setSession.
   useEffect(() => {
-    const { data: { subscription } } = supabase.auth.onAuthStateChange((_event, session) => {
-      setSession(session);
+    const { data: { subscription } } = supabase.auth.onAuthStateChange((event, session) => {
+      if (event === "PASSWORD_RECOVERY") {
+        // Recovery link was opened — show the new-password form.
+        setAuthMode("reset");
+        setAuthMessage("");
+      } else {
+        setSession(session);
+      }
     });
     return () => subscription.unsubscribe();
+  }, []);
+
+  // Handle deep-link recovery URLs (lume://...).
+  // Parses access_token + refresh_token from the URL fragment and hands
+  // them to Supabase so onAuthStateChange fires PASSWORD_RECOVERY.
+  useEffect(() => {
+    const handleUrl = async ({ url }: { url: string }) => {
+      if (!url) return;
+      const fragment = url.split("#")[1] ?? url.split("?")[1] ?? "";
+      const params = new URLSearchParams(fragment);
+      const type = params.get("type");
+      const accessToken = params.get("access_token");
+      const refreshToken = params.get("refresh_token");
+      if (type === "recovery" && accessToken && refreshToken) {
+        await supabase.auth.setSession({ access_token: accessToken, refresh_token: refreshToken });
+      }
+    };
+    // App was cold-started from the link
+    Linking.getInitialURL().then(url => { if (url) handleUrl({ url }); });
+    // App was already open when the link was tapped
+    const sub = Linking.addEventListener("url", handleUrl);
+    return () => sub.remove();
   }, []);
 
   // Always fetches a fresh (auto-refreshed) token from Supabase rather than
@@ -260,6 +293,43 @@ function AppInner() {
 
   const logOut = async () => {
     await supabase.auth.signOut();
+  };
+
+  const sendResetEmail = async () => {
+    if (!resetEmail.trim()) {
+      setAuthMessage("Please enter your email address.");
+      return;
+    }
+    setAuthMessage("");
+    const { error } = await supabase.auth.resetPasswordForEmail(resetEmail.trim(), {
+      redirectTo: "https://lume-reset.vercel.app/reset-password",
+    });
+    setAuthMessage(
+      error
+        ? error.message
+        : "Check your email — a reset link is on its way."
+    );
+  };
+
+  const updatePassword = async () => {
+    if (resetPassword.length < 6) {
+      setAuthMessage("Password must be at least 6 characters.");
+      return;
+    }
+    if (resetPasswordConfirm && resetPassword !== resetPasswordConfirm) {
+      setAuthMessage("Passwords don't match.");
+      return;
+    }
+    setAuthMessage("");
+    const { error } = await supabase.auth.updateUser({ password: resetPassword });
+    if (error) {
+      setAuthMessage(error.message);
+    } else {
+      setResetPassword("");
+      setResetPasswordConfirm("");
+      setAuthMode("login");
+      setAuthMessage("Password updated — you can now log in.");
+    }
   };
 
   // Triggered by the keyboard Return/Search key.
@@ -517,49 +587,89 @@ function AppInner() {
   if (!fontsLoaded) return null;
 
   // ── Auth screen — Solar Bloom design ──────────────────────────────────────
-  if (!session) {
+  if (!session || authMode === "reset") {
+
+    // ── Mode: set new password (arrived via reset link) ──
+    if (authMode === "reset") {
+      return (
+        <AuthShell glowOuter={glowOuter} glowMid={glowMid} glowCore={glowCore} glowShimmer={glowShimmer}>
+          <View style={styles.authContainer}>
+            <View style={styles.authLogoArea}>
+              <Text style={styles.authWordmark}>Lume</Text>
+              <Text style={styles.authTagline}>Set a new password.</Text>
+            </View>
+            <View style={styles.authForm}>
+              <TextInput
+                style={styles.authInput}
+                placeholder="New password"
+                placeholderTextColor="rgba(26,26,20,0.4)"
+                value={resetPassword}
+                onChangeText={setResetPassword}
+                secureTextEntry
+                autoFocus
+              />
+              <TextInput
+                style={styles.authInput}
+                placeholder="Confirm new password"
+                placeholderTextColor="rgba(26,26,20,0.4)"
+                value={resetPasswordConfirm}
+                onChangeText={setResetPasswordConfirm}
+                secureTextEntry
+              />
+              <TouchableOpacity style={styles.authSignInButton} onPress={updatePassword} activeOpacity={0.85}>
+                <Text style={styles.authSignInText}>Update password</Text>
+              </TouchableOpacity>
+              <TouchableOpacity style={styles.authBackLink} onPress={() => { setResetPassword(""); setResetPasswordConfirm(""); setAuthMode("login"); setAuthMessage(""); }}>
+                <Text style={styles.authBackLinkText}>← Back to login</Text>
+              </TouchableOpacity>
+              {authMessage ? <Text style={styles.authMessage}>{authMessage}</Text> : null}
+            </View>
+          </View>
+        </AuthShell>
+      );
+    }
+
+    // ── Mode: forgot password (enter email to receive reset link) ──
+    if (authMode === "forgot") {
+      return (
+        <AuthShell glowOuter={glowOuter} glowMid={glowMid} glowCore={glowCore} glowShimmer={glowShimmer}>
+          <View style={styles.authContainer}>
+            <View style={styles.authLogoArea}>
+              <Text style={styles.authWordmark}>Lume</Text>
+              <Text style={styles.authTagline}>We'll send a reset link to your email.</Text>
+            </View>
+            <View style={styles.authForm}>
+              <TextInput
+                style={styles.authInput}
+                placeholder="Email"
+                placeholderTextColor="rgba(26,26,20,0.4)"
+                value={resetEmail}
+                onChangeText={setResetEmail}
+                autoCapitalize="none"
+                keyboardType="email-address"
+                autoFocus
+              />
+              <TouchableOpacity style={styles.authSignInButton} onPress={sendResetEmail} activeOpacity={0.85}>
+                <Text style={styles.authSignInText}>Send reset link</Text>
+              </TouchableOpacity>
+              <TouchableOpacity style={styles.authBackLink} onPress={() => { setAuthMode("login"); setAuthMessage(""); }}>
+                <Text style={styles.authBackLinkText}>← Back to login</Text>
+              </TouchableOpacity>
+              {authMessage ? <Text style={styles.authMessage}>{authMessage}</Text> : null}
+            </View>
+          </View>
+        </AuthShell>
+      );
+    }
+
+    // ── Mode: login (default) ──
     return (
-      <SafeAreaView style={styles.authSafe}>
-        {/* Solar Bloom background gradient */}
-        <LinearGradient
-          colors={["#FFFBEC", "#FDF2D8", "#F7E7BD", "#E9D69A"]}
-          locations={[0, 0.35, 0.65, 1]}
-          style={StyleSheet.absoluteFillObject}
-        />
-
-        {/* Solar Bloom — animated breathing glow layers */}
-        <Animated.View pointerEvents="none" style={[styles.authGlowOuter, {
-          opacity: glowOuter.interpolate({ inputRange: [0, 1], outputRange: [0.85, 1] }),
-          transform: [{ scale: glowOuter.interpolate({ inputRange: [0, 1], outputRange: [1, 1.06] }) }],
-        }]} />
-        <Animated.View pointerEvents="none" style={[styles.authGlowMid, {
-          opacity: glowMid.interpolate({ inputRange: [0, 1], outputRange: [0.9, 1] }),
-          transform: [{ scale: glowMid.interpolate({ inputRange: [0, 1], outputRange: [1, 1.04] }) }],
-        }]} />
-        <Animated.View pointerEvents="none" style={[styles.authGlowCore, {
-          opacity: glowCore.interpolate({ inputRange: [0, 1], outputRange: [0.85, 1] }),
-          transform: [{ scale: glowCore.interpolate({ inputRange: [0, 1], outputRange: [0.98, 1.03] }) }],
-        }]} />
-        {/* Shimmer flare */}
-        <Animated.View pointerEvents="none" style={[styles.authGlowShimmer, {
-          opacity: glowShimmer.interpolate({ inputRange: [0, 1], outputRange: [0, 0.28] }),
-        }]} />
-
-        {/* Warm ground wash below horizon */}
-        <View style={styles.authGroundWash} pointerEvents="none" />
-
-        {/* Horizon hairline */}
-        <View style={styles.authHorizon} pointerEvents="none" />
-
-        {/* Content */}
+      <AuthShell glowOuter={glowOuter} glowMid={glowMid} glowCore={glowCore} glowShimmer={glowShimmer}>
         <View style={styles.authContainer}>
-          {/* Hero wordmark — Lume is the light source */}
           <View style={styles.authLogoArea}>
             <Text style={styles.authWordmark}>Lume</Text>
             <Text style={styles.authTagline}>Illuminate what you eat.</Text>
           </View>
-
-          {/* Form pushed to bottom */}
           <View style={styles.authForm}>
             <TextInput
               style={styles.authInput}
@@ -583,7 +693,14 @@ function AppInner() {
               <Text style={styles.authSignInText}>Log In</Text>
             </TouchableOpacity>
 
-            {/* Divider */}
+            {/* Forgot password link */}
+            <TouchableOpacity
+              style={styles.authBackLink}
+              onPress={() => { setAuthMode("forgot"); setResetEmail(authEmail); setAuthMessage(""); }}
+            >
+              <Text style={styles.authForgotText}>Forgot password?</Text>
+            </TouchableOpacity>
+
             <View style={styles.authDivider}>
               <View style={styles.authDividerLine} />
               <Text style={styles.authDividerText}>or</Text>
@@ -594,12 +711,10 @@ function AppInner() {
               <Text style={styles.authSignUpText}>Create account</Text>
             </TouchableOpacity>
 
-            {authMessage ? (
-              <Text style={styles.authMessage}>{authMessage}</Text>
-            ) : null}
+            {authMessage ? <Text style={styles.authMessage}>{authMessage}</Text> : null}
           </View>
         </View>
-      </SafeAreaView>
+      </AuthShell>
     );
   }
 
@@ -901,7 +1016,11 @@ function AppInner() {
           the scroll content with no background panel beneath it.
           paddingBottom uses the device's bottom safe-area inset so the input
           clears the home indicator on all devices. */}
-      <View style={[styles.bottomBar, { bottom: keyboardHeight, paddingBottom: keyboardHeight > 0 ? 8 : (insets.bottom || 8) }]}>
+      {/* bottom: when keyboard is open, subtract insets.bottom because keyboardHeight
+          is measured from the screen edge while bottomBar is positioned inside the
+          SafeAreaView whose layout origin is already above the home-indicator inset.
+          Without this correction the bar overshoots upward by ~34pt on Face ID devices. */}
+      <View style={[styles.bottomBar, { bottom: keyboardHeight > 0 ? keyboardHeight - insets.bottom : 0, paddingBottom: keyboardHeight > 0 ? 8 : (insets.bottom || 8) }]}>
         <View style={[styles.inputRow, isSearchFocused && styles.inputRowFocused]}>
           <TextInput
             placeholder="e.g. banana, grilled chicken..."
@@ -964,6 +1083,59 @@ function AppInner() {
         </TouchableOpacity>
       </Animated.View>
 
+    </SafeAreaView>
+  );
+}
+
+// ---------------------------------------------------------------------------
+// AuthShell — stable Solar Bloom background wrapper for all auth screens.
+// Defined at module level so React sees the same component type on every render
+// of AppInner. An inline definition would create a new function reference each
+// render, causing React to unmount + remount the SafeAreaView subtree on every
+// keystroke, which dismisses and re-opens the keyboard (the glitch).
+// ---------------------------------------------------------------------------
+type AuthShellProps = {
+  glowOuter:   Animated.Value;
+  glowMid:     Animated.Value;
+  glowCore:    Animated.Value;
+  glowShimmer: Animated.Value;
+  children:    React.ReactNode;
+};
+
+function AuthShell({ glowOuter, glowMid, glowCore, glowShimmer, children }: AuthShellProps) {
+  return (
+    <SafeAreaView style={styles.authSafe}>
+      <LinearGradient
+        colors={["#FFFBEC", "#FDF2D8", "#F7E7BD", "#E9D69A"]}
+        locations={[0, 0.35, 0.65, 1]}
+        style={StyleSheet.absoluteFillObject}
+      />
+      <Animated.View pointerEvents="none" style={[styles.authGlowOuter, {
+        opacity: glowOuter.interpolate({ inputRange: [0, 1], outputRange: [0.85, 1] }),
+        transform: [{ scale: glowOuter.interpolate({ inputRange: [0, 1], outputRange: [1, 1.06] }) }],
+      }]} />
+      <Animated.View pointerEvents="none" style={[styles.authGlowMid, {
+        opacity: glowMid.interpolate({ inputRange: [0, 1], outputRange: [0.9, 1] }),
+        transform: [{ scale: glowMid.interpolate({ inputRange: [0, 1], outputRange: [1, 1.04] }) }],
+      }]} />
+      <Animated.View pointerEvents="none" style={[styles.authGlowCore, {
+        opacity: glowCore.interpolate({ inputRange: [0, 1], outputRange: [0.85, 1] }),
+        transform: [{ scale: glowCore.interpolate({ inputRange: [0, 1], outputRange: [0.98, 1.03] }) }],
+      }]} />
+      <Animated.View pointerEvents="none" style={[styles.authGlowShimmer, {
+        opacity: glowShimmer.interpolate({ inputRange: [0, 1], outputRange: [0, 0.28] }),
+      }]} />
+      <View style={styles.authGroundWash} pointerEvents="none" />
+      <View style={styles.authHorizon} pointerEvents="none" />
+      {/* KeyboardAvoidingView pushes the form up when the soft keyboard appears.
+          "padding" adds bottom padding equal to the keyboard height, which
+          shrinks the flex container so the form stays visible at the bottom. */}
+      <KeyboardAvoidingView
+        style={{ flex: 1 }}
+        behavior={Platform.OS === "ios" ? "padding" : "height"}
+      >
+        {children}
+      </KeyboardAvoidingView>
     </SafeAreaView>
   );
 }
@@ -1381,6 +1553,21 @@ const styles = StyleSheet.create({
     fontFamily: "Chillax-Medium",
     fontSize: 16,
     color: "#1A1A14",
+  },
+  authBackLink: {
+    alignSelf: "center",
+    marginTop: 12,
+  },
+  authBackLinkText: {
+    fontFamily: "Chillax-Regular",
+    fontSize: 14,
+    color: "rgba(26,26,20,0.6)",
+  },
+  authForgotText: {
+    fontFamily: "Chillax-Regular",
+    fontSize: 14,
+    color: "rgba(26,26,20,0.6)",
+    textAlign: "center",
   },
   authMessage: {
     marginTop: 14,

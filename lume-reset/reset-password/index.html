@@ -1,0 +1,53 @@
+<!DOCTYPE html>
+<html>
+  <head>
+    <meta charset="UTF-8" />
+    <title>Redirecting to Lume...</title>
+    <style>
+      body {
+        font-family: Arial, sans-serif;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        min-height: 100vh;
+        margin: 0;
+        background: #fafaf7;
+        color: #111;
+        text-align: center;
+        padding: 24px;
+      }
+      .card {
+        max-width: 420px;
+      }
+      a {
+        color: #111;
+        text-decoration: underline;
+      }
+    </style>
+    <script>
+      window.addEventListener("load", () => {
+        const hash = window.location.hash || "";
+        const query = window.location.search || "";
+        const deepLink = `lume://reset-password${hash || query}`;
+
+        setTimeout(() => {
+          window.location.href = deepLink;
+        }, 300);
+      });
+    </script>
+  </head>
+  <body>
+    <div class="card">
+      <h2>Redirecting to Lume…</h2>
+      <p>If the app does not open automatically, tap below.</p>
+      <p><a id="open-link" href="#">Open Lume</a></p>
+    </div>
+
+    <script>
+      const hash = window.location.hash || "";
+      const query = window.location.search || "";
+      const deepLink = `lume://reset-password${hash || query}`;
+      document.getElementById("open-link").href = deepLink;
+    </script>
+  </body>
+</html>
