@@ -271,6 +271,7 @@ function AppInner() {
   const [profileSaving,  setProfileSaving]  = useState(false);
   const [profileMessage, setProfileMessage] = useState("");
   const [isAccountOpen,  setIsAccountOpen]  = useState(false);
+  const [isWaterOpen,    setIsWaterOpen]    = useState(false);
   const [setupFields,    setSetupFields]    = useState<SetupFields>({
     display_name:   "",
     sex:            "",
@@ -941,6 +942,11 @@ function AppInner() {
     );
   }
 
+  // ── Water Intake screen ──────────────────────────────────────────────────────
+  if (isWaterOpen) {
+    return <WaterIntakeScreen onBack={() => setIsWaterOpen(false)} />;
+  }
+
   // ── Tracker screen (logged in) ──────────────────────────────────────────────
   // profile is guaranteed non-null here (the setup gate above would have caught it).
   const calorieGoal = profile ? computeCalorieTarget(profile) : CALORIE_GOAL;
@@ -1203,6 +1209,23 @@ function AppInner() {
             <Text style={styles.searchingText}>Loading...</Text>
           )}
           {weeklyData.length > 0 && <WeeklyGlowLine data={weeklyData} goal={calorieGoal} />}
+        </View>
+
+        {/* Water Intake Widget */}
+        <View style={styles.section}>
+          <View style={styles.widgetRow}>
+            <TouchableOpacity
+              style={styles.waterWidgetTap}
+              onPress={() => setIsWaterOpen(true)}
+              activeOpacity={0.85}
+            >
+              <View style={styles.waterWidgetCard}>
+                <Ionicons name="water-outline" size={26} color="#1A1A14" />
+                <Text style={styles.waterWidgetLabel}>Water</Text>
+                <Text style={styles.waterWidgetProgress}>0 / 64 oz</Text>
+              </View>
+            </TouchableOpacity>
+          </View>
         </View>
 
       </ScrollView>
@@ -1796,6 +1819,280 @@ function MacroItem({ label, value, unit }: { label: string; value: string; unit:
 const CALORIE_GOAL   = 2000;
 const MACRO_TARGETS  = { protein: 140, carbs: 220, fat: 70 };
 
+// ---------------------------------------------------------------------------
+// WaterIntakeScreen
+// ---------------------------------------------------------------------------
+const BOTTLE_SIZES_OZ      = [12, 16, 20, 24, 32, 40, 64];
+const DAILY_GOAL_OPTIONS_OZ = [32, 48, 64, 80, 96, 128];
+
+function WaterIntakeScreen({ onBack }: { onBack: () => void }) {
+  const [usesBottle, setUsesBottle]     = useState<"yes" | "no" | null>(null);
+  const [bottleSize, setBottleSize]     = useState<number | null>(null);
+  const [dailyGoalOz, setDailyGoalOz]   = useState<number>(64);
+  const [bottleCount, setBottleCount]   = useState<number>(0);
+  const [showTracking, setShowTracking] = useState(false);
+  const cardOpacity = useRef(new Animated.Value(1)).current;
+
+  // Derived
+  const totalOz = bottleCount * (bottleSize ?? 0);
+  const goalPct = dailyGoalOz > 0 ? Math.min(1, totalOz / dailyGoalOz) : 0;
+  const goalMet = bottleCount > 0 && totalOz >= dailyGoalOz;
+
+  // ── Transition helpers ──────────────────────────────────────────────────────
+  // Called directly from selection handlers so there is no useEffect re-trigger
+  // problem when the user comes back to edit and re-selects the same values.
+  const transitionToTracking = () => {
+    if (showTracking) return;
+    Animated.timing(cardOpacity, {
+      toValue: 0, duration: 220, useNativeDriver: true,
+    }).start(() => {
+      setShowTracking(true);
+      Animated.timing(cardOpacity, {
+        toValue: 1, duration: 260, useNativeDriver: true,
+      }).start();
+    });
+  };
+
+  const resetToSetup = () => {
+    Animated.timing(cardOpacity, {
+      toValue: 0, duration: 180, useNativeDriver: true,
+    }).start(() => {
+      setShowTracking(false);
+      Animated.timing(cardOpacity, {
+        toValue: 1, duration: 220, useNativeDriver: true,
+      }).start();
+    });
+  };
+
+  return (
+    <LinearGradient
+      colors={["#FFFEF8", "#FFF8D4", "#FDF3B0"]}
+      locations={[0, 0.5, 1]}
+      start={{ x: 0.15, y: 0 }}
+      end={{ x: 0.85, y: 1 }}
+      style={waterStyles.gradientRoot}
+    >
+      <SafeAreaView style={waterStyles.safeTransparent}>
+      <ScrollView
+        style={setupStyles.scroll}
+        contentContainerStyle={setupStyles.container}
+      >
+        {/* Back navigation — reuses the same pattern as AccountScreen */}
+        <TouchableOpacity onPress={onBack} style={setupStyles.acctBackButton} activeOpacity={0.7}>
+          <Ionicons name="arrow-back" size={18} color="#555" />
+          <Text style={setupStyles.acctBackText}>Back</Text>
+        </TouchableOpacity>
+
+        <Text style={setupStyles.headline}>Water Intake</Text>
+        <Text style={waterStyles.subhead}>Track your daily water intake in oz.</Text>
+
+        {/* ── Top card — fades between setup mode and tracking mode ──────── */}
+        <Animated.View style={[waterStyles.setupCard, { opacity: cardOpacity }]}>
+
+          {showTracking ? (
+
+            /* ── TRACKING MODE ────────────────────────────────────────────── */
+            <>
+              {/* Header row — title + Edit affordance */}
+              <View style={waterStyles.trackCardHeader}>
+                <View style={waterStyles.trackCardTitleRow}>
+                  <Ionicons name="checkmark-circle-outline" size={20} color="#C48A1A" />
+                  <Text style={waterStyles.trackHeading}>
+                    {usesBottle === "yes" ? "Today's bottles" : "Today's intake"}
+                  </Text>
+                </View>
+                <TouchableOpacity
+                  onPress={resetToSetup}
+                  activeOpacity={0.6}
+                  hitSlop={{ top: 8, bottom: 8, left: 12, right: 4 }}
+                >
+                  <Text style={waterStyles.trackEditLink}>Edit</Text>
+                </TouchableOpacity>
+              </View>
+
+              {usesBottle === "yes" && bottleSize !== null ? (
+                /* bottle-based tracking */
+                <>
+                  <Text style={waterStyles.trackSubhead}>
+                    Based on your {bottleSize} oz bottle
+                  </Text>
+
+                  {/* Stepper */}
+                  <View style={waterStyles.stepperRow}>
+                    <TouchableOpacity
+                      style={[waterStyles.stepperButton, bottleCount === 0 && waterStyles.stepperButtonDisabled]}
+                      onPress={() => setBottleCount(c => Math.max(0, c - 1))}
+                      activeOpacity={0.7}
+                      disabled={bottleCount === 0}
+                    >
+                      <Ionicons name="remove" size={22} color={bottleCount === 0 ? "#ccc" : "#1A1A14"} />
+                    </TouchableOpacity>
+
+                    <View style={waterStyles.stepperCenter}>
+                      <Text style={waterStyles.stepperCount}>{bottleCount}</Text>
+                      <Text style={waterStyles.stepperLabel}>
+                        {bottleCount === 1 ? "bottle" : "bottles"}
+                      </Text>
+                    </View>
+
+                    <TouchableOpacity
+                      style={waterStyles.stepperButton}
+                      onPress={() => setBottleCount(c => c + 1)}
+                      activeOpacity={0.7}
+                    >
+                      <Ionicons name="add" size={22} color="#1A1A14" />
+                    </TouchableOpacity>
+                  </View>
+
+                  {/* Total vs goal */}
+                  <View style={waterStyles.divider} />
+                  <View style={waterStyles.totalRow}>
+                    <Text style={[waterStyles.totalOz, goalMet && waterStyles.totalOzMet]}>
+                      {totalOz} oz
+                    </Text>
+                    <Text style={waterStyles.totalGoal}>/ {dailyGoalOz} oz goal</Text>
+                  </View>
+
+                  {/* Progress bar */}
+                  <View style={waterStyles.progressTrack}>
+                    <View
+                      style={[
+                        waterStyles.progressFill,
+                        { width: `${Math.round(goalPct * 100)}%` as any },
+                        goalMet && waterStyles.progressFillMet,
+                      ]}
+                    />
+                  </View>
+                  <Text style={[waterStyles.progressLabel, goalMet && waterStyles.progressLabelMet]}>
+                    {goalMet
+                      ? "Daily goal reached!"
+                      : `${Math.round(goalPct * 100)}% of daily goal`}
+                  </Text>
+                </>
+              ) : (
+                /* no-bottle tracking — goal summary only */
+                <>
+                  <Text style={waterStyles.trackSubhead}>
+                    Goal: {dailyGoalOz} oz / day
+                  </Text>
+                  <View style={waterStyles.helperRow}>
+                    <Ionicons name="information-circle-outline" size={13} color="rgba(26,26,20,0.35)" />
+                    <Text style={waterStyles.helperText}>
+                      Direct oz entry is coming in a future update.
+                    </Text>
+                  </View>
+                </>
+              )}
+            </>
+
+          ) : (
+
+            /* ── SETUP MODE ───────────────────────────────────────────────── */
+            <>
+              {/* Card heading */}
+              <View style={waterStyles.setupCardHeader}>
+                <Ionicons name="water-outline" size={20} color="#C48A1A" />
+                <Text style={waterStyles.setupHeading}>Set up your hydration</Text>
+              </View>
+              <Text style={waterStyles.setupBody}>
+                Answer a few quick questions so we can make tracking as effortless as possible.
+              </Text>
+
+              <View style={waterStyles.divider} />
+
+              {/* Q1 */}
+              <Text style={waterStyles.questionLabel}>
+                Do you usually drink from a personal water bottle?
+              </Text>
+              <View style={waterStyles.pillRow}>
+                {(["yes", "no"] as const).map((opt) => (
+                  <TouchableOpacity
+                    key={opt}
+                    style={[waterStyles.pill, usesBottle === opt && waterStyles.pillSelected]}
+                    onPress={() => {
+                      setUsesBottle(opt);
+                      if (opt === "no") {
+                        setBottleSize(null);
+                        transitionToTracking();   // "no" completes setup
+                      }
+                    }}
+                    activeOpacity={0.75}
+                  >
+                    <Text style={[waterStyles.pillText, usesBottle === opt && waterStyles.pillTextSelected]}>
+                      {opt === "yes" ? "Yes" : "No"}
+                    </Text>
+                  </TouchableOpacity>
+                ))}
+              </View>
+
+              {/* Q2 — revealed only when user says Yes */}
+              {usesBottle === "yes" && (
+                <>
+                  <Text style={waterStyles.questionLabel}>
+                    What size is your water bottle?
+                  </Text>
+                  <View style={waterStyles.pillRow}>
+                    {BOTTLE_SIZES_OZ.map((sz) => (
+                      <TouchableOpacity
+                        key={sz}
+                        style={[waterStyles.pill, bottleSize === sz && waterStyles.pillSelected]}
+                        onPress={() => {
+                          setBottleSize(sz);
+                          transitionToTracking();   // size selected, setup complete
+                        }}
+                        activeOpacity={0.75}
+                      >
+                        <Text style={[waterStyles.pillText, bottleSize === sz && waterStyles.pillTextSelected]}>
+                          {sz} oz
+                        </Text>
+                      </TouchableOpacity>
+                    ))}
+                  </View>
+
+                  <View style={waterStyles.helperRow}>
+                    <Ionicons name="information-circle-outline" size={13} color="rgba(26,26,20,0.35)" />
+                    <Text style={waterStyles.helperText}>
+                      Once set up, you can log full bottles instead of counting individual ounces — we'll do the math for you.
+                    </Text>
+                  </View>
+                </>
+              )}
+
+              <View style={waterStyles.divider} />
+
+              {/* Q3 — daily goal */}
+              <Text style={waterStyles.questionLabel}>
+                How many oz of water do you want to drink in a day?
+              </Text>
+              <View style={waterStyles.pillRow}>
+                {DAILY_GOAL_OPTIONS_OZ.map((oz) => (
+                  <TouchableOpacity
+                    key={oz}
+                    style={[waterStyles.pill, dailyGoalOz === oz && waterStyles.pillSelected]}
+                    onPress={() => setDailyGoalOz(oz)}
+                    activeOpacity={0.75}
+                  >
+                    <Text style={[waterStyles.pillText, dailyGoalOz === oz && waterStyles.pillTextSelected]}>
+                      {oz} oz
+                    </Text>
+                  </TouchableOpacity>
+                ))}
+              </View>
+            </>
+
+          )}
+
+        </Animated.View>
+
+      </ScrollView>
+      </SafeAreaView>
+    </LinearGradient>
+  );
+}
+
+// ---------------------------------------------------------------------------
+// TotalsRadialRings
+// ---------------------------------------------------------------------------
 function TotalsRadialRings({ summary, selectedDate, goal = CALORIE_GOAL }: { summary: DailySummary; selectedDate: string; goal?: number }) {
   const { total_calories, total_protein, total_carbs, total_fat, entries_count } = summary;
   const calPct = Math.min(1, total_calories / goal);
@@ -2553,12 +2850,14 @@ const styles = StyleSheet.create({
     paddingHorizontal: 10,
     paddingVertical: 4,
     borderRadius: 999,
-    backgroundColor: "#1A1A14",
+    backgroundColor: "#fff",
+    borderColor: "#F5D834",
+    borderWidth: 1.5,
   },
   ringsPctText: {
     fontFamily: "Chillax-SemiBold",
     fontSize: 11,
-    color: "#F5D834",
+    color: "#1A1A14",
     letterSpacing: 0.4,
   },
   ringsBody: {
@@ -2600,6 +2899,9 @@ const styles = StyleSheet.create({
     fontSize: 10,
     color: "rgba(26,26,20,0.45)",
     marginTop: 2,
+    backgroundColor: "#fff",
+    borderColor: "#F5D834",
+    borderWidth: 1,
   },
   ringsLegend: {
     flex: 1,
@@ -2908,12 +3210,14 @@ const styles = StyleSheet.create({
     paddingHorizontal: 10,
     paddingVertical: 4,
     borderRadius: 999,
-    backgroundColor: "#1A1A14",
+    backgroundColor: "#fff",
+    borderColor: "#F5D834",
+    borderWidth: 1.5,
   },
   weekGlowGoalText: {
     fontFamily: "Chillax-SemiBold",
     fontSize: 11,
-    color: "#F5D834",
+    color: "#1A1A14",
     letterSpacing: 0.4,
   },
   weekGlowLabels: {
@@ -2929,6 +3233,35 @@ const styles = StyleSheet.create({
   },
   weekGlowDayLabelToday: {
     color: "#1A1A14",
+  },
+
+  // Water widget — compact half-width card, left-aligned in a flex row
+  widgetRow: {
+    flexDirection: "row",
+    marginTop: 14,
+  },
+  waterWidgetTap: {
+    width: "48%",  // ~half the card area, leaving right side for future widgets
+  },
+  waterWidgetCard: {
+    borderRadius: 24,
+    padding: 20,
+    backgroundColor: "transparent",
+    borderColor: "#F5D834",
+    borderWidth: 1.5,
+    alignItems: "center",
+    gap: 8,
+  },
+  waterWidgetLabel: {
+    fontFamily: "Chillax-Medium",
+    fontSize: 13,
+    color: "#1A1A14",
+    letterSpacing: 0.3,
+  },
+  waterWidgetProgress: {
+    fontFamily: "Inter-Variable",
+    fontSize: 11,
+    color: "rgba(26,26,20,0.55)",
   },
 
   // Profile loading screen (shown while GET /profile is in-flight)
@@ -3102,5 +3435,243 @@ const setupStyles = StyleSheet.create({
     fontFamily: "Chillax-Medium",
     fontSize: 15,
     color: "#c62828",
+  },
+});
+
+// ---------------------------------------------------------------------------
+// waterStyles — scoped to WaterIntakeScreen only.
+// ---------------------------------------------------------------------------
+const waterStyles = StyleSheet.create({
+  // ── screen shell ───────────────────────────────────────────────────────────
+  gradientRoot: {
+    flex: 1,
+  },
+  safeTransparent: {
+    flex: 1,
+    backgroundColor: "transparent",
+  },
+
+  // ── page header ────────────────────────────────────────────────────────────
+  subhead: {
+    fontFamily: "Inter-Variable",
+    fontSize: 14,
+    color: "rgba(26,26,20,0.5)",
+    marginTop: 4,
+    marginBottom: 24,
+  },
+
+  // ── personalisation / setup card ───────────────────────────────────────────
+  setupCard: {
+    borderRadius: 20,
+    padding: 24,
+    backgroundColor: "#fff",
+    shadowColor: "#000",
+    shadowOpacity: 0.05,
+    shadowRadius: 12,
+    shadowOffset: { width: 0, height: 3 },
+    elevation: 2,
+  },
+  setupCardHeader: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 8,
+    marginBottom: 8,
+  },
+  setupHeading: {
+    fontFamily: "Chillax-SemiBold",
+    fontSize: 17,
+    color: "#1A1A14",
+    letterSpacing: -0.3,
+  },
+  setupBody: {
+    fontFamily: "Inter-Variable",
+    fontSize: 13,
+    color: "rgba(26,26,20,0.5)",
+    lineHeight: 19,
+    marginBottom: 20,
+  },
+  divider: {
+    height: 1,
+    backgroundColor: "rgba(26,26,20,0.07)",
+    marginBottom: 20,
+  },
+
+  // ── question rows ──────────────────────────────────────────────────────────
+  questionLabel: {
+    fontFamily: "Chillax-Medium",
+    fontSize: 14,
+    color: "#1A1A14",
+    letterSpacing: -0.1,
+    marginBottom: 12,
+  },
+
+  // ── pill / chip selectors (scoped; mirrors setupStyles but isolated) ────────
+  pillRow: {
+    flexDirection: "row",
+    flexWrap: "wrap",
+    gap: 8,
+    marginBottom: 20,
+  },
+  pill: {
+    paddingHorizontal: 14,
+    paddingVertical: 9,
+    borderRadius: 20,
+    borderWidth: 1,
+    borderColor: "#ddd",
+    backgroundColor: "#fff",
+  },
+  pillSelected: {
+    backgroundColor: "#1A1A14",
+    borderColor: "#1A1A14",
+  },
+  pillText: {
+    fontFamily: "Inter-Variable",
+    fontSize: 14,
+    color: "#555",
+  },
+  pillTextSelected: {
+    color: "#F8E94A",
+    fontFamily: "Chillax-Medium",
+  },
+
+  // ── helper / hint row ──────────────────────────────────────────────────────
+  helperRow: {
+    flexDirection: "row",
+    alignItems: "flex-start",
+    gap: 6,
+    marginTop: -6,   // tuck up slightly under the chip row
+  },
+  helperText: {
+    fontFamily: "Inter-Variable",
+    fontSize: 12,
+    color: "rgba(26,26,20,0.4)",
+    lineHeight: 17,
+    flex: 1,
+  },
+
+  // ── bottle tracking card ───────────────────────────────────────────────────
+  trackCard: {
+    marginTop: 16,
+    borderRadius: 20,
+    padding: 24,
+    backgroundColor: "#fff",
+    shadowColor: "#000",
+    shadowOpacity: 0.05,
+    shadowRadius: 12,
+    shadowOffset: { width: 0, height: 3 },
+    elevation: 2,
+  },
+  trackCardHeader: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "space-between",
+    marginBottom: 4,
+  },
+  trackCardTitleRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 8,
+  },
+  trackEditLink: {
+    fontFamily: "Inter-Variable",
+    fontSize: 13,
+    color: "rgba(26,26,20,0.35)",
+  },
+  trackHeading: {
+    fontFamily: "Chillax-SemiBold",
+    fontSize: 17,
+    color: "#1A1A14",
+    letterSpacing: -0.3,
+  },
+  trackSubhead: {
+    fontFamily: "Inter-Variable",
+    fontSize: 13,
+    color: "rgba(26,26,20,0.45)",
+    marginBottom: 24,
+  },
+
+  // stepper
+  stepperRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "center",
+    gap: 28,
+    marginBottom: 24,
+  },
+  stepperButton: {
+    width: 46,
+    height: 46,
+    borderRadius: 23,
+    borderWidth: 1.5,
+    borderColor: "#ddd",
+    backgroundColor: "#fff",
+    alignItems: "center",
+    justifyContent: "center",
+  },
+  stepperButtonDisabled: {
+    borderColor: "#eee",
+  },
+  stepperCenter: {
+    alignItems: "center",
+    minWidth: 68,
+  },
+  stepperCount: {
+    fontFamily: "Chillax-Bold",
+    fontSize: 52,
+    color: "#1A1A14",
+    letterSpacing: -1.5,
+    lineHeight: 56,
+  },
+  stepperLabel: {
+    fontFamily: "Inter-Variable",
+    fontSize: 12,
+    color: "rgba(26,26,20,0.4)",
+    marginTop: 2,
+  },
+
+  // total + progress
+  totalRow: {
+    flexDirection: "row",
+    alignItems: "baseline",
+    gap: 6,
+    marginTop: 16,
+    marginBottom: 12,
+  },
+  totalOz: {
+    fontFamily: "Chillax-SemiBold",
+    fontSize: 28,
+    color: "#1A1A14",
+    letterSpacing: -0.6,
+  },
+  totalOzMet: {
+    color: "#2e7d32",
+  },
+  totalGoal: {
+    fontFamily: "Inter-Variable",
+    fontSize: 15,
+    color: "rgba(26,26,20,0.4)",
+  },
+  progressTrack: {
+    height: 6,
+    borderRadius: 3,
+    backgroundColor: "rgba(26,26,20,0.08)",
+    overflow: "hidden",
+  },
+  progressFill: {
+    height: 6,
+    borderRadius: 3,
+    backgroundColor: "#C48A1A",
+  },
+  progressFillMet: {
+    backgroundColor: "#2e7d32",
+  },
+  progressLabel: {
+    fontFamily: "Inter-Variable",
+    fontSize: 12,
+    color: "rgba(26,26,20,0.4)",
+    marginTop: 6,
+  },
+  progressLabelMet: {
+    color: "#2e7d32",
   },
 });
