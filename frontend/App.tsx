@@ -19,6 +19,7 @@ import {
   StyleSheet,
   ScrollView,
   TouchableOpacity,
+  Pressable,
 } from "react-native";
 import { SafeAreaProvider, SafeAreaView, useSafeAreaInsets } from "react-native-safe-area-context";
 import { LinearGradient } from "expo-linear-gradient";
@@ -27,6 +28,7 @@ import axios from "axios";
 import { Session } from "@supabase/supabase-js";
 import { supabase } from "./lib/supabase";
 import { API_URL } from "./lib/config";
+// AsyncStorage import removed — hydration data now persisted via Supabase
 
 type NutritionResult = {
   name:         string;
@@ -1822,21 +1824,182 @@ const MACRO_TARGETS  = { protein: 140, carbs: 220, fat: 70 };
 // ---------------------------------------------------------------------------
 // WaterIntakeScreen
 // ---------------------------------------------------------------------------
+// ---------------------------------------------------------------------------
+// Water Intake — hydration setup persistence
+// ---------------------------------------------------------------------------
+type WaterSetup = {
+  usesBottle: "yes" | "no";
+  bottleSize: number | null;
+  dailyGoalOz: number;
+};
+
+/** Returns true only when the saved object has all required fields for its path. */
+function isValidWaterSetup(s: unknown): s is WaterSetup {
+  if (!s || typeof s !== "object") return false;
+  const { usesBottle, bottleSize, dailyGoalOz } = s as Record<string, unknown>;
+  if (typeof dailyGoalOz !== "number" || dailyGoalOz <= 0) return false;
+  if (usesBottle === "yes") return typeof bottleSize === "number";
+  if (usesBottle === "no")  return true;
+  return false;
+}
+
 const BOTTLE_SIZES_OZ      = [12, 16, 20, 24, 32, 40, 64];
 const DAILY_GOAL_OPTIONS_OZ = [32, 48, 64, 80, 96, 128];
+const QUICK_ADD_OZ          = [8, 12, 16, 24];
 
 function WaterIntakeScreen({ onBack }: { onBack: () => void }) {
   const [usesBottle, setUsesBottle]     = useState<"yes" | "no" | null>(null);
   const [bottleSize, setBottleSize]     = useState<number | null>(null);
   const [dailyGoalOz, setDailyGoalOz]   = useState<number>(64);
   const [bottleCount, setBottleCount]   = useState<number>(0);
+  const [directOz, setDirectOz]         = useState<number>(0);
   const [showTracking, setShowTracking] = useState(false);
+  const [setupLoaded, setSetupLoaded]   = useState(false);   // gates render until storage is read
+  const [userId, setUserId]             = useState<string | null>(null);
   const cardOpacity = useRef(new Animated.Value(1)).current;
 
-  // Derived
+  // Bottle-path derived (unchanged)
   const totalOz = bottleCount * (bottleSize ?? 0);
   const goalPct = dailyGoalOz > 0 ? Math.min(1, totalOz / dailyGoalOz) : 0;
   const goalMet = bottleCount > 0 && totalOz >= dailyGoalOz;
+
+  // Direct-oz-path derived
+  const directGoalPct = dailyGoalOz > 0 ? Math.min(1, directOz / dailyGoalOz) : 0;
+  const directGoalMet = directOz > 0 && directOz >= dailyGoalOz;
+
+  // ── Hydration persistence (Supabase) ───────────────────────────────────────
+
+  /**
+   * Upsert the user's hydration preferences row.
+   * Fire-and-forget — UI never waits; failures are silent.
+   */
+  const saveSetup = async (setup: WaterSetup) => {
+    if (!userId) return;
+    try {
+      await supabase.from("hydration_preferences").upsert({
+        user_id:        userId,
+        uses_bottle:    setup.usesBottle === "yes",
+        bottle_size_oz: setup.bottleSize,
+        daily_goal_oz:  setup.dailyGoalOz,
+        updated_at:     new Date().toISOString(),
+      }, { onConflict: "user_id" });
+
+      // ── Sync today's log row if one already exists ────────────────────────
+      // Only today's date is touched — historical rows are never modified.
+      const today = localToday();
+      const { data: existing } = await supabase
+        .from("hydration_daily_logs")
+        .select("bottle_count, direct_oz")
+        .eq("user_id", userId)
+        .eq("log_date", today)
+        .single();
+
+      if (existing) {
+        // Recompute total_oz with the new preferences.
+        // Bottle mode: use the new bottle size if bottles have been logged.
+        // Non-bottle mode: total is just direct_oz (bottle_count stays 0).
+        const recomputedTotal =
+          setup.usesBottle === "yes"
+            ? (existing.bottle_count ?? 0) * (setup.bottleSize ?? 0) + (existing.direct_oz ?? 0)
+            : (existing.direct_oz ?? 0);
+
+        await supabase
+          .from("hydration_daily_logs")
+          .update({
+            goal_oz_snapshot: setup.dailyGoalOz,
+            total_oz:         recomputedTotal,
+            updated_at:       new Date().toISOString(),
+          })
+          .eq("user_id", userId)
+          .eq("log_date", today);
+      }
+    } catch {
+      // Silently ignore — the UI keeps working.
+    }
+  };
+
+  /**
+   * Upsert today's hydration log row.
+   * Called immediately after any count/oz change with the explicit new values
+   * to avoid stale-closure issues with React state.
+   * Fire-and-forget.
+   */
+  const saveDailyLog = async (
+    nextBottleCount: number,
+    nextDirectOz: number,
+    currentBottleSize: number | null,
+    currentDailyGoal: number,
+  ) => {
+    if (!userId) return;
+    const total = nextBottleCount * (currentBottleSize ?? 0) + nextDirectOz;
+    try {
+      await supabase.from("hydration_daily_logs").upsert({
+        user_id:           userId,
+        log_date:          localToday(),
+        bottle_count:      nextBottleCount,
+        direct_oz:         nextDirectOz,
+        total_oz:          total,
+        goal_oz_snapshot:  currentDailyGoal,
+        updated_at:        new Date().toISOString(),
+      }, { onConflict: "user_id,log_date" });
+    } catch {
+      // Silently ignore.
+    }
+  };
+
+  /**
+   * On mount: fetch the signed-in user, load their preferences and today's log
+   * from Supabase, then initialize state. The card is gated behind `setupLoaded`
+   * so there is no flash of the wrong mode.
+   */
+  useEffect(() => {
+    (async () => {
+      try {
+        const { data: { user } } = await supabase.auth.getUser();
+        if (!user) { setSetupLoaded(true); return; }
+        setUserId(user.id);
+
+        // Load preferences
+        const { data: prefs } = await supabase
+          .from("hydration_preferences")
+          .select("uses_bottle, bottle_size_oz, daily_goal_oz")
+          .eq("user_id", user.id)
+          .single();
+
+        if (prefs) {
+          const mapped: WaterSetup = {
+            usesBottle:   prefs.uses_bottle ? "yes" : "no",
+            bottleSize:   prefs.bottle_size_oz ?? null,
+            dailyGoalOz:  prefs.daily_goal_oz  ?? 64,
+          };
+          if (isValidWaterSetup(mapped)) {
+            setUsesBottle(mapped.usesBottle);
+            setBottleSize(mapped.bottleSize);
+            setDailyGoalOz(mapped.dailyGoalOz);
+
+            // Load today's log counts
+            const { data: log } = await supabase
+              .from("hydration_daily_logs")
+              .select("bottle_count, direct_oz")
+              .eq("user_id", user.id)
+              .eq("log_date", localToday())
+              .single();
+
+            if (log) {
+              setBottleCount(log.bottle_count ?? 0);
+              setDirectOz(log.direct_oz ?? 0);
+            }
+
+            setShowTracking(true); // skip setup, open directly in tracking
+          }
+        }
+      } catch {
+        // Network/auth failure — fall through to fresh setup mode.
+      } finally {
+        setSetupLoaded(true); // reveal the card in whichever mode is correct
+      }
+    })();
+  }, []);
 
   // ── Transition helpers ──────────────────────────────────────────────────────
   // Called directly from selection handlers so there is no useEffect re-trigger
@@ -1886,8 +2049,8 @@ function WaterIntakeScreen({ onBack }: { onBack: () => void }) {
         <Text style={setupStyles.headline}>Water Intake</Text>
         <Text style={waterStyles.subhead}>Track your daily water intake in oz.</Text>
 
-        {/* ── Top card — fades between setup mode and tracking mode ──────── */}
-        <Animated.View style={[waterStyles.setupCard, { opacity: cardOpacity }]}>
+        {/* ── Top card — only renders after saved setup is loaded from storage ─ */}
+        {setupLoaded && <Animated.View style={[waterStyles.setupCard, { opacity: cardOpacity }]}>
 
           {showTracking ? (
 
@@ -1906,7 +2069,7 @@ function WaterIntakeScreen({ onBack }: { onBack: () => void }) {
                   activeOpacity={0.6}
                   hitSlop={{ top: 8, bottom: 8, left: 12, right: 4 }}
                 >
-                  <Text style={waterStyles.trackEditLink}>Edit</Text>
+                  <Ionicons name="create-outline" size={19} color={COLORS.primary} />
                 </TouchableOpacity>
               </View>
 
@@ -1919,14 +2082,22 @@ function WaterIntakeScreen({ onBack }: { onBack: () => void }) {
 
                   {/* Stepper */}
                   <View style={waterStyles.stepperRow}>
-                    <TouchableOpacity
-                      style={[waterStyles.stepperButton, bottleCount === 0 && waterStyles.stepperButtonDisabled]}
-                      onPress={() => setBottleCount(c => Math.max(0, c - 1))}
-                      activeOpacity={0.7}
+                    <Pressable
+                      onPress={() => {
+                        const next = Math.max(0, bottleCount - 1);
+                        setBottleCount(next);
+                        saveDailyLog(next, directOz, bottleSize, dailyGoalOz);
+                      }}
                       disabled={bottleCount === 0}
+                      style={({ pressed }) => [
+                        waterStyles.stepperButton,
+                        bottleCount === 0
+                          ? waterStyles.stepperButtonDisabled
+                          : pressed && waterStyles.btnPressed,
+                      ]}
                     >
                       <Ionicons name="remove" size={22} color={bottleCount === 0 ? "#ccc" : "#1A1A14"} />
-                    </TouchableOpacity>
+                    </Pressable>
 
                     <View style={waterStyles.stepperCenter}>
                       <Text style={waterStyles.stepperCount}>{bottleCount}</Text>
@@ -1935,22 +2106,28 @@ function WaterIntakeScreen({ onBack }: { onBack: () => void }) {
                       </Text>
                     </View>
 
-                    <TouchableOpacity
-                      style={waterStyles.stepperButton}
-                      onPress={() => setBottleCount(c => c + 1)}
-                      activeOpacity={0.7}
+                    <Pressable
+                      onPress={() => {
+                        const next = bottleCount + 1;
+                        setBottleCount(next);
+                        saveDailyLog(next, directOz, bottleSize, dailyGoalOz);
+                      }}
+                      style={({ pressed }) => [
+                        waterStyles.stepperButton,
+                        pressed && waterStyles.btnPressed,
+                      ]}
                     >
                       <Ionicons name="add" size={22} color="#1A1A14" />
-                    </TouchableOpacity>
+                    </Pressable>
                   </View>
 
-                  {/* Total vs goal */}
+                  {/* Oz hero display */}
                   <View style={waterStyles.divider} />
-                  <View style={waterStyles.totalRow}>
-                    <Text style={[waterStyles.totalOz, goalMet && waterStyles.totalOzMet]}>
+                  <View style={waterStyles.ozDisplay}>
+                    <Text style={[waterStyles.ozHero, goalMet && waterStyles.totalOzMet]}>
                       {totalOz} oz
                     </Text>
-                    <Text style={waterStyles.totalGoal}>/ {dailyGoalOz} oz goal</Text>
+                    <Text style={waterStyles.ozGoalText}>of {dailyGoalOz} oz</Text>
                   </View>
 
                   {/* Progress bar */}
@@ -1963,23 +2140,80 @@ function WaterIntakeScreen({ onBack }: { onBack: () => void }) {
                       ]}
                     />
                   </View>
-                  <Text style={[waterStyles.progressLabel, goalMet && waterStyles.progressLabelMet]}>
-                    {goalMet
-                      ? "Daily goal reached!"
-                      : `${Math.round(goalPct * 100)}% of daily goal`}
-                  </Text>
+                  <View style={waterStyles.progressFooterRow}>
+                    <Text style={[waterStyles.progressLabel, goalMet && waterStyles.progressLabelMet]}>
+                      {goalMet
+                        ? "Daily goal reached! 🎉"
+                        : `${Math.round(goalPct * 100)}% of your goal`}
+                    </Text>
+                  </View>
                 </>
               ) : (
-                /* no-bottle tracking — goal summary only */
+                /* no-bottle tracking — quick-add oz UI */
                 <>
                   <Text style={waterStyles.trackSubhead}>
-                    Goal: {dailyGoalOz} oz / day
+                    Quick add your water in oz
                   </Text>
-                  <View style={waterStyles.helperRow}>
-                    <Ionicons name="information-circle-outline" size={13} color="rgba(26,26,20,0.35)" />
-                    <Text style={waterStyles.helperText}>
-                      Direct oz entry is coming in a future update.
+
+                  {/* Quick-add buttons */}
+                  <View style={waterStyles.quickAddRow}>
+                    {QUICK_ADD_OZ.map((amt) => (
+                      <Pressable
+                        key={amt}
+                        onPress={() => {
+                          const next = directOz + amt;
+                          setDirectOz(next);
+                          saveDailyLog(bottleCount, next, bottleSize, dailyGoalOz);
+                        }}
+                        style={({ pressed }) => [
+                          waterStyles.quickAddButton,
+                          pressed && waterStyles.btnPressed,
+                        ]}
+                      >
+                        <Text style={waterStyles.quickAddText}>+{amt} oz</Text>
+                      </Pressable>
+                    ))}
+                  </View>
+
+                  {/* Oz hero display */}
+                  <View style={waterStyles.divider} />
+                  <View style={waterStyles.ozDisplay}>
+                    <Text style={[waterStyles.ozHero, directGoalMet && waterStyles.totalOzMet]}>
+                      {directOz} oz
                     </Text>
+                    <Text style={waterStyles.ozGoalText}>of {dailyGoalOz} oz</Text>
+                  </View>
+
+                  {/* Progress bar */}
+                  <View style={waterStyles.progressTrack}>
+                    <View
+                      style={[
+                        waterStyles.progressFill,
+                        { width: `${Math.round(directGoalPct * 100)}%` as any },
+                        directGoalMet && waterStyles.progressFillMet,
+                      ]}
+                    />
+                  </View>
+
+                  {/* Progress label + Reset affordance */}
+                  <View style={waterStyles.progressFooterRow}>
+                    <Text style={[waterStyles.progressLabel, directGoalMet && waterStyles.progressLabelMet]}>
+                      {directGoalMet
+                        ? "Daily goal reached! 🎉"
+                        : `${Math.round(directGoalPct * 100)}% of your goal`}
+                    </Text>
+                    {directOz > 0 && (
+                      <TouchableOpacity
+                        onPress={() => {
+                          setDirectOz(0);
+                          saveDailyLog(bottleCount, 0, bottleSize, dailyGoalOz);
+                        }}
+                        activeOpacity={0.6}
+                        hitSlop={{ top: 6, bottom: 6, left: 8, right: 4 }}
+                      >
+                        <Text style={waterStyles.resetLink}>Reset</Text>
+                      </TouchableOpacity>
+                    )}
                   </View>
                 </>
               )}
@@ -2013,7 +2247,10 @@ function WaterIntakeScreen({ onBack }: { onBack: () => void }) {
                       setUsesBottle(opt);
                       if (opt === "no") {
                         setBottleSize(null);
-                        transitionToTracking();   // "no" completes setup
+                        // Save with explicit values — state setters above are async,
+                        // so pass current knowns directly to avoid stale closures.
+                        saveSetup({ usesBottle: "no", bottleSize: null, dailyGoalOz });
+                        transitionToTracking();
                       }
                     }}
                     activeOpacity={0.75}
@@ -2038,7 +2275,9 @@ function WaterIntakeScreen({ onBack }: { onBack: () => void }) {
                         style={[waterStyles.pill, bottleSize === sz && waterStyles.pillSelected]}
                         onPress={() => {
                           setBottleSize(sz);
-                          transitionToTracking();   // size selected, setup complete
+                          // Save with explicit sz — bottleSize state hasn't flushed yet.
+                          saveSetup({ usesBottle: "yes", bottleSize: sz, dailyGoalOz });
+                          transitionToTracking();
                         }}
                         activeOpacity={0.75}
                       >
@@ -2082,7 +2321,7 @@ function WaterIntakeScreen({ onBack }: { onBack: () => void }) {
 
           )}
 
-        </Animated.View>
+        </Animated.View>}
 
       </ScrollView>
       </SafeAreaView>
@@ -3457,7 +3696,7 @@ const waterStyles = StyleSheet.create({
     fontSize: 14,
     color: "rgba(26,26,20,0.5)",
     marginTop: 4,
-    marginBottom: 24,
+    marginBottom: 16,   // was 24 — tighter gap between page subtitle and card
   },
 
   // ── personalisation / setup card ───────────────────────────────────────────
@@ -3565,17 +3804,12 @@ const waterStyles = StyleSheet.create({
     flexDirection: "row",
     alignItems: "center",
     justifyContent: "space-between",
-    marginBottom: 4,
+    marginBottom: 6,   // was 4 — a touch more air before the subhead
   },
   trackCardTitleRow: {
     flexDirection: "row",
     alignItems: "center",
     gap: 8,
-  },
-  trackEditLink: {
-    fontFamily: "Inter-Variable",
-    fontSize: 13,
-    color: "rgba(26,26,20,0.35)",
   },
   trackHeading: {
     fontFamily: "Chillax-SemiBold",
@@ -3587,7 +3821,7 @@ const waterStyles = StyleSheet.create({
     fontFamily: "Inter-Variable",
     fontSize: 13,
     color: "rgba(26,26,20,0.45)",
-    marginBottom: 24,
+    marginBottom: 18,   // was 24 — tighter but still breathes before controls
   },
 
   // stepper
@@ -3596,7 +3830,7 @@ const waterStyles = StyleSheet.create({
     alignItems: "center",
     justifyContent: "center",
     gap: 28,
-    marginBottom: 24,
+    marginBottom: 20,   // was 24 — aligns with quickAddRow.marginBottom
   },
   stepperButton: {
     width: 46,
@@ -3610,6 +3844,11 @@ const waterStyles = StyleSheet.create({
   },
   stepperButtonDisabled: {
     borderColor: "#eee",
+  },
+  // Shared press-state style applied via Pressable's style callback
+  btnPressed: {
+    opacity: 0.82,
+    transform: [{ scale: 0.97 }],
   },
   stepperCenter: {
     alignItems: "center",
@@ -3630,36 +3869,37 @@ const waterStyles = StyleSheet.create({
   },
 
   // total + progress
-  totalRow: {
-    flexDirection: "row",
-    alignItems: "baseline",
-    gap: 6,
-    marginTop: 16,
-    marginBottom: 12,
+  ozDisplay: {
+    alignItems: "center",
+    marginTop: 14,     // was 16 — fractionally tighter after divider
+    marginBottom: 14,  // was 16 — fractionally tighter before bar
   },
-  totalOz: {
-    fontFamily: "Chillax-SemiBold",
-    fontSize: 28,
+  ozHero: {
+    fontFamily: "Chillax-Bold",
+    fontSize: 44,      // was 52 — avoids competing with 52px stepperCount in bottle path;
+                       // still dominant in non-bottle path; works better at all sizes
     color: "#1A1A14",
-    letterSpacing: -0.6,
+    letterSpacing: -1.5,
+    lineHeight: 50,
+  },
+  ozGoalText: {
+    fontFamily: "Inter-Variable",
+    fontSize: 14,
+    color: "rgba(26,26,20,0.38)",
+    marginTop: 3,      // was 2 — slightly more separation from hero number
   },
   totalOzMet: {
     color: "#2e7d32",
   },
-  totalGoal: {
-    fontFamily: "Inter-Variable",
-    fontSize: 15,
-    color: "rgba(26,26,20,0.4)",
-  },
   progressTrack: {
-    height: 6,
-    borderRadius: 3,
+    height: 7,         // was 6 — slightly more substantial; still slim
+    borderRadius: 4,
     backgroundColor: "rgba(26,26,20,0.08)",
     overflow: "hidden",
   },
   progressFill: {
-    height: 6,
-    borderRadius: 3,
+    height: 7,
+    borderRadius: 4,
     backgroundColor: "#C48A1A",
   },
   progressFillMet: {
@@ -3669,9 +3909,41 @@ const waterStyles = StyleSheet.create({
     fontFamily: "Inter-Variable",
     fontSize: 12,
     color: "rgba(26,26,20,0.4)",
-    marginTop: 6,
   },
   progressLabelMet: {
     color: "#2e7d32",
+  },
+
+  // ── non-bottle quick-add controls ──────────────────────────────────────────
+  quickAddRow: {
+    flexDirection: "row",
+    gap: 8,
+    marginBottom: 20,   // matches stepperRow.marginBottom
+  },
+  quickAddButton: {
+    flex: 1,
+    paddingVertical: 13,   // was 12 — slightly taller tap target
+    borderRadius: 14,
+    backgroundColor: "rgba(26,26,20,0.04)",
+    borderWidth: 1,
+    borderColor: "rgba(26,26,20,0.08)",   // subtle border for definition on any bg
+    alignItems: "center",
+  },
+  quickAddText: {
+    fontFamily: "Chillax-Medium",
+    fontSize: 14,
+    color: "#1A1A14",
+    letterSpacing: -0.1,
+  },
+  progressFooterRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "space-between",
+    marginTop: 8,      // was 6 — a bit more space after the progress bar
+  },
+  resetLink: {
+    fontFamily: "Inter-Variable",
+    fontSize: 12,
+    color: "rgba(26,26,20,0.35)",
   },
 });
