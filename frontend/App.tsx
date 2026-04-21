@@ -1847,6 +1847,87 @@ const BOTTLE_SIZES_OZ      = [12, 16, 20, 24, 32, 40, 64];
 const DAILY_GOAL_OPTIONS_OZ = [32, 48, 64, 80, 96, 128];
 const QUICK_ADD_OZ          = [8, 12, 16, 24];
 
+/**
+ * Compute the hydration streak from a list of daily log rows.
+ *
+ * A streak is the number of consecutive calendar days, counting backward
+ * from today, where total_oz >= goal_oz_snapshot.  A missing calendar date
+ * in the rows set counts as a break — rows are NOT assumed to be consecutive
+ * just because they are adjacent in the array.
+ *
+ * Uses local-time date helpers (formatDateToLocalYYYYMMDD /
+ * parseDateStringToLocalDate) so the boundary matches the device clock,
+ * consistent with how localToday() works everywhere else.
+ */
+function computeHydrationStreak(
+  rows: { log_date: string; total_oz: number; goal_oz_snapshot: number }[]
+): number {
+  // Build a Set of dates where the goal was met — O(n) lookup below.
+  const metDates = new Set(
+    rows
+      .filter(r => (r.total_oz ?? 0) >= (r.goal_oz_snapshot ?? 1))
+      .map(r => r.log_date)
+  );
+
+  let count = 0;
+  // Walk backward through calendar dates starting from today.
+  const cursor = parseDateStringToLocalDate(localToday());
+  while (true) {
+    const dateStr = formatDateToLocalYYYYMMDD(cursor);
+    if (!metDates.has(dateStr)) break;   // missing OR goal not met → streak ends
+    count++;
+    cursor.setDate(cursor.getDate() - 1);
+  }
+  return count;
+}
+
+/** One slot in the 7-day chart model. */
+type WeekBarDatum = {
+  dateStr:  string;   // YYYY-MM-DD
+  dayLabel: string;   // single letter: M T W T F S S
+  totalOz:  number;
+  goalMet:  boolean;
+  hasData:  boolean;  // false → missing row (render muted bar)
+};
+
+/**
+ * Build the 7-day chart dataset, always covering exactly the last 7 calendar
+ * days (today through 6 days ago).  Database rows are merged by date; any day
+ * without a row gets totalOz = 0 / goalMet = false / hasData = false.
+ * Bar heights are relative to the maximum totalOz across the window so the
+ * tallest bar always fills the track — caller can multiply by chart height.
+ */
+function buildWeekChartData(
+  rows: { log_date: string; total_oz: number; goal_oz_snapshot: number }[]
+): { data: WeekBarDatum[]; maxOz: number } {
+  // Map existing rows by date for O(1) lookup.
+  const byDate = new Map(rows.map(r => [r.log_date, r]));
+
+  const DAY_LETTERS = ["S", "M", "T", "W", "T", "F", "S"]; // getDay() → 0=Sun
+
+  const data: WeekBarDatum[] = [];
+  const cursor = parseDateStringToLocalDate(localToday());
+
+  for (let i = 0; i < 7; i++) {
+    const dateStr = formatDateToLocalYYYYMMDD(cursor);
+    const row     = byDate.get(dateStr);
+    data.push({
+      dateStr,
+      dayLabel: DAY_LETTERS[cursor.getDay()],
+      totalOz:  row ? (row.total_oz ?? 0) : 0,
+      goalMet:  row ? (row.total_oz ?? 0) >= (row.goal_oz_snapshot ?? 1) : false,
+      hasData:  !!row,
+    });
+    cursor.setDate(cursor.getDate() - 1);
+  }
+
+  // Oldest-first so the chart reads left → right chronologically.
+  data.reverse();
+
+  const maxOz = Math.max(...data.map(d => d.totalOz), 1); // floor at 1 to avoid /0
+  return { data, maxOz };
+}
+
 function WaterIntakeScreen({ onBack }: { onBack: () => void }) {
   const [usesBottle, setUsesBottle]     = useState<"yes" | "no" | null>(null);
   const [bottleSize, setBottleSize]     = useState<number | null>(null);
@@ -1856,6 +1937,8 @@ function WaterIntakeScreen({ onBack }: { onBack: () => void }) {
   const [showTracking, setShowTracking] = useState(false);
   const [setupLoaded, setSetupLoaded]   = useState(false);   // gates render until storage is read
   const [userId, setUserId]             = useState<string | null>(null);
+  const [streak, setStreak]             = useState<number>(0);
+  const [weekData, setWeekData]         = useState<WeekBarDatum[]>([]);
   const cardOpacity = useRef(new Animated.Value(1)).current;
 
   // Bottle-path derived (unchanged)
@@ -1868,6 +1951,52 @@ function WaterIntakeScreen({ onBack }: { onBack: () => void }) {
   const directGoalMet = directOz > 0 && directOz >= dailyGoalOz;
 
   // ── Hydration persistence (Supabase) ───────────────────────────────────────
+
+  /**
+   * Fetch the last 30 hydration_daily_logs rows for `uid`, compute the streak,
+   * and update the `streak` state.  Fire-and-forget; failures leave streak at 0.
+   * Accepts the user-id explicitly so callers don't need to wait for the
+   * `userId` state to flush before calling (avoids stale-closure timing issues).
+   */
+  const fetchStreak = async (uid: string) => {
+    try {
+      const { data: rows } = await supabase
+        .from("hydration_daily_logs")
+        .select("log_date, total_oz, goal_oz_snapshot")
+        .eq("user_id", uid)
+        .order("log_date", { ascending: false })
+        .limit(30);
+      if (rows) setStreak(computeHydrationStreak(rows));
+    } catch {
+      // Silently ignore — streak stays at whatever it was.
+    }
+  };
+
+  /**
+   * Fetch the last 7 days of hydration_daily_logs for `uid`, shape the data
+   * into a complete 7-slot chart model (missing days filled with zeros), and
+   * update `weekData` state.  Fire-and-forget; failures leave the chart empty.
+   */
+  const fetchWeekChart = async (uid: string) => {
+    try {
+      // Calculate the date 6 days ago so we can filter server-side.
+      const cutoff = parseDateStringToLocalDate(localToday());
+      cutoff.setDate(cutoff.getDate() - 6);
+      const cutoffStr = formatDateToLocalYYYYMMDD(cutoff);
+
+      const { data: rows } = await supabase
+        .from("hydration_daily_logs")
+        .select("log_date, total_oz, goal_oz_snapshot")
+        .eq("user_id", uid)
+        .gte("log_date", cutoffStr)
+        .order("log_date", { ascending: false });
+
+      const { data } = buildWeekChartData(rows ?? []);
+      setWeekData(data);
+    } catch {
+      // Silently ignore — chart stays empty / unchanged.
+    }
+  };
 
   /**
    * Upsert the user's hydration preferences row.
@@ -1913,6 +2042,10 @@ function WaterIntakeScreen({ onBack }: { onBack: () => void }) {
           .eq("user_id", userId)
           .eq("log_date", today);
       }
+
+      // Refresh streak and chart — goal change may flip whether today counts.
+      fetchStreak(userId);
+      fetchWeekChart(userId);
     } catch {
       // Silently ignore — the UI keeps working.
     }
@@ -1942,6 +2075,10 @@ function WaterIntakeScreen({ onBack }: { onBack: () => void }) {
         goal_oz_snapshot:  currentDailyGoal,
         updated_at:        new Date().toISOString(),
       }, { onConflict: "user_id,log_date" });
+
+      // Refresh streak and chart after every intake change.
+      fetchStreak(userId);
+      fetchWeekChart(userId);
     } catch {
       // Silently ignore.
     }
@@ -1991,6 +2128,10 @@ function WaterIntakeScreen({ onBack }: { onBack: () => void }) {
             }
 
             setShowTracking(true); // skip setup, open directly in tracking
+
+            // Load streak and week chart in parallel alongside the rest of the data.
+            fetchStreak(user.id);
+            fetchWeekChart(user.id);
           }
         }
       } catch {
@@ -2322,6 +2463,92 @@ function WaterIntakeScreen({ onBack }: { onBack: () => void }) {
           )}
 
         </Animated.View>}
+
+        {/* ── Hydration streak card — only visible in tracking mode ─────────── */}
+        {setupLoaded && showTracking && (
+          <View style={waterStyles.streakCard}>
+            <View style={waterStyles.streakHeaderRow}>
+              <Ionicons name="flame-outline" size={17} color="#C48A1A" />
+              <Text style={waterStyles.streakHeading}>Hydration streak</Text>
+            </View>
+            {streak > 0 ? (
+              <>
+                <Text style={waterStyles.streakCount}>🔥 {streak} {streak === 1 ? "day" : "days"}</Text>
+                <Text style={waterStyles.streakBody}>
+                  You've hit your goal {streak} {streak === 1 ? "day" : "days"} in a row
+                </Text>
+              </>
+            ) : (
+              <>
+                <Text style={waterStyles.streakCount}>No streak yet</Text>
+                <Text style={waterStyles.streakBody}>Hit your goal today to start one</Text>
+              </>
+            )}
+          </View>
+        )}
+
+        {/* ── Last 7 days chart card ────────────────────────────────────────── */}
+        {setupLoaded && showTracking && (() => {
+          const CHART_HEIGHT = 88; // px — height of the bar track
+          const hasAnyData   = weekData.some(d => d.hasData);
+          const maxOz        = Math.max(...weekData.map(d => d.totalOz), 1);
+
+          return (
+            <View style={waterStyles.weekCard}>
+              {/* Header */}
+              <View style={waterStyles.weekHeaderRow}>
+                <Ionicons name="bar-chart-outline" size={17} color="#C48A1A" />
+                <Text style={waterStyles.weekHeading}>Last 7 days</Text>
+              </View>
+              <Text style={waterStyles.weekSubhead}>Your hydration over the past week</Text>
+
+              {/* Bar chart */}
+              <View style={[waterStyles.weekChartTrack, { height: CHART_HEIGHT }]}>
+                {(weekData.length === 7 ? weekData : Array(7).fill(null)).map((d: WeekBarDatum | null, i) => {
+                  const isToday  = d?.dateStr === localToday();
+                  const fillH    = d && d.totalOz > 0
+                    ? Math.max(4, Math.round((d.totalOz / maxOz) * CHART_HEIGHT))
+                    : 4; // minimum nub so the bar slot is never invisible
+
+                  const barColor = !d || !d.hasData
+                    ? "rgba(26,26,20,0.08)"           // missing — very muted
+                    : d.goalMet
+                      ? "#2e7d32"                     // goal met — green
+                      : "#C48A1A";                    // partial — gold
+
+                  return (
+                    <View key={i} style={waterStyles.weekBarSlot}>
+                      {/* bar track (full height, always visible as background) */}
+                      <View style={[waterStyles.weekBarTrack, { height: CHART_HEIGHT }]}>
+                        {/* filled portion — bottom-aligned via absolute bottom:0 */}
+                        <View
+                          style={[
+                            waterStyles.weekBarFill,
+                            { height: fillH, backgroundColor: barColor },
+                          ]}
+                        />
+                      </View>
+                      {/* day label */}
+                      <Text style={[
+                        waterStyles.weekDayLabel,
+                        isToday && waterStyles.weekDayLabelToday,
+                      ]}>
+                        {d?.dayLabel ?? "·"}
+                      </Text>
+                    </View>
+                  );
+                })}
+              </View>
+
+              {/* Empty state helper */}
+              {!hasAnyData && (
+                <Text style={waterStyles.weekEmptyText}>
+                  Start tracking today to build your weekly hydration view
+                </Text>
+              )}
+            </View>
+          );
+        })()}
 
       </ScrollView>
       </SafeAreaView>
@@ -3945,5 +4172,109 @@ const waterStyles = StyleSheet.create({
     fontFamily: "Inter-Variable",
     fontSize: 12,
     color: "rgba(26,26,20,0.35)",
+  },
+
+  // ── last 7 days chart card ─────────────────────────────────────────────────
+  weekCard: {
+    marginTop: 12,
+    borderRadius: 16,
+    paddingHorizontal: 20,  // was 18 — slightly wider side margins
+    paddingTop: 22,         // was 18 — more air above the title
+    paddingBottom: 22,      // was 18 — more air below the labels
+    backgroundColor: "rgba(255,255,255,0.75)",
+    borderWidth: 1,
+    borderColor: "rgba(196,138,26,0.18)",
+  },
+  weekHeaderRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 6,
+    marginBottom: 5,        // was 2 — more separation between title and subtitle
+  },
+  weekHeading: {
+    fontFamily: "Chillax-Medium",
+    fontSize: 14,
+    color: "#1A1A14",
+    letterSpacing: -0.1,
+  },
+  weekSubhead: {
+    fontFamily: "Inter-Variable",
+    fontSize: 12,
+    color: "rgba(26,26,20,0.4)",
+    marginBottom: 24,       // was 20 — clearer break between subtitle and chart
+  },
+  weekChartTrack: {
+    flexDirection: "row",
+    alignItems: "flex-end",
+    gap: 8,                 // was 5 — clearer separation between bars
+  },
+  weekBarSlot: {
+    flex: 1,
+    alignItems: "center",
+    gap: 7,                 // was 5 — more breathing room between bar bottom and label
+  },
+  weekBarTrack: {
+    width: "100%",
+    borderRadius: 5,
+    backgroundColor: "rgba(26,26,20,0.05)",
+    overflow: "hidden",
+    justifyContent: "flex-end",  // bars grow from the bottom
+  },
+  weekBarFill: {
+    width: "100%",
+    borderRadius: 5,
+  },
+  weekDayLabel: {
+    fontFamily: "Inter-Variable",
+    fontSize: 11,
+    color: "rgba(26,26,20,0.35)",
+  },
+  weekDayLabelToday: {
+    color: "#C48A1A",
+    fontFamily: "Chillax-Medium",
+  },
+  weekEmptyText: {
+    fontFamily: "Inter-Variable",
+    fontSize: 12,
+    color: "rgba(26,26,20,0.38)",
+    textAlign: "center",
+    marginTop: 14,          // was 10 — more separation below empty-state bars
+    lineHeight: 17,
+  },
+
+  // ── hydration streak card ──────────────────────────────────────────────────
+  streakCard: {
+    marginTop: 12,
+    borderRadius: 16,
+    padding: 18,
+    backgroundColor: "rgba(255,255,255,0.75)",
+    borderWidth: 1,
+    borderColor: "rgba(196,138,26,0.18)",
+  },
+  streakHeaderRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 6,
+    marginBottom: 10,
+  },
+  streakHeading: {
+    fontFamily: "Chillax-Medium",
+    fontSize: 14,
+    color: "#1A1A14",
+    letterSpacing: -0.1,
+  },
+  streakCount: {
+    fontFamily: "Chillax-Bold",
+    fontSize: 26,
+    color: "#1A1A14",
+    letterSpacing: -0.8,
+    lineHeight: 30,
+    marginBottom: 4,
+  },
+  streakBody: {
+    fontFamily: "Inter-Variable",
+    fontSize: 13,
+    color: "rgba(26,26,20,0.45)",
+    lineHeight: 18,
   },
 });
