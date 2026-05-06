@@ -19,3 +19,4 @@ dist/
 
 # Logs
 *.log
+jobs.db
