@@ -128,10 +128,12 @@ def route_food_query(query: str) -> dict:
             final = {**result, "confidence": conf}
             log_result(query, "packaged_product", conf, final.get("calories", 0), final.get("name", ""))
             return final
-        # Service miss — fall back to nutrition engine at low confidence.
-        # Pass size_modifier so "large bag of X" scales correctly if OFF missed.
-        log_rejection(query, "off_packaged_miss_fallback_to_usda")
-        result = get_nutrition(query, size_modifier=parsed.size_modifier)
+        # Service miss — use rule-based estimate at low confidence.
+        # Skip USDA here: SR Legacy may contain per-100g branded candy/product
+        # data that overestimates per-serving calories for the wrong product.
+        # A rule-based estimate is more representative for a branded query miss.
+        log_rejection(query, "off_packaged_miss_fallback_to_rule_based")
+        result = get_nutrition(query, size_modifier=parsed.size_modifier, rule_based_only=True)
         final  = {**result, "source_type": "packaged_guess", "confidence": 0.35}
         log_result(query, "packaged_guess", 0.35, final.get("calories", 0), final.get("name", ""))
         return final
@@ -146,10 +148,11 @@ def route_food_query(query: str) -> dict:
             final = {**result, "confidence": conf}
             log_result(query, "restaurant", conf, final.get("calories", 0), final.get("name", ""))
             return final
-        # Service miss — generic estimate only as last resort, clearly labelled.
-        # Pass size_modifier so "large fries" scales the fallback estimate.
-        log_rejection(query, "off_restaurant_miss_fallback_to_usda")
-        result = get_nutrition(query, size_modifier=parsed.size_modifier)
+        # Service miss — use rule-based estimate at low confidence.
+        # Skip USDA for the same reason as BRANDED_PACKAGED: restaurant query
+        # misses should return category estimates, not per-100g USDA ingredient data.
+        log_rejection(query, "off_restaurant_miss_fallback_to_rule_based")
+        result = get_nutrition(query, size_modifier=parsed.size_modifier, rule_based_only=True)
         final  = {**result, "source_type": "restaurant_guess", "confidence": 0.35}
         log_result(query, "restaurant_guess", 0.35, final.get("calories", 0), final.get("name", ""))
         return final
@@ -179,11 +182,22 @@ def route_food_query(query: str) -> dict:
     # Phase 2: use the parser's core_food as the USDA search term so that
     # "2 eggs" searches for "eggs", and "2.5 cups rice" searches for "rice".
     # Phase 4: also pass size_modifier so "large latte" scales the result.
+    #
+    # prefer_generic=True: restrict the USDA request to Foundation / SR Legacy /
+    # Survey data types, excluding Branded entries.  USDA's text-search ranks
+    # exact phrase matches first, so branded products ("Chicken Breast") routinely
+    # appear before the relevant Foundation entry ("Chicken, broilers …, breast,
+    # meat only, raw").  All Branded items score ≤ -1 in our internal scorer and
+    # fall below CONFIDENCE_THRESHOLD, triggering an unnecessary rule-based
+    # fallback even though accurate scientific data exists in the database.
+    # Filtering at the API level ensures the pool only contains entries that our
+    # scorer can actually use.
     search_query = parsed.core_food if parsed.core_food else query
     result = get_nutrition(
         search_query,
         quantity=parsed.quantity,
         size_modifier=parsed.size_modifier,
+        prefer_generic=True,
     )
     # Display name: keep the full original input ("2 eggs", not just "eggs").
     result["name"] = parsed.clean

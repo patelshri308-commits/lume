@@ -161,20 +161,6 @@ def score_candidate(product_name: str, brand: str | None, query: str) -> int:
     if not query_tokens:
         return 0
 
-    # ── Exact / prefix name match bonus ─────────────────────────────────────
-    # When the product name (or brand+name) is identical to the query — or
-    # starts with the query — reward it strongly so it beats partial matches
-    # even when the coverage tier would tie.
-    #  +25: product name is an exact or case-only match for the query
-    #  +12: product name starts with the full query text (query is a prefix)
-    # The check is done on lowercased strings to be case-insensitive.
-    if name_lower.strip() == q_lower.strip():
-        score = 25   # override — set base, coverage bonuses still add below
-    elif combined.strip() == q_lower.strip():
-        score = 25
-    elif name_lower.startswith(q_lower.strip()):
-        score += 12
-
     # ── Forward coverage ─────────────────────────────────────────────────────
     n_matched = sum(1 for t in query_tokens if t in combined_tokens)
     coverage  = n_matched / len(query_tokens)
@@ -199,6 +185,27 @@ def score_candidate(product_name: str, brand: str | None, query: str) -> int:
             if qt in brand_tokens:
                 score += 20
                 break   # at most once
+
+    # ── Exact / prefix name match bonus (additive) ───────────────────────────
+    # Placed after coverage+brand so it stacks on top of the base score rather
+    # than being overwritten by the coverage assignment.
+    #
+    # When all query tokens appear in a product name ("coverage = 1.0"), many
+    # different variants tie at 60.  This bonus breaks those ties in favour of
+    # the simplest/most canonical form:
+    #   +25: product name exactly matches the query (case-insensitive)
+    #   +20: brand+name combined exactly matches the query
+    #   +10: product name *starts with* the query (query is a prefix of the name)
+    #
+    # Example: query "hershey bar"
+    #   "Hershey Bar"                 → 60 + 20 (brand) + 25 (exact) = 105
+    #   "Hershey's Milk Chocolate Bar"→ 60 + 20 (brand) + 0          =  80
+    if name_lower.strip() == q_lower.strip():
+        score += 25
+    elif combined.strip() == q_lower.strip():
+        score += 20
+    elif name_lower.startswith(q_lower.strip()):
+        score += 10
 
     # ── Excess token penalty ─────────────────────────────────────────────────
     query_token_set  = set(query_tokens)

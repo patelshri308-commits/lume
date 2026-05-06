@@ -11,7 +11,11 @@ USDA_API_KEY    = os.getenv("USDA_API_KEY", "DEMO_KEY")
 USDA_SEARCH_URL = "https://api.nal.usda.gov/fdc/v1/foods/search"
 
 # USDA identifies each nutrient by a fixed numeric ID.
-NUTRIENT_ID_CALORIES = 1008  # Energy (kcal)
+NUTRIENT_ID_CALORIES = 1008  # Energy (kcal) — older USDA / Branded / SR Legacy
+# Foundation foods added after ~2020 store energy under Atwater-factor IDs
+# instead of 1008.  We try all three and take the first non-zero value.
+_ENERGY_NUTRIENT_IDS = (1008, 2047, 2048)
+
 NUTRIENT_ID_PROTEIN  = 1003  # Protein
 NUTRIENT_ID_CARBS    = 1005  # Carbohydrate, by difference
 NUTRIENT_ID_FAT      = 1004  # Total lipid (fat)
@@ -25,6 +29,16 @@ DATA_TYPE_SCORE = {
     "Survey (FNDDS)":  10,   # OK:   used in dietary surveys
     "Branded":        -30,   # Avoid: manufacturer data, often processed products
 }
+
+# Non-branded USDA data types used when the caller requests generic-food data.
+# Passing these as a `dataType` filter to the USDA search endpoint prevents
+# the API from returning manufacturer-submitted branded entries in the result
+# pool.  This matters because USDA's full-text search ranks exact phrase matches
+# first: a branded product named "Chicken Breast" outranks the Foundation entry
+# "Chicken, broilers or fryers, breast, meat only, raw" purely on text score,
+# even though our internal scorer would prefer the Foundation entry.  Filtering
+# at the API level ensures the pool only contains scoreable scientific data.
+_GENERIC_DATA_TYPES: list[str] = ["Foundation", "SR Legacy", "Survey (FNDDS)"]
 
 # Minimum score a candidate must reach before we trust it as a real match.
 # A Foundation item with zero query-word matches scores at most 29 (30 − len//10).
@@ -115,6 +129,25 @@ def _extract_nutrient(nutrients: list, nutrient_id: int) -> float:
     for nutrient in nutrients:
         if nutrient.get("nutrientId") == nutrient_id:
             return round(nutrient.get("value", 0), 1)
+    return 0.0
+
+
+def _extract_calories(nutrients: list) -> float:
+    """
+    Extract energy (kcal) tolerating the two nutrient-ID conventions used by
+    different USDA data types:
+
+      1008 — Energy (kcal)                 Branded, SR Legacy, older Foundation
+      2047 — Energy (Atwater General)      Foundation foods added after ~2020
+      2048 — Energy (Atwater Specific)     Some Foundation / experimental entries
+
+    Returns the first non-zero value found across all three IDs so that
+    Foundation chicken breast data (which uses 2047) is not silently zeroed.
+    """
+    for nid in _ENERGY_NUTRIENT_IDS:
+        val = _extract_nutrient(nutrients, nid)
+        if val:
+            return val
     return 0.0
 
 
@@ -400,22 +433,48 @@ def _extract_leading_quantity(query: str) -> int:
 # Single-serving lookup (internal) + public wrapper with quantity scaling
 # ---------------------------------------------------------------------------
 
-def _fetch_nutrition(query: str) -> dict:
+def _fetch_nutrition(query: str, prefer_generic: bool = False) -> dict:
     """
     Fetch single-serving nutrition data from USDA FoodData Central.
     Scores the candidates and picks the best generic match.
     Falls back to rule-based estimates if the API fails or returns no results.
+
+    prefer_generic flag
+    ───────────────────
+    When True, the USDA request includes a dataType filter that restricts
+    results to Foundation, SR Legacy, and Survey (FNDDS) — excluding all
+    Branded (manufacturer-submitted) entries from the result pool.
+
+    Use this for GENERIC_FOOD queries (whole foods, plain ingredients) where:
+    • Branded entries dominate USDA's text-search results due to exact phrase
+      matching ("Chicken Breast" product wins over "Chicken, broilers …, breast"),
+      and
+    • All Branded entries score ≤ -1 in our internal scorer, falling below
+      CONFIDENCE_THRESHOLD and forcing an unnecessary fallback to rule-based
+      estimates even though USDA has accurate Foundation data available.
+
+    Leave False (default) for fallback paths from branded/restaurant routing
+    where the caller explicitly wants any available USDA data as a last resort.
     """
     query = _normalize_query(query)
+
+    # Read the key at call time (not module-level) so that test fixtures or
+    # conftest.py that load .env after import still pick up the real key.
+    api_key = os.getenv("USDA_API_KEY", "DEMO_KEY")
+
+    params: dict = {
+        "query":    query,
+        "api_key":  api_key,
+        "pageSize": 10,   # Fetch a pool of candidates so we can rank them
+    }
+    if prefer_generic:
+        # Restrict to scientific databases; exclude manufacturer-submitted entries.
+        params["dataType"] = _GENERIC_DATA_TYPES
 
     try:
         response = httpx.get(
             USDA_SEARCH_URL,
-            params={
-                "query":    query,
-                "api_key":  USDA_API_KEY,
-                "pageSize": 10,   # Fetch a pool of candidates so we can rank them
-            },
+            params=params,
             timeout=5.0,
         )
         response.raise_for_status()
@@ -451,7 +510,7 @@ def _fetch_nutrition(query: str) -> dict:
             return {**_get_fallback_nutrition(query), "is_estimated": True}
 
         nutrients = best_food.get("foodNutrients", [])
-        calories  = _extract_nutrient(nutrients, NUTRIENT_ID_CALORIES)
+        calories  = _extract_calories(nutrients)
 
         # Sanity check: for known meal/drink categories, reject USDA results
         # whose calorie count is implausibly low.  This catches cases where a
@@ -491,7 +550,13 @@ def _fetch_nutrition(query: str) -> dict:
             "source_name":  best_food.get("description", ""),  # USDA item description
         }
 
-    except Exception:
+    except Exception as exc:
+        api_key_type = "DEMO_KEY" if os.getenv("USDA_API_KEY", "DEMO_KEY") == "DEMO_KEY" else "real_key"
+        log_rejection(query, "usda_exception", {
+            "type":         type(exc).__name__,
+            "detail":       str(exc)[:300],
+            "api_key_type": api_key_type,
+        })
         return {**_get_fallback_nutrition(query), "is_estimated": True}
 
 
@@ -526,6 +591,8 @@ def get_nutrition(
     *,
     quantity: float = 0.0,
     size_modifier: str | None = None,
+    prefer_generic: bool = False,
+    rule_based_only: bool = False,
 ) -> dict:
     """
     Public entry point called by the router and composite service.
@@ -552,6 +619,24 @@ def get_nutrition(
     scale factor, so "2 large lattes" uses effective_qty = 2 × 1.35 = 2.70.
     Unrecognised size words default to 1.0× (no change).
 
+    prefer_generic keyword argument
+    ────────────────────────────────
+    When True, restricts the USDA query to Foundation / SR Legacy / Survey
+    data types, excluding manufacturer-submitted Branded entries.  Pass this
+    for GENERIC_FOOD queries where branded product names ("Chicken Breast")
+    crowd out the scientific database entries in USDA's text-search ranking.
+    Defaults to False so fallback paths from branded/restaurant routing are
+    unaffected.
+
+    rule_based_only keyword argument
+    ─────────────────────────────────
+    When True, skip the USDA HTTP fetch entirely and return the rule-based
+    estimate directly.  Use this for BRANDED_PACKAGED / RESTAURANT_ITEM miss
+    paths where the primary source (OFF) failed and USDA data would be either
+    per-100g for a different product (e.g. SR Legacy candy entry for a specific
+    brand miss) or otherwise misleading.  The rule-based result is always
+    tagged `is_estimated=True`.
+
     Always stamps a "name" field so every response carries the full shape
     expected by POST /logs.  The caller (router) may override "name" afterward
     with the original user-facing text if desired.
@@ -560,7 +645,10 @@ def get_nutrition(
     size_mult = _SIZE_MULTIPLIERS.get(size_modifier.lower(), 1.0) if size_modifier else 1.0
     eff_qty   = qty * size_mult
 
-    result = _fetch_nutrition(query)
+    if rule_based_only:
+        result = {**_get_fallback_nutrition(_normalize_query(query) or query), "is_estimated": True}
+    else:
+        result = _fetch_nutrition(query, prefer_generic=prefer_generic)
 
     # Normalize the query for display: strips leading counts and size words.
     result["name"] = _normalize_query(query) or query.strip()

@@ -1,8 +1,9 @@
+import re
 import httpx
 
 # Reuse macro extraction helpers from barcode_service — same provider, same
 # nutriments structure, no need to duplicate the logic.
-from app.services.barcode_service import _get_macros, _safe_float
+from app.services.barcode_service import _get_macros, _nutrition_tier, _safe_float
 from app.services.candidate_scorer import score_candidate
 from app.services.debug_logger import log_off_candidates, log_rejection
 
@@ -29,10 +30,39 @@ MIN_SCORE = 10
 # Internal helpers
 # ---------------------------------------------------------------------------
 
+def _parse_serving_grams(serving_size: str) -> float | None:
+    """
+    Try to extract a gram value from an OFF serving_size string.
+
+    Handles common formats:
+      "43 g"  "43g"  "1.55 oz"  "1.55oz"  "30 ml" (ml ≈ g for food density≈1)
+
+    Returns None when the string is unparseable or the value is implausible.
+    """
+    s = serving_size.lower().strip()
+    # Direct grams / ml
+    m = re.search(r"([\d.]+)\s*(g|ml|gr)\b", s)
+    if m:
+        val = float(m.group(1))
+        return val if 1 < val < 2000 else None
+    # Ounces → grams
+    m = re.search(r"([\d.]+)\s*oz\b", s)
+    if m:
+        val = float(m.group(1)) * 28.3495
+        return val if 1 < val < 2000 else None
+    return None
+
+
 def _normalize_product(product: dict) -> dict | None:
     """
     Normalize a single OFF product dict into Lume's nutrition shape.
     Returns None if the product lacks a name or usable calorie data.
+
+    When the OFF entry only provides per-100g nutrition (no per-serving values),
+    and the product includes a parseable serving size in grams, the per-100g
+    macros are scaled to that serving weight so calorie figures are per-item
+    rather than per-100g.  This prevents, e.g., a Hershey bar (43g) from
+    returning 490 cal (per-100g) instead of the correct ~211 cal per bar.
     """
     name = (
         product.get("product_name")
@@ -49,8 +79,19 @@ def _normalize_product(product: dict) -> dict | None:
 
     calories, protein, carbs, fat = macros
 
-    brand   = (product.get("brands")       or "").strip() or None
-    serving = (product.get("serving_size") or "").strip() or None
+    brand        = (product.get("brands")       or "").strip() or None
+    serving_str  = (product.get("serving_size") or "").strip() or None
+
+    # Scale per-100g macros to per-serving when the serving size is parseable.
+    tier = _nutrition_tier(nutriments)
+    if tier == "_100g" and serving_str:
+        serving_g = _parse_serving_grams(serving_str)
+        if serving_g:
+            scale    = serving_g / 100.0
+            calories = calories * scale
+            protein  = protein  * scale
+            carbs    = carbs    * scale
+            fat      = fat      * scale
 
     return {
         "name":                name,
@@ -62,7 +103,7 @@ def _normalize_product(product: dict) -> dict | None:
         "source_type":         "packaged_product",
         "source_name":         "Open Food Facts",
         "brand_name":          brand,
-        "serving_description": serving,
+        "serving_description": serving_str,
     }
 
 
