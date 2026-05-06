@@ -37,10 +37,14 @@ type NutritionResult = {
   carbs:        number;
   fat:          number;
   is_estimated: boolean;
-  source_type?:         string;   // "barcode" for scanned results, absent for text search
+  source_type?:         string;   // e.g. "generic", "barcode", "packaged_product", "restaurant"
+  confidence?:          number;   // 0.0–1.0 from backend query router
   brand_name?:          string | null;
   serving_description?: string | null;
 };
+
+// Subset of NutritionResult fields stored in-memory per log entry (session only).
+type FoodSourceMeta = Pick<NutritionResult, "source_type" | "confidence" | "is_estimated" | "serving_description">;
 
 type FoodLogEntry = NutritionResult & { id: number; created_at: string };
 
@@ -200,6 +204,52 @@ function computeCalorieTarget(profile: UserProfile): number {
   return Math.round(Math.max(1200, targetCalories));
 }
 
+// ---------------------------------------------------------------------------
+// getSourceBadgeInfo — pure helper, no state.
+// Maps source_type + confidence + is_estimated to a display label and colors.
+// Returns null when there is nothing meaningful to show.
+// ---------------------------------------------------------------------------
+type BadgeInfo = { label: string; bg: string; fg: string };
+
+function getSourceBadgeInfo(meta: FoodSourceMeta): BadgeInfo | null {
+  const { source_type, confidence, is_estimated } = meta;
+
+  // Explicit estimates always shown, regardless of source.
+  if (is_estimated) {
+    return { label: "Estimated", bg: "rgba(160,160,160,0.14)", fg: "#888888" };
+  }
+
+  switch (source_type) {
+    case "barcode":
+      return { label: "Barcode scan", bg: "rgba(46,125,50,0.12)", fg: "#2e7d32" };
+    case "packaged_product":
+      return { label: "Packaged food", bg: "rgba(25,118,210,0.11)", fg: "#1565c0" };
+    case "restaurant":
+      return { label: "Restaurant data", bg: "rgba(25,118,210,0.11)", fg: "#1565c0" };
+    case "composite_meal":
+      return { label: "Composite meal", bg: "rgba(123,31,162,0.10)", fg: "#6a1b9a" };
+    case "generic":
+    case "usda": {
+      const conf = confidence ?? 0;
+      if (conf >= 0.70) return { label: "USDA", bg: "rgba(227,213,23,0.18)", fg: "#7A7200" };
+      return { label: "USDA · Est.", bg: "rgba(160,160,160,0.14)", fg: "#888888" };
+    }
+    case "packaged_guess":
+    case "restaurant_guess":
+    case "ambiguous_estimate":
+      return { label: "Estimated", bg: "rgba(160,160,160,0.14)", fg: "#888888" };
+    default:
+      return null;
+  }
+}
+
+// Short inline label used in the logMessage feedback text (e.g. "Food logged · USDA").
+function getSourceShortLabel(meta: FoodSourceMeta): string | null {
+  const info = getSourceBadgeInfo(meta);
+  if (!info) return null;
+  return info.label;
+}
+
 // Thin shell — SafeAreaProvider must be an ancestor of any component that
 // calls useSafeAreaInsets(), so it lives here, above AppInner.
 export default function App() {
@@ -241,6 +291,9 @@ function AppInner() {
   const [isScannerOpen,  setIsScannerOpen]  = useState(false);
   const [scannedBarcode, setScannedBarcode] = useState<string | null>(null);
   const [cameraPermission, requestCameraPermission] = useCameraPermissions();
+  // Source metadata keyed by log entry ID — lives in-memory only (session).
+  // Used to show source badges on freshly logged entries; cleared on app reload.
+  const [foodMeta, setFoodMeta] = useState<Record<number, FoodSourceMeta>>({});
   const scanLockRef  = useRef(false);                          // prevents duplicate scan callbacks
   const sidebarAnim  = useRef(new Animated.Value(0)).current;  // 0 = closed, 1 = open
   // Solar Bloom animated glow values — each loops 0→1→0 at a different duration
@@ -499,7 +552,7 @@ function AppInner() {
 
     if (!food) return;
     try {
-      await axios.post(
+      const logRes = await axios.post(
         `${API_URL}/logs`,
         {
           name:     food.name,
@@ -511,9 +564,24 @@ function AppInner() {
         },
         { headers: await getAuthHeaders() },
       );
+      // Store source metadata keyed by the new log entry's ID so the log
+      // card can display a source badge while the metadata is in memory.
+      const entryId: number | undefined = logRes.data?.entry?.id;
+      if (entryId != null) {
+        const meta: FoodSourceMeta = {
+          source_type:         food.source_type,
+          confidence:          food.confidence,
+          is_estimated:        food.is_estimated,
+          serving_description: food.serving_description,
+        };
+        setFoodMeta(prev => ({ ...prev, [entryId]: meta }));
+        const shortLabel = getSourceShortLabel(meta);
+        setLogMessage(shortLabel ? `Food logged · ${shortLabel}` : "Food logged");
+      } else {
+        setLogMessage("Food logged");
+      }
       setQuery("");      // clear input for next item
       Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
-      setLogMessage("Food logged");
       await loadSummary();
       await loadLogs();
       await loadWeekly();
@@ -736,7 +804,7 @@ function AppInner() {
         const res  = await axios.post(`${API_URL}/food/barcode`, { barcode });
         const food = res.data as NutritionResult;
         try {
-          await axios.post(
+          const logRes = await axios.post(
             `${API_URL}/logs`,
             {
               name:     food.name,
@@ -748,6 +816,18 @@ function AppInner() {
             },
             { headers: await getAuthHeaders() },
           );
+          const entryId: number | undefined = logRes.data?.entry?.id;
+          if (entryId != null) {
+            setFoodMeta(prev => ({
+              ...prev,
+              [entryId]: {
+                source_type:         food.source_type,
+                confidence:          food.confidence,
+                is_estimated:        food.is_estimated,
+                serving_description: food.serving_description,
+              },
+            }));
+          }
           Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
           setLogMessage(`Logged: ${food.name}`);
           await loadSummary();
@@ -1160,9 +1240,14 @@ function AppInner() {
                       <Text style={styles.logEntryName}>{entry.name}</Text>
                     </View>
                     {expandedLogIds.has(entry.id) && (
-                      <Text style={styles.logEntryMacros}>
-                        {entry.calories} kcal · {entry.protein}g protein · {entry.carbs}g carbs · {entry.fat}g fat
-                      </Text>
+                      <>
+                        <Text style={styles.logEntryMacros}>
+                          {entry.calories} kcal · {entry.protein}g protein · {entry.carbs}g carbs · {entry.fat}g fat
+                        </Text>
+                        {foodMeta[entry.id] && (
+                          <SourceBadgeRow meta={foodMeta[entry.id]} />
+                        )}
+                      </>
                     )}
                     <Text style={styles.logEntryTime}>
                       {new Date(entry.created_at + "Z").toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}
@@ -1397,6 +1482,28 @@ function AuthShell({ glowOuter, glowMid, glowCore, glowShimmer, children }: Auth
         {children}
       </KeyboardAvoidingView>
     </SafeAreaView>
+  );
+}
+
+// ---------------------------------------------------------------------------
+// SourceBadgeRow — shows a small pill badge for a food's source/confidence,
+// plus serving context if available.  Renders nothing when there is no info.
+// ---------------------------------------------------------------------------
+function SourceBadgeRow({ meta }: { meta: FoodSourceMeta }) {
+  const info = getSourceBadgeInfo(meta);
+  const serving = meta.serving_description?.trim() || null;
+  if (!info && !serving) return null;
+  return (
+    <View style={styles.sourceBadgeRow}>
+      {info && (
+        <View style={[styles.sourceBadge, { backgroundColor: info.bg }]}>
+          <Text style={[styles.sourceBadgeText, { color: info.fg }]}>{info.label}</Text>
+        </View>
+      )}
+      {serving && (
+        <Text style={styles.servingDescription} numberOfLines={1}>{serving}</Text>
+      )}
+    </View>
   );
 }
 
@@ -3487,6 +3594,32 @@ const styles = StyleSheet.create({
     fontFamily: "Inter-Variable",
     color: "#bbb",
     marginTop: 2,
+  },
+  // Source badge row — sits between macros and timestamp
+  sourceBadgeRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    flexWrap: "wrap",
+    gap: 6,
+    marginTop: 5,
+    marginBottom: 1,
+  },
+  sourceBadge: {
+    borderRadius: 4,
+    paddingHorizontal: 6,
+    paddingVertical: 2,
+  },
+  sourceBadgeText: {
+    fontSize: 10,
+    fontFamily: "Inter-Variable",
+    fontWeight: "600",
+    letterSpacing: 0.2,
+  },
+  servingDescription: {
+    fontSize: 10,
+    fontFamily: "Inter-Variable",
+    color: "#aaa",
+    flexShrink: 1,
   },
   // Log entry action buttons (Edit + Delete stacked)
   logEntryActions: {
