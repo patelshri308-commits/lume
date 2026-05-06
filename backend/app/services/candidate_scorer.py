@@ -82,22 +82,30 @@ _VARIANT_MISMATCH_TERMS: dict[str, int] = {
     "spread":           20,
     "baking":           18,
     "cocoa":            15,   # "baking cocoa", "cocoa powder" — not a bar
+    "hot cocoa":        15,   # dry mix, not a candy bar
+    "baking chips":     18,   # baking ingredient, not a snack
+    "extract":          18,   # flavouring extract
     # Size variants — user did not ask for a reduced-size portion
     "miniatures":       15,
     "miniature":        15,
     "minis":            12,
+    "bites":            10,   # e.g. "Hershey's Bites" — smaller form
     "snack size":        8,
     "fun size":          8,
     "bite size":         8,
     "king size":         8,
+    "thins":             6,   # thinner/lighter version (Oreo Thins, etc.)
     # Multi-pack / variety — user asked for a single standard item
     "variety pack":     10,
+    "multipack":        10,
     "assorted":         10,
+    "mixed":             5,   # "mixed bag" style multi-flavour packs
     # Ingredient / flavour variants — lighter penalty; user may still want these
     # if they included the term in their query (check skips them if so)
     "almond":            8,
     "dark chocolate":    6,
     "white chocolate":   6,
+    "sugar free":        6,   # diet variant when user didn't ask for it
 }
 
 
@@ -152,6 +160,20 @@ def score_candidate(product_name: str, brand: str | None, query: str) -> int:
 
     if not query_tokens:
         return 0
+
+    # ── Exact / prefix name match bonus ─────────────────────────────────────
+    # When the product name (or brand+name) is identical to the query — or
+    # starts with the query — reward it strongly so it beats partial matches
+    # even when the coverage tier would tie.
+    #  +25: product name is an exact or case-only match for the query
+    #  +12: product name starts with the full query text (query is a prefix)
+    # The check is done on lowercased strings to be case-insensitive.
+    if name_lower.strip() == q_lower.strip():
+        score = 25   # override — set base, coverage bonuses still add below
+    elif combined.strip() == q_lower.strip():
+        score = 25
+    elif name_lower.startswith(q_lower.strip()):
+        score += 12
 
     # ── Forward coverage ─────────────────────────────────────────────────────
     n_matched = sum(1 for t in query_tokens if t in combined_tokens)

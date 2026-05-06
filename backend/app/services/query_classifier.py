@@ -86,34 +86,123 @@ _RESTAURANT_SIGNALS: frozenset[str] = frozenset({
 
 # Packaged / branded product name keywords.
 # Distinct from restaurant brands — these are consumer packaged goods.
+#
+# NOTE (Phase 1): Queries that match any signal here are routed to Open Food
+# Facts (packaged_product_service) instead of USDA, which has no branded data.
+# Add new brands here whenever a common branded query misroutes to USDA.
 _PACKAGED_SIGNALS: frozenset[str] = frozenset({
-    "oreo",
+    # ── Protein / energy bars ─────────────────────────────────────────────────
     "quest",
-    "clif", "rxbar", "larabar", "kind bar",
-    "gatorade",
-    "powerade",
-    "red bull",
-    "monster energy",
-    "cheez-it", "cheez it",
-    "doritos",
-    "pringles",
-    "lays",
-    "nature valley",
-    "nutella",
-    "pop tart", "pop-tart",
-    "twix", "snickers", "kit kat", "reese's", "reese",
-    "diet coke", "coke zero", "pepsi zero",
-    "vitaminwater",
+    "clif", "rxbar", "larabar", "kind bar", "rx bar",
     "built bar",
     "think thin",
     "one protein bar",
     "fiber one",
-    "special k",
     "kind protein",
-    "rx bar",
     "atkins bar",
     "premier protein",
+    "nugo",
+    "oatmega",
+    "fulfil",
+
+    # ── Chocolate / candy bars ────────────────────────────────────────────────
+    "hershey",                            # Hershey's bar, kisses, nuggets
+    "m&m", "m&ms",                        # M&M's (plain, peanut, etc.)
+    "milky way",
+    "3 musketeers",
+    "butterfinger",
+    "baby ruth",
+    "twix", "snickers", "kit kat",
+    "reese's", "reese",                   # Reese's cups / pieces
+    "york peppermint",
+    "almond joy", "mounds",
+    "100 grand",
+    "skor",
+    "heath bar",
+    "take 5",
+    "whatchamacallit",
+
+    # ── Gummies / hard candy ──────────────────────────────────────────────────
+    "skittles",
+    "starburst",
+    "jolly rancher",
+    "nerds",
+    "sour patch",
+    "swedish fish",
+    "haribo",
+    "trolli",
+
+    # ── Cookies / crackers ────────────────────────────────────────────────────
+    "oreo",
+    "chips ahoy",
+    "nutter butter",
+    "nilla wafer",
+    "golden oreo",
+    "ritz",
+    "wheat thins",
+    "triscuit",
+    "cheez-it", "cheez it",
+    "goldfish",
+    "nabisco",
+
+    # ── Chips / crisps ────────────────────────────────────────────────────────
+    "doritos",
+    "pringles",
+    "lays", "lay's",
+    "cheetos",
+    "fritos",
+    "ruffles",
+    "sun chips",
+    "funyuns",
+    "cape cod chips",
+
+    # ── Cereals ───────────────────────────────────────────────────────────────
+    "cheerios",
+    "frosted flakes",
+    "rice krispies",
+    "lucky charms",
+    "froot loops",
+    "cocoa puffs",
+    "cap'n crunch", "capn crunch",
+    "cocoa krispies",
+    "special k",
+    "nature valley",
+    "nutri grain",
+
+    # ── Spreads / condiments ──────────────────────────────────────────────────
+    "nutella",
+    "justin's",
+    "rxbar nut butter",
+
+    # ── Breakfast / frozen ────────────────────────────────────────────────────
+    "pop tart", "pop-tart",
+    "eggo",
+    "toaster strudel",
+
+    # ── Beverages ─────────────────────────────────────────────────────────────
+    "gatorade",
+    "powerade",
+    "red bull",
+    "monster energy",
+    "diet coke", "coke zero", "pepsi zero",
+    "vitaminwater",
     "fairlife",
+    "celsius",
+    "liquid iv", "liquid i.v.",
+    "bodyarmor", "body armor",
+    "prime hydration",
+
+    # ── Dairy / protein drinks ────────────────────────────────────────────────
+    "muscle milk",
+    "core power",
+    "boost",
+    "ensure",
+
+    # ── Other snacks ──────────────────────────────────────────────────────────
+    "smartfood",
+    "pirate's booty",
+    "rice cakes",                         # Quaker brand rice cakes
+    "quaker",
 })
 
 # Well-known restaurant menu items that do not contain a brand name in the

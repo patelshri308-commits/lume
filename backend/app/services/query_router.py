@@ -75,6 +75,7 @@ from app.services.barcode_service import (
 from app.services.packaged_product_service import search_packaged_product
 from app.services.restaurant_service import search_restaurant_item
 from app.services.composite_service import decompose_composite
+from app.services.debug_logger import log_routing, log_rejection, log_result
 
 
 # ---------------------------------------------------------------------------
@@ -95,13 +96,27 @@ def route_food_query(query: str) -> dict:
     parsed      = _parse(query)
     query_class = _classify(parsed)
 
+    # Emit routing decision + parsed metadata for every request when debug is on.
+    log_routing(query, query_class.value, {
+        "quantity":        parsed.quantity,
+        "unit":            parsed.unit,
+        "size_modifier":   parsed.size_modifier,
+        "with_components": parsed.with_components,
+        "base_modifier":   parsed.base_modifier,
+        "core_food":       parsed.core_food,
+        "is_barcode":      parsed.is_barcode_like,
+    })
+
     # ── BARCODE ──────────────────────────────────────────────────────────────
     # Contract: barcode source only.  A miss is a miss — no generic substitute.
     if query_class == QueryClass.BARCODE:
         try:
             result = lookup_barcode(parsed.clean)
-            return {**result, "confidence": 0.95}
+            final  = {**result, "confidence": 0.95}
+            log_result(query, "barcode", 0.95, final.get("calories", 0), final.get("name", ""))
+            return final
         except (BarcodeNotFoundError, BarcodeProviderError):
+            log_rejection(query, "barcode_not_found")
             return _barcode_not_found(parsed.raw)
 
     # ── BRANDED_PACKAGED ─────────────────────────────────────────────────────
@@ -109,11 +124,17 @@ def route_food_query(query: str) -> dict:
         result = search_packaged_product(query)
         if result is not None:
             score = result.pop("_internal_score", 0)
-            return {**result, "confidence": _packaged_confidence(score)}
+            conf  = _packaged_confidence(score)
+            final = {**result, "confidence": conf}
+            log_result(query, "packaged_product", conf, final.get("calories", 0), final.get("name", ""))
+            return final
         # Service miss — fall back to nutrition engine at low confidence.
         # Pass size_modifier so "large bag of X" scales correctly if OFF missed.
+        log_rejection(query, "off_packaged_miss_fallback_to_usda")
         result = get_nutrition(query, size_modifier=parsed.size_modifier)
-        return {**result, "source_type": "packaged_guess", "confidence": 0.35}
+        final  = {**result, "source_type": "packaged_guess", "confidence": 0.35}
+        log_result(query, "packaged_guess", 0.35, final.get("calories", 0), final.get("name", ""))
+        return final
 
     # ── RESTAURANT_ITEM ──────────────────────────────────────────────────────
     # Contract: never use generic food FIRST when restaurant intent is clear.
@@ -121,11 +142,17 @@ def route_food_query(query: str) -> dict:
         result = search_restaurant_item(query)
         if result is not None:
             score = result.pop("_internal_score", 0)
-            return {**result, "confidence": _restaurant_confidence(score)}
+            conf  = _restaurant_confidence(score)
+            final = {**result, "confidence": conf}
+            log_result(query, "restaurant", conf, final.get("calories", 0), final.get("name", ""))
+            return final
         # Service miss — generic estimate only as last resort, clearly labelled.
         # Pass size_modifier so "large fries" scales the fallback estimate.
+        log_rejection(query, "off_restaurant_miss_fallback_to_usda")
         result = get_nutrition(query, size_modifier=parsed.size_modifier)
-        return {**result, "source_type": "restaurant_guess", "confidence": 0.35}
+        final  = {**result, "source_type": "restaurant_guess", "confidence": 0.35}
+        log_result(query, "restaurant_guess", 0.35, final.get("calories", 0), final.get("name", ""))
+        return final
 
     # ── COMPOSITE_MEAL ───────────────────────────────────────────────────────
     # Phase 4: decompose into individual components, resolve each, aggregate.
@@ -134,14 +161,19 @@ def route_food_query(query: str) -> dict:
     if query_class == QueryClass.COMPOSITE_MEAL:
         result = decompose_composite(parsed, query)
         meta   = result.pop("_decomposition_meta", {})
-        return {**result, "confidence": _composite_confidence(meta)}
+        conf   = _composite_confidence(meta)
+        final  = {**result, "confidence": conf}
+        log_result(query, "composite_meal", conf, final.get("calories", 0), final.get("name", ""))
+        return final
 
     # ── AMBIGUOUS ────────────────────────────────────────────────────────────
     # Classify correctly; route but cap confidence to signal uncertainty.
     # Pass size_modifier so "small smoothie" returns a scaled estimate.
     if query_class == QueryClass.AMBIGUOUS:
         result = get_nutrition(query, size_modifier=parsed.size_modifier)
-        return {**result, "source_type": "ambiguous_estimate", "confidence": 0.40}
+        final  = {**result, "source_type": "ambiguous_estimate", "confidence": 0.40}
+        log_result(query, "ambiguous_estimate", 0.40, final.get("calories", 0), final.get("name", ""))
+        return final
 
     # ── GENERIC_FOOD (default) ───────────────────────────────────────────────
     # Phase 2: use the parser's core_food as the USDA search term so that
@@ -156,11 +188,13 @@ def route_food_query(query: str) -> dict:
     # Display name: keep the full original input ("2 eggs", not just "eggs").
     result["name"] = parsed.clean
     confidence = 0.45 if result.get("is_estimated") else 0.85
-    return {
+    final = {
         **result,
         "source_type": result.get("source_type", "generic"),
         "confidence":  confidence,
     }
+    log_result(query, final["source_type"], confidence, final.get("calories", 0), final.get("name", ""))
+    return final
 
 
 # ---------------------------------------------------------------------------

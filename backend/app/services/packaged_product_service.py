@@ -4,6 +4,7 @@ import httpx
 # nutriments structure, no need to duplicate the logic.
 from app.services.barcode_service import _get_macros, _safe_float
 from app.services.candidate_scorer import score_candidate
+from app.services.debug_logger import log_off_candidates, log_rejection
 
 # ---------------------------------------------------------------------------
 # Open Food Facts text search API (v2)
@@ -13,7 +14,10 @@ from app.services.candidate_scorer import score_candidate
 # ---------------------------------------------------------------------------
 OPENFOODFACTS_SEARCH_URL = "https://world.openfoodfacts.org/api/v2/search"
 REQUEST_TIMEOUT          = 8.0
-MAX_CANDIDATES           = 10   # wider pool so the scorer has real options
+# Phase 1 increase: 15 candidates gives the scorer a deeper pool to rank,
+# which matters most for popular branded queries where many variants exist
+# (e.g. Hershey's has bars, kisses, miniatures, syrup, cocoa all in the top-10).
+MAX_CANDIDATES           = 15
 
 # Phase 3: minimum acceptable relevance score.  Below this the result is
 # more likely to be the wrong product than the right one; let the router
@@ -106,6 +110,7 @@ def search_packaged_product(query: str) -> dict | None:
 
     best_result = None
     best_score  = MIN_SCORE - 1   # must beat this to be accepted
+    scored_log: list[tuple[str, str | None, int]] = []   # for debug output
 
     for product in products:
         result = _normalize_product(product)
@@ -113,11 +118,18 @@ def search_packaged_product(query: str) -> dict | None:
             continue
 
         s = score_candidate(result["name"], result["brand_name"], query)
+        scored_log.append((result["name"], result["brand_name"], s))
         if s > best_score:
             best_score  = s
             best_result = result
 
+    # Debug: log every candidate and its score so poor choices are diagnosable.
+    scored_log.sort(key=lambda t: t[2], reverse=True)
+    log_off_candidates(query, scored_log)
+
     if best_result is None:
+        log_rejection(query, "off_packaged_no_candidate_above_min",
+                      {"min_score": MIN_SCORE, "n_candidates": len(scored_log)})
         return None   # no usable hit above the minimum threshold
 
     return {**best_result, "_internal_score": best_score}

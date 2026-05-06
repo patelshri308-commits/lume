@@ -1,5 +1,6 @@
 import os
 import httpx
+from app.services.debug_logger import log_usda_candidates, log_rejection
 
 # ---------------------------------------------------------------------------
 # USDA FoodData Central API
@@ -422,16 +423,31 @@ def _fetch_nutrition(query: str) -> dict:
         foods = response.json().get("foods", [])
 
         if not foods:
+            log_rejection(query, "usda_no_results")
             return {**_get_fallback_nutrition(query), "is_estimated": True}
 
-        # Pick the highest-scoring result instead of blindly taking foods[0]
-        best_food  = max(foods, key=lambda food: _score_food(food, query))
-        best_score = _score_food(best_food, query)
+        # Score every candidate, then pick the best.
+        # Attach _score to each dict so debug logging can show it without
+        # re-computing.
+        for food in foods:
+            food["_score"] = _score_food(food, query)
+
+        best_food  = max(foods, key=lambda f: f["_score"])
+        best_score = best_food["_score"]
+
+        # Debug: show the top candidates and their scores.
+        log_usda_candidates(
+            query,
+            sorted(foods, key=lambda f: f["_score"], reverse=True),
+        )
 
         # Reject weak matches: if even the best candidate didn't earn enough
         # score to clear the threshold, no query word appeared in any result —
         # returning it would be misleading.
         if best_score < CONFIDENCE_THRESHOLD:
+            log_rejection(query, "usda_score_below_threshold",
+                          {"score": best_score, "threshold": CONFIDENCE_THRESHOLD,
+                           "best": best_food.get("description", "")})
             return {**_get_fallback_nutrition(query), "is_estimated": True}
 
         nutrients = best_food.get("foodNutrients", [])
@@ -461,6 +477,9 @@ def _fetch_nutrition(query: str) -> dict:
         }
         for keyword, floor in _MEAL_CALORIE_FLOOR.items():
             if keyword in query and calories < floor:
+                log_rejection(query, "usda_meal_calorie_floor",
+                              {"keyword": keyword, "calories": calories, "floor": floor,
+                               "usda_desc": best_food.get("description", "")})
                 return {**_get_fallback_nutrition(query), "is_estimated": True}
 
         return {
