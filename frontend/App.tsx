@@ -281,6 +281,7 @@ function AppInner() {
   const [summary,    setSummary]    = useState<DailySummary | null>(null);
   const [todayCalories, setTodayCalories] = useState<number | null>(null);
   const [searching,       setSearching]       = useState(false);
+  const [scanningLabel,   setScanningLabel]   = useState("Searching...");
   const [isSearchFocused,  setIsSearchFocused]  = useState(false);
   const [keyboardHeight,   setKeyboardHeight]   = useState(0);
   const [logsLoading,   setLogsLoading]   = useState(false);
@@ -791,6 +792,7 @@ function AppInner() {
     if (!scannedBarcode) return;
     const barcode = scannedBarcode;
     setLogMessage("");
+    setScanningLabel("Looking up barcode...");
     setSearching(true);
 
     (async () => {
@@ -821,12 +823,28 @@ function AppInner() {
           await loadWeekly();
           await loadTodayCalories();
         } catch {
-          setLogMessage("Failed to log scanned item.");
+          setLogMessage("Failed to save — please try again.");
         }
-      } catch {
-        setLogMessage("Barcode not found — try searching by name.");
+      } catch (err: unknown) {
+        if (axios.isAxiosError(err)) {
+          const status = err.response?.status;
+          if (status === 404) {
+            setLogMessage("Product not found — try searching by name.");
+          } else if (status === 400) {
+            setLogMessage("Could not read barcode — try again.");
+          } else if (status === 502) {
+            setLogMessage("Barcode service unavailable — try again later.");
+          } else if (!err.response) {
+            setLogMessage("No connection — check your network.");
+          } else {
+            setLogMessage("Barcode lookup failed — try searching by name.");
+          }
+        } else {
+          setLogMessage("Barcode lookup failed — try searching by name.");
+        }
       } finally {
         setScannedBarcode(null);
+        setScanningLabel("Searching...");
         setSearching(false);
       }
     })();
@@ -1078,17 +1096,31 @@ function AppInner() {
                 <Text style={styles.scannerPermissionText}>
                   Camera access is required to scan barcodes.
                 </Text>
-                <Button title="Grant Permission" onPress={requestCameraPermission} />
-                <View style={{ marginTop: 12 }}>
-                  <Button title="Cancel" onPress={() => setIsScannerOpen(false)} color="#aaa" />
-                </View>
+                {cameraPermission?.canAskAgain !== false ? (
+                  <Button title="Grant Permission" onPress={requestCameraPermission} />
+                ) : (
+                  <TouchableOpacity
+                    onPress={() => Linking.openSettings()}
+                    style={styles.scannerSettingsLink}
+                  >
+                    <Text style={styles.scannerSettingsLinkText}>
+                      Open Settings to enable camera
+                    </Text>
+                  </TouchableOpacity>
+                )}
+                <TouchableOpacity
+                  onPress={() => setIsScannerOpen(false)}
+                  style={[styles.scannerCancelButton, { marginTop: 12 }]}
+                >
+                  <Text style={styles.scannerCancelText}>Cancel</Text>
+                </TouchableOpacity>
               </View>
             ) : (
               <>
                 <CameraView
                   style={styles.scannerCamera}
                   facing="back"
-                  barcodeScannerSettings={{ barcodeTypes: ["ean13", "ean8", "upc_a", "upc_e", "qr"] }}
+                  barcodeScannerSettings={{ barcodeTypes: ["ean13", "ean8", "upc_a", "upc_e"] }}
                   onBarcodeScanned={({ data }) => {
                     if (scanLockRef.current) return;
                     scanLockRef.current = true;
@@ -1100,9 +1132,15 @@ function AppInner() {
                 />
                 <View style={styles.scannerOverlay}>
                   <View style={styles.scannerReticle} />
+                  <Text style={styles.scannerHint}>Point at a barcode</Text>
                 </View>
                 <View style={styles.scannerActions}>
-                  <Button title="Cancel" onPress={() => setIsScannerOpen(false)} color="#aaa" />
+                  <TouchableOpacity
+                    onPress={() => setIsScannerOpen(false)}
+                    style={styles.scannerCancelButton}
+                  >
+                    <Text style={styles.scannerCancelText}>Cancel</Text>
+                  </TouchableOpacity>
                 </View>
               </>
             )}
@@ -1348,7 +1386,7 @@ function AppInner() {
             <Image source={barcodIcon} style={styles.scanButtonIcon} />
           </TouchableOpacity>
         </View>
-        {searching && <Text style={styles.searchingText}>Searching...</Text>}
+        {searching && <Text style={styles.searchingText}>{scanningLabel}</Text>}
         {!searching && logMessage ? (
           <Text style={logMessage.startsWith("Logged") || logMessage === "Food logged" ? styles.success : styles.error}>
             {logMessage}
@@ -3320,12 +3358,31 @@ const styles = StyleSheet.create({
     borderRadius: 8,
     opacity: 0.7,
   },
+  scannerHint: {
+    marginTop: 16,
+    fontSize: 13,
+    fontFamily: "Inter-Variable",
+    color: "rgba(255,255,255,0.75)",
+    letterSpacing: 0.2,
+  },
   scannerActions: {
     position: "absolute",
     bottom: 48,
     left: 0,
     right: 0,
     alignItems: "center",
+  },
+  scannerCancelButton: {
+    paddingVertical: 10,
+    paddingHorizontal: 32,
+    borderRadius: 20,
+    backgroundColor: "rgba(255,255,255,0.15)",
+  },
+  scannerCancelText: {
+    fontSize: 15,
+    fontFamily: "Inter-Variable",
+    color: "#fff",
+    fontWeight: "600",
   },
   scannerPermissionBox: {
     flex: 1,
@@ -3340,6 +3397,19 @@ const styles = StyleSheet.create({
     color: "#333",
     textAlign: "center",
     marginBottom: 20,
+  },
+  scannerSettingsLink: {
+    paddingVertical: 10,
+    paddingHorizontal: 24,
+    borderRadius: 20,
+    backgroundColor: COLORS.primary,
+    marginBottom: 4,
+  },
+  scannerSettingsLinkText: {
+    fontSize: 14,
+    fontFamily: "Inter-Variable",
+    color: "#fff",
+    fontWeight: "600",
   },
 
   // Cards

@@ -1,4 +1,5 @@
 import httpx
+from collections import OrderedDict
 
 # ---------------------------------------------------------------------------
 # Open Food Facts API
@@ -7,6 +8,12 @@ import httpx
 # ---------------------------------------------------------------------------
 OPENFOODFACTS_URL = "https://world.openfoodfacts.org/api/v0/product/{barcode}.json"
 REQUEST_TIMEOUT   = 8.0
+
+# Simple in-memory LRU cache for barcode lookups.
+# Only successful results are cached — errors are never stored so a transient
+# network failure doesn't permanently poison a barcode in the same process.
+_BARCODE_CACHE: OrderedDict = OrderedDict()
+_CACHE_MAX_SIZE = 200
 
 
 # ---------------------------------------------------------------------------
@@ -77,6 +84,20 @@ def _get_macros(nutriments: dict) -> tuple | None:
 # Phase 2: serving-tier detection
 # ---------------------------------------------------------------------------
 
+def _clean_brand(raw: str) -> str:
+    """
+    Normalize a raw Open Food Facts brand string.
+
+    OFF stores brands as a comma-separated list (e.g. "Hershey's,Hershey").
+    We take only the first entry, strip surrounding whitespace, and convert
+    fully-uppercase names to title case so they read naturally in the UI.
+    """
+    primary = raw.split(",")[0].strip()
+    if primary == primary.upper() and len(primary) > 1:
+        primary = primary.title()
+    return primary
+
+
 def _nutrition_tier(nutriments: dict) -> str:
     """
     Return '_serving' if per-serving calorie data is present and positive,
@@ -109,7 +130,9 @@ def lookup_barcode(barcode: str) -> dict:
     """
     Look up a packaged food by barcode using Open Food Facts.
 
-    Returns a normalized nutrition dict on success.
+    Returns a normalized nutrition dict on success.  Successful results are
+    stored in an in-process LRU cache so repeated scans of the same product
+    skip the network round-trip.
 
     Raises:
       BarcodeNotFoundError  — product not in the database, or product exists
@@ -117,9 +140,16 @@ def lookup_barcode(barcode: str) -> dict:
       BarcodeProviderError  — network error, HTTP error, or unexpected
                               upstream response.
     """
+    code = barcode.strip()
+
+    # Check cache before hitting the network.
+    if code in _BARCODE_CACHE:
+        _BARCODE_CACHE.move_to_end(code)
+        return dict(_BARCODE_CACHE[code])
+
     try:
         response = httpx.get(
-            OPENFOODFACTS_URL.format(barcode=barcode.strip()),
+            OPENFOODFACTS_URL.format(barcode=code),
             timeout=REQUEST_TIMEOUT,
             headers={"User-Agent": "Lume-App/1.0 (calorie tracker)"},
         )
@@ -133,14 +163,14 @@ def lookup_barcode(barcode: str) -> dict:
 
     # status == 1 means the product exists in the database
     if data.get("status") != 1:
-        raise BarcodeNotFoundError(barcode)
+        raise BarcodeNotFoundError(code)
 
     product    = data.get("product", {})
     nutriments = product.get("nutriments", {})
     macros     = _get_macros(nutriments)
 
     if macros is None:
-        raise BarcodeNotFoundError(barcode)   # product found but data unusable
+        raise BarcodeNotFoundError(code)   # product found but data unusable
 
     calories, protein, carbs, fat = macros
 
@@ -150,27 +180,25 @@ def lookup_barcode(barcode: str) -> dict:
         or "Unknown Product"
     ).strip()
 
-    brand            = (product.get("brands")       or "").strip() or None
+    raw_brand        = (product.get("brands")       or "").strip()
+    brand            = _clean_brand(raw_brand) if raw_brand else None
     provided_serving = (product.get("serving_size") or "").strip() or None
 
-    # Phase 2: determine which data tier _get_macros actually used, and
-    # make the serving context explicit so consumers are never misled.
+    # Determine which data tier _get_macros actually used, and make the
+    # serving context explicit so consumers are never misled.
     #
     #   _serving tier → label is the product's stated serving size (e.g. "30g")
-    #   _100g    tier → per-serving data was absent; label says "per 100g" so
-    #                   the consumer knows the macros are not per-item/serving.
+    #   _100g    tier → per-serving data absent; label says "per 100g"
     tier = _nutrition_tier(nutriments)
     if tier == "_100g":
         if provided_serving:
-            # Serving size is labelled on the pack but the database only has
-            # per-100g nutrition — make that mismatch visible.
-            serving_description = f"{provided_serving} (nutrition per 100g)"
+            serving_description = f"{provided_serving} (per 100g)"
         else:
             serving_description = "per 100g"
     else:
         serving_description = provided_serving
 
-    return {
+    result = {
         "name":                name,
         "calories":            round(calories),
         "protein":             round(protein, 1),
@@ -179,7 +207,16 @@ def lookup_barcode(barcode: str) -> dict:
         "is_estimated":        False,
         "source_type":         "barcode",
         "source_name":         "Open Food Facts",
-        "barcode":             barcode.strip(),
+        "barcode":             code,
         "brand_name":          brand,
         "serving_description": serving_description,
+        "confidence":          0.95,
     }
+
+    # Store in cache; evict oldest entry when at capacity.
+    _BARCODE_CACHE[code] = result
+    _BARCODE_CACHE.move_to_end(code)
+    if len(_BARCODE_CACHE) > _CACHE_MAX_SIZE:
+        _BARCODE_CACHE.popitem(last=False)
+
+    return dict(result)
