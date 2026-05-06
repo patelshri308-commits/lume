@@ -36,14 +36,15 @@ type NutritionResult = {
   protein:      number;
   carbs:        number;
   fat:          number;
-  is_estimated: boolean;
-  source_type?:         string;   // e.g. "generic", "barcode", "packaged_product", "restaurant"
-  confidence?:          number;   // 0.0–1.0 from backend query router
+  is_estimated?: boolean;          // optional: old log rows have null; treat absent as false
+  source_type?:         string;    // e.g. "generic", "barcode", "packaged_product", "restaurant"
+  confidence?:          number;    // 0.0–1.0 from backend query router
   brand_name?:          string | null;
   serving_description?: string | null;
 };
 
-// Subset of NutritionResult fields stored in-memory per log entry (session only).
+// Nutrition-source fields used by the badge renderer.
+// Satisfied by both NutritionResult (search results) and FoodLogEntry (DB rows).
 type FoodSourceMeta = Pick<NutritionResult, "source_type" | "confidence" | "is_estimated" | "serving_description">;
 
 type FoodLogEntry = NutritionResult & { id: number; created_at: string };
@@ -291,9 +292,6 @@ function AppInner() {
   const [isScannerOpen,  setIsScannerOpen]  = useState(false);
   const [scannedBarcode, setScannedBarcode] = useState<string | null>(null);
   const [cameraPermission, requestCameraPermission] = useCameraPermissions();
-  // Source metadata keyed by log entry ID — lives in-memory only (session).
-  // Used to show source badges on freshly logged entries; cleared on app reload.
-  const [foodMeta, setFoodMeta] = useState<Record<number, FoodSourceMeta>>({});
   const scanLockRef  = useRef(false);                          // prevents duplicate scan callbacks
   const sidebarAnim  = useRef(new Animated.Value(0)).current;  // 0 = closed, 1 = open
   // Solar Bloom animated glow values — each loops 0→1→0 at a different duration
@@ -552,7 +550,7 @@ function AppInner() {
 
     if (!food) return;
     try {
-      const logRes = await axios.post(
+      await axios.post(
         `${API_URL}/logs`,
         {
           name:     food.name,
@@ -561,27 +559,23 @@ function AppInner() {
           carbs:    food.carbs    * parsedServings,
           fat:      food.fat      * parsedServings,
           log_date: selectedDate,
+          // Persist nutrition-source metadata so badges survive app reloads.
+          source_type:         food.source_type         ?? null,
+          confidence:          food.confidence          ?? null,
+          is_estimated:        food.is_estimated        ?? null,
+          serving_description: food.serving_description ?? null,
         },
         { headers: await getAuthHeaders() },
       );
-      // Store source metadata keyed by the new log entry's ID so the log
-      // card can display a source badge while the metadata is in memory.
-      const entryId: number | undefined = logRes.data?.entry?.id;
-      if (entryId != null) {
-        const meta: FoodSourceMeta = {
-          source_type:         food.source_type,
-          confidence:          food.confidence,
-          is_estimated:        food.is_estimated,
-          serving_description: food.serving_description,
-        };
-        setFoodMeta(prev => ({ ...prev, [entryId]: meta }));
-        const shortLabel = getSourceShortLabel(meta);
-        setLogMessage(shortLabel ? `Food logged · ${shortLabel}` : "Food logged");
-      } else {
-        setLogMessage("Food logged");
-      }
       setQuery("");      // clear input for next item
       Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
+      const shortLabel = getSourceShortLabel({
+        source_type:         food.source_type,
+        confidence:          food.confidence,
+        is_estimated:        food.is_estimated,
+        serving_description: food.serving_description,
+      });
+      setLogMessage(shortLabel ? `Food logged · ${shortLabel}` : "Food logged");
       await loadSummary();
       await loadLogs();
       await loadWeekly();
@@ -804,7 +798,7 @@ function AppInner() {
         const res  = await axios.post(`${API_URL}/food/barcode`, { barcode });
         const food = res.data as NutritionResult;
         try {
-          const logRes = await axios.post(
+          await axios.post(
             `${API_URL}/logs`,
             {
               name:     food.name,
@@ -813,21 +807,13 @@ function AppInner() {
               carbs:    food.carbs,
               fat:      food.fat,
               log_date: selectedDate,
+              source_type:         food.source_type         ?? null,
+              confidence:          food.confidence          ?? null,
+              is_estimated:        food.is_estimated        ?? null,
+              serving_description: food.serving_description ?? null,
             },
             { headers: await getAuthHeaders() },
           );
-          const entryId: number | undefined = logRes.data?.entry?.id;
-          if (entryId != null) {
-            setFoodMeta(prev => ({
-              ...prev,
-              [entryId]: {
-                source_type:         food.source_type,
-                confidence:          food.confidence,
-                is_estimated:        food.is_estimated,
-                serving_description: food.serving_description,
-              },
-            }));
-          }
           Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
           setLogMessage(`Logged: ${food.name}`);
           await loadSummary();
@@ -1244,9 +1230,7 @@ function AppInner() {
                         <Text style={styles.logEntryMacros}>
                           {entry.calories} kcal · {entry.protein}g protein · {entry.carbs}g carbs · {entry.fat}g fat
                         </Text>
-                        {foodMeta[entry.id] && (
-                          <SourceBadgeRow meta={foodMeta[entry.id]} />
-                        )}
+                        <SourceBadgeRow meta={entry} />
                       </>
                     )}
                     <Text style={styles.logEntryTime}>

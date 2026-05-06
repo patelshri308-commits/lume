@@ -17,6 +17,13 @@ class FoodLog(Base):
     log_date   = Column(Date,     nullable=False, default=datetime.date.today)
     created_at = Column(DateTime, nullable=False, default=datetime.datetime.utcnow)
 
+    # Nutrition-source metadata — nullable so existing rows are unaffected.
+    # Added after initial launch; old rows have NULL for all four fields.
+    source_type         = Column(String,  nullable=True)   # e.g. "generic", "barcode", "packaged_product"
+    confidence          = Column(Float,   nullable=True)   # 0.0–1.0 from query router
+    is_estimated        = Column(Boolean, nullable=True)   # None = unknown (old row)
+    serving_description = Column(String,  nullable=True)   # e.g. "43 g", "per 100g"
+
 
 class UserProfile(Base):
     """One row per Supabase auth user — stores profile data used for calorie targets."""

@@ -2,7 +2,7 @@ import datetime
 from typing import Optional
 
 from fastapi import APIRouter, Depends, HTTPException, Query
-from pydantic import BaseModel
+from pydantic import BaseModel, ConfigDict
 from sqlalchemy.orm import Session
 
 from app.database import get_db
@@ -20,6 +20,11 @@ class CreateFoodLog(BaseModel):
     carbs:    float
     fat:      float
     log_date: Optional[str] = None  # YYYY-MM-DD; defaults to today if omitted
+    # Nutrition-source metadata — optional so existing clients keep working.
+    source_type:         Optional[str]   = None
+    confidence:          Optional[float] = None
+    is_estimated:        Optional[bool]  = None
+    serving_description: Optional[str]   = None
 
 
 class UpdateFoodLog(BaseModel):
@@ -31,6 +36,30 @@ class UpdateFoodLog(BaseModel):
     protein:  Optional[float] = None
     carbs:    Optional[float] = None
     fat:      Optional[float] = None
+
+
+class FoodLogOut(BaseModel):
+    """Serialised shape returned by GET /logs and POST /logs.
+
+    Using an explicit Pydantic schema (rather than returning raw SQLAlchemy
+    objects) lets us coerce is_estimated=None → False for old rows that
+    pre-date the metadata columns, so the frontend always receives a boolean.
+    """
+    model_config = ConfigDict(from_attributes=True)
+
+    id:         int
+    user_id:    str
+    name:       str
+    calories:   float
+    protein:    float
+    carbs:      float
+    fat:        float
+    log_date:   datetime.date
+    created_at: datetime.datetime
+    source_type:         Optional[str]   = None
+    confidence:          Optional[float] = None
+    is_estimated:        bool            = False  # NULL in old rows → False
+    serving_description: Optional[str]   = None
 
 
 @router.post("/logs")
@@ -58,11 +87,15 @@ def add_log(
         carbs=entry.carbs,
         fat=entry.fat,
         log_date=log_date,
+        source_type=entry.source_type,
+        confidence=entry.confidence,
+        is_estimated=entry.is_estimated,
+        serving_description=entry.serving_description,
     )
     db.add(db_log)
     db.commit()
     db.refresh(db_log)
-    return {"message": "Food logged successfully", "entry": db_log}
+    return {"message": "Food logged successfully", "entry": FoodLogOut.model_validate(db_log)}
 
 
 @router.get("/logs")
@@ -91,7 +124,7 @@ def get_logs(
         .order_by(models.FoodLog.id.desc())
         .all()
     )
-    return {"logs": logs}
+    return {"logs": [FoodLogOut.model_validate(log) for log in logs]}
 
 
 @router.patch("/logs/{log_id}")
