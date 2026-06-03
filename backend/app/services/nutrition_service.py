@@ -120,7 +120,7 @@ _GENERIC_FOOD_PROFILES: dict[str, GenericFoodProfile] = {
         search_query="broccoli cooked",
         default_grams=156,
         prefer_terms=("broccoli", "cooked"),
-        avoid_terms=("raw", "soup", "casserole", "babyfood", "chinese"),
+        avoid_terms=("raw", "soup", "casserole", "babyfood", "chinese", "raab"),
         unit_grams={"cup": 156, "cups": 156},
     ),
     "spinach": GenericFoodProfile(

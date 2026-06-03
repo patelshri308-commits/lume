@@ -44,7 +44,7 @@ Each `AuditCase` supports the following fields. Existing checks are unchanged; s
 
 Failure reasons are reported individually in the `reason` column so each distinct problem is visible.
 
-## Current Baseline (after Phase 7A fixes)
+## Current Baseline (after Phase 7B fixes)
 
 Live audit run date: `2026-06-03`
 
@@ -82,7 +82,7 @@ Summary: **29/29 passed** — 8 source-quality + 5 quantity-scaling + 16/16 cove
 | `strawberries` | PASS | 55.3 | `Strawberries, raw` | |
 | `blueberries` | PASS | 94.6 | `Blueberries, raw` | |
 | `avocado` | PASS | 334.5 | `Avocado, Hass, peeled, raw` | Source correct; range widened 330→360 in Phase 7A. |
-| `broccoli` | PASS | 39.0 | `Broccoli raab, cooked` | Improved (was `Broccoli, chinese, cooked`); raab still not plain broccoli — see remaining issues. |
+| `broccoli` | PASS | 64.0 | `Broccoli, cooked, as ingredient` | Improved in Phase 7B (was `Broccoli raab, cooked`). |
 | `spinach` | PASS | 6.9 | `Spinach, raw` | |
 | `potato` | PASS | 160.9 | `Potatoes, baked, flesh, with salt` | |
 | `sweet potato` | PASS | 117.0 | `Sweet potato, cooked, baked in skin, flesh, with salt` | Improved in Phase 7A (was frozen). |
@@ -94,11 +94,25 @@ Summary: **29/29 passed** — 8 source-quality + 5 quantity-scaling + 16/16 cove
 | `cheddar cheese` | PASS | 114.2 | `Cheese, cheddar` | |
 | `black beans` | PASS | 227.0 | `Beans, black, mature seeds, cooked, boiled, with salt` | |
 
-Regression tests: **59 passing** (6 new tests added in Phase 7A).
+Regression tests: **60 passing** (1 new test added in Phase 7B).
 
 ---
 
 ## Phase History
+
+### Phase 7B (completed 2026-06-03)
+
+Fixed broccoli source returning `Broccoli raab, cooked` instead of plain broccoli.
+
+**Profile change in `nutrition_service.py`:**
+
+| Profile | Change |
+| --- | --- |
+| `broccoli` | Added `"raab"` to avoid_terms |
+
+**Tests:** 1 new regression test (`test_broccoli_profile_penalizes_raab`); 60 total passing.
+
+**Live audit result: 29/29 passed.** Broccoli now returns `Broccoli, cooked, as ingredient`.
 
 ### Phase 7A (completed 2026-06-03)
 
@@ -122,7 +136,6 @@ Implemented targeted food-engine profile fixes from Phase 7 audit review.
 **Live audit result: 29/29 passed.**
 
 **Remaining suspicious sources (passes, not failures):**
-- `broccoli` → `Broccoli raab, cooked` — raab is a different plant from regular broccoli; fixing `chinese` exposed raab as the next fallback in the USDA pool. Add `"raab"` to avoid_terms in a future phase.
 - `oatmeal` → `Oatmeal, fast food, plain` — FNDDS fast-food entry; nutritionally close (80 cal/100g vs 71 cal/100g expected) but not ideal. The `"plain"` qualifier is correct; the source is acceptable for now.
 
 ### Phase 6 (completed 2026-06-03)

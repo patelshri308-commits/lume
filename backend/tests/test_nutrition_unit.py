@@ -579,6 +579,22 @@ class TestNutritionLogic:
             "so plain enriched pasta wins."
         )
 
+    # ── Phase 7B: broccoli raab fix ───────────────────────────────────────────
+
+    def test_broccoli_profile_penalizes_raab(self):
+        """Plain broccoli should prefer regular cooked broccoli over broccoli raab."""
+        with patch("app.services.nutrition_service.httpx.get",
+                   return_value=_usda_multi_response(
+                       ("Broccoli raab, cooked", "Survey (FNDDS)", 33.0, 3.3, 5.3, 0.4),
+                       ("Broccoli, cooked, boiled, drained, without salt", "SR Legacy", 35.0, 2.4, 7.2, 0.4),
+                   )):
+            result = route_food_query("broccoli")
+
+        assert result["source_name"] == "Broccoli, cooked, boiled, drained, without salt", (
+            f"source_name={result['source_name']!r}; 'raab' should be penalised "
+            "so plain cooked broccoli wins over broccoli raab."
+        )
+
     # ── Meal calorie floor ────────────────────────────────────────────────────
 
     def test_banana_smoothie_floor_rejects_plain_banana(self):
