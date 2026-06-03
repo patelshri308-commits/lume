@@ -146,7 +146,7 @@ _GENERIC_FOOD_PROFILES: dict[str, GenericFoodProfile] = {
         search_query="rice white cooked",
         default_grams=158,
         prefer_terms=("rice", "white", "cooked"),
-        avoid_terms=("flour", "dry", "uncooked", "bran"),
+        avoid_terms=("flour", "dry", "uncooked", "bran", "glutinous"),
         unit_grams={"cup": 158, "cups": 158},
     ),
     "brown rice": GenericFoodProfile(
@@ -160,7 +160,7 @@ _GENERIC_FOOD_PROFILES: dict[str, GenericFoodProfile] = {
         search_query="rice white cooked",
         default_grams=158,
         prefer_terms=("rice", "cooked"),
-        avoid_terms=("flour", "dry", "uncooked", "bran"),
+        avoid_terms=("flour", "dry", "uncooked", "bran", "glutinous"),
         unit_grams={"cup": 158, "cups": 158},
     ),
     "oatmeal": GenericFoodProfile(
@@ -171,16 +171,16 @@ _GENERIC_FOOD_PROFILES: dict[str, GenericFoodProfile] = {
         unit_grams={"cup": 234, "cups": 234},
     ),
     "eggs": GenericFoodProfile(
-        search_query="egg whole cooked",
+        search_query="egg whole",
         default_grams=50,
-        prefer_terms=("egg", "whole"),
-        avoid_terms=("white", "substitute", "powder"),
+        prefer_terms=("egg", "whole", "boiled", "raw"),
+        avoid_terms=("white", "substitute", "powder", "fried"),
     ),
     "egg": GenericFoodProfile(
-        search_query="egg whole cooked",
+        search_query="egg whole",
         default_grams=50,
-        prefer_terms=("egg", "whole"),
-        avoid_terms=("white", "substitute", "powder"),
+        prefer_terms=("egg", "whole", "boiled", "raw"),
+        avoid_terms=("white", "substitute", "powder", "fried"),
     ),
     "chicken breast": GenericFoodProfile(
         search_query="chicken breast cooked roasted",
@@ -211,7 +211,7 @@ _GENERIC_FOOD_PROFILES: dict[str, GenericFoodProfile] = {
         search_query="milk whole",
         default_grams=244,
         prefer_terms=("milk", "whole"),
-        avoid_terms=("cheese", "powder", "evaporated", "chocolate"),
+        avoid_terms=("cheese", "powder", "evaporated", "chocolate", "buttermilk"),
         unit_grams={"cup": 244, "cups": 244},
     ),
     "cheddar cheese": GenericFoodProfile(
@@ -222,10 +222,10 @@ _GENERIC_FOOD_PROFILES: dict[str, GenericFoodProfile] = {
         unit_grams={"slice": 28, "slices": 28},
     ),
     "almonds": GenericFoodProfile(
-        search_query="almonds",
+        search_query="nuts almonds",
         default_grams=28,
-        prefer_terms=("almonds",),
-        avoid_terms=("butter", "milk", "flour", "oil"),
+        prefer_terms=("nuts", "almonds"),
+        avoid_terms=("butter", "milk", "flour", "oil", "paste"),
     ),
     "peanut butter": GenericFoodProfile(
         search_query="peanut butter",
@@ -238,7 +238,7 @@ _GENERIC_FOOD_PROFILES: dict[str, GenericFoodProfile] = {
         search_query="olive oil",
         default_grams=13.5,
         prefer_terms=("olive", "oil"),
-        avoid_terms=("spray", "dressing"),
+        avoid_terms=("spray", "dressing", "corn", "peanut", "canola", "soybean", "vegetable", "sunflower"),
         unit_grams={"tbsp": 13.5, "tablespoon": 13.5, "tablespoons": 13.5, "tsp": 4.5, "teaspoon": 4.5, "teaspoons": 4.5},
     ),
     "black beans": GenericFoodProfile(
@@ -252,7 +252,7 @@ _GENERIC_FOOD_PROFILES: dict[str, GenericFoodProfile] = {
         search_query="pasta cooked",
         default_grams=140,
         prefer_terms=("pasta", "cooked"),
-        avoid_terms=("dry", "uncooked", "sauce"),
+        avoid_terms=("dry", "uncooked", "sauce", "gluten-free"),
         unit_grams={"cup": 140, "cups": 140},
     ),
 }

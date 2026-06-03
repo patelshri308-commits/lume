@@ -393,16 +393,48 @@ class TestNutritionLogic:
         assert result["calories"] == pytest.approx(206.0)
 
     def test_whole_milk_profile_penalizes_cheese(self):
-        """Whole milk should not select whole-milk ricotta cheese."""
+        """Whole milk should not select adjacent dairy products."""
         with patch("app.services.nutrition_service.httpx.get",
                    return_value=_usda_multi_response(
                        ("Cheese, ricotta, whole milk", "Foundation", 157.0, 7.8, 6.9, 11.0),
+                       ("Milk, buttermilk, fluid, whole", "SR Legacy", 62.0, 3.2, 4.8, 3.3),
                        ("Milk, whole", "Survey (FNDDS)", 61.0, 3.3, 4.6, 3.2),
                    )):
             result = route_food_query("whole milk")
 
         assert result["source_name"] == "Milk, whole"
         assert result["calories"] == pytest.approx(61.0 * 2.44, rel=0.01)
+
+    def test_almonds_profile_uses_usda_nuts_query(self):
+        """Plain almonds should use USDA nut data instead of an estimated fallback."""
+        captured_params: list[dict] = []
+
+        def capture_get(url, *, params=None, timeout=None, **kw):
+            captured_params.append(dict(params or {}))
+            return _usda_multi_response(
+                ("Nuts, almond paste", "SR Legacy", 458.0, 9.0, 47.8, 27.7),
+                ("Nuts, almonds", "SR Legacy", 579.0, 21.2, 21.6, 49.9),
+            )
+
+        with patch("app.services.nutrition_service.httpx.get", side_effect=capture_get):
+            result = route_food_query("almonds")
+
+        assert captured_params[0]["query"] == "nuts almonds"
+        assert result["source_name"] == "Nuts, almonds"
+        assert result["is_estimated"] is False
+        assert result["calories"] == pytest.approx(579.0 * 0.28, rel=0.01)
+
+    def test_eggs_profile_penalizes_fried_egg(self):
+        """Plain eggs should prefer plain/raw/boiled generic egg data over fried egg."""
+        with patch("app.services.nutrition_service.httpx.get",
+                   return_value=_usda_multi_response(
+                       ("Egg, whole, cooked, fried", "Survey (FNDDS)", 196.0, 13.6, 0.8, 14.8),
+                       ("Egg, whole, raw, fresh", "SR Legacy", 143.0, 12.6, 0.7, 9.5),
+                   )):
+            result = route_food_query("2 eggs")
+
+        assert result["source_name"] == "Egg, whole, raw, fresh"
+        assert result["calories"] == pytest.approx(143.0)
 
     def test_zero_nutrient_oil_candidate_is_rejected(self):
         """A zero-filled branded oil candidate should not beat usable olive oil data."""
@@ -415,6 +447,51 @@ class TestNutritionLogic:
 
         assert result["source_name"] == "Olive oil"
         assert result["calories"] == pytest.approx(121.5, rel=0.01)
+
+    # ── Phase 3: generic food source selection ────────────────────────────────
+
+    def test_pasta_profile_penalizes_gluten_free_corn_pasta(self):
+        """Plain pasta should prefer cooked enriched pasta over gluten-free corn pasta."""
+        with patch("app.services.nutrition_service.httpx.get",
+                   return_value=_usda_multi_response(
+                       ("Pasta, gluten-free, corn, cooked", "Survey (FNDDS)", 175.0, 3.8, 39.1, 1.2),
+                       ("Pasta, cooked, enriched, without added salt", "SR Legacy", 157.0, 5.8, 30.9, 0.9),
+                   )):
+            result = route_food_query("pasta")
+
+        assert result["source_name"] == "Pasta, cooked, enriched, without added salt", (
+            f"source_name={result['source_name']!r}; gluten-free corn pasta should be "
+            "penalised by the 'gluten-free' avoid_term so plain pasta wins."
+        )
+
+    def test_white_rice_profile_penalizes_glutinous_rice(self):
+        """Plain white rice should prefer regular white rice over glutinous rice."""
+        with patch("app.services.nutrition_service.httpx.get",
+                   return_value=_usda_multi_response(
+                       ("Rice, white, glutinous, unenriched, cooked", "SR Legacy", 97.0, 2.0, 21.1, 0.2),
+                       ("Rice, white, long-grain, regular, cooked, enriched, with salt", "SR Legacy", 130.0, 2.7, 28.2, 0.3),
+                   )):
+            result = route_food_query("white rice")
+
+        assert result["source_name"] == "Rice, white, long-grain, regular, cooked, enriched, with salt", (
+            f"source_name={result['source_name']!r}; glutinous rice should be penalised "
+            "by the 'glutinous' avoid_term so plain long-grain white rice wins."
+        )
+
+    def test_olive_oil_profile_penalizes_mixed_oil_blend(self):
+        """Olive oil query should prefer pure olive oil over mixed-oil blends."""
+        with patch("app.services.nutrition_service.httpx.get",
+                   return_value=_usda_multi_response(
+                       ("Oil, corn, peanut, and olive", "SR Legacy", 884.0, 0.0, 0.0, 100.0),
+                       ("Oil, olive, salad or cooking", "SR Legacy", 884.0, 0.0, 0.0, 100.0),
+                   )):
+            result = route_food_query("1 tbsp olive oil")
+
+        assert result["source_name"] == "Oil, olive, salad or cooking", (
+            f"source_name={result['source_name']!r}; mixed-oil blend should be "
+            "penalised by 'corn'/'peanut' avoid_terms so pure olive oil wins."
+        )
+        assert result["calories"] == pytest.approx(884.0 * (13.5 / 100), rel=0.01)
 
     # ── Meal calorie floor ────────────────────────────────────────────────────
 

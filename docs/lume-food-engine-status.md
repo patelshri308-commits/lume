@@ -67,10 +67,30 @@ Summary: `7/8 passed`
 | `1 tbsp olive oil` | PASS | 119.3 | false | `1 tbsp` | `Oil, corn, peanut, and olive` | Calories are reasonable, but source is a mixed-oil entry rather than plain olive oil. |
 | `2 eggs` | PASS | 196.0 | false | `100 g serving` | `Egg, whole, cooked, fried` | Passed range check, but fried egg may be the wrong default for plain eggs. |
 
+## Phase 2 Fixes (completed)
+
+Fixed source selection for `almonds`, `whole milk`, and `2 eggs`:
+
+- `almonds` — Added a dedicated profile with `search_query="nuts almonds"` so the USDA query returns the correct Foundation/SR Legacy nut entry instead of falling back to an estimated value.
+- `whole milk` — Added `"buttermilk"` to avoid_terms so that `Milk, buttermilk, fluid, whole` is penalised and plain whole milk wins.
+- `2 eggs` — Added `"fried"` to avoid_terms for the egg profile so `Egg, whole, cooked, fried` is penalised and plain/raw egg wins.
+
+Regression tests: 50 passed after Phase 2 fixes.
+
+## Phase 3 Fixes (completed 2026-06-03)
+
+Improved generic food source selection for `pasta`, `white rice`, and `olive oil`:
+
+- `pasta` — Added `"gluten-free"` to avoid_terms. Penalises `Pasta, gluten-free, corn, cooked` (-35) so that `Pasta, cooked, enriched, without added salt` (SR Legacy) wins when both are in the result pool.
+- `white rice` — Added `"glutinous"` to avoid_terms (applied to both `"white rice"` and `"rice"` profiles). Penalises `Rice, white, glutinous, unenriched, cooked` (-35) so plain long-grain white rice wins.
+- `olive oil` — Added `"corn"`, `"peanut"`, `"canola"`, `"soybean"`, `"vegetable"`, `"sunflower"` to avoid_terms. Each matching word applies a -35 penalty to mixed-oil blends (e.g. `Oil, corn, peanut, and olive` gets -70) so `Oil, olive, salad or cooking` wins cleanly.
+
+Regression tests: 53 passed after Phase 3 fixes (3 new tests added).
+
 ## Known Issues To Investigate Later
 
 - Generic foods may return inaccurate calories/macros even when the app understands the food.
-- USDA/generic matching needs better source ranking and clearer wrong-form rejection.
+- USDA search may not always return the best plain-ingredient entry in the top-10 pool; when a plain pasta/rice candidate is absent from the pool the penalised variant will still win (but above threshold, so no fallback).
 - Quantity handling and serving descriptions need to stay consistent across the API and frontend.
 - The system should avoid vague estimates when reliable source data exists.
 - Some older backend serving-column changes may be incomplete and should be preserved unless intentionally finished or replaced.
@@ -78,8 +98,8 @@ Summary: `7/8 passed`
 
 ## Next Steps
 
-1. Fix `almonds` first because it is the only current hard failure: estimated fallback, no source, and calories outside the expected range.
-2. Then improve source ranking for passed-but-suspicious items: `whole milk`, `pasta`, `1 tbsp olive oil`, `2 eggs`, and `white rice`.
+1. Run live spot checks (`scripts/audit_generic_foods.py`) for `pasta`, `white rice`, and `1 tbsp olive oil` to validate Phase 3 fixes against real USDA data.
+2. Consider expanding the benchmark to cover remaining generic foods: banana, apple, orange, etc.
 3. Propose focused behavior changes before implementing them.
 4. Add or update regression tests for any approved food-engine fixes.
 5. Only after local validation, discuss whether any Supabase migration or deployment change is needed.
