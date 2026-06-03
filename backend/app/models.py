@@ -24,6 +24,22 @@ class FoodLog(Base):
     is_estimated        = Column(Boolean, nullable=True)   # None = unknown (old row)
     serving_description = Column(String,  nullable=True)   # e.g. "43 g", "per 100g"
 
+    # Serving metadata — nullable; absent on rows created before this migration.
+    # serving_quantity: how many servings the user chose (e.g. 2.0)
+    # serving_unit:     unit label shown in the UI (e.g. "serving", "g")
+    # serving_grams:    grams per serving — reserved for future weight-based scaling
+    serving_quantity = Column(Float,  nullable=True)
+    serving_unit     = Column(String, nullable=True)
+    serving_grams    = Column(Float,  nullable=True)
+
+    # Immutable base nutrition per 1 serving.
+    # Written once at creation; used to recompute macros when serving_quantity changes.
+    # NULL on rows created before this migration — those rows use manual macro editing.
+    base_calories = Column(Float, nullable=True)
+    base_protein  = Column(Float, nullable=True)
+    base_carbs    = Column(Float, nullable=True)
+    base_fat      = Column(Float, nullable=True)
+
 
 class UserProfile(Base):
     """One row per Supabase auth user — stores profile data used for calorie targets."""

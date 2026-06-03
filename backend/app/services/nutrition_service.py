@@ -1,4 +1,5 @@
 import os
+from dataclasses import dataclass, field
 import httpx
 from app.services.debug_logger import log_usda_candidates, log_rejection
 
@@ -56,11 +57,212 @@ PROCESSED_KEYWORDS = [
 ]
 
 
+@dataclass(frozen=True)
+class GenericFoodProfile:
+    """Canonical guidance for common generic foods.
+
+    USDA search is precise but not user-friendly by default: it often returns
+    per-100g ingredient records, dry foods, flours, oils, or processed variants.
+    Profiles encode Lume's default serving and ranking intent for common whole
+    foods while still using USDA as the nutrition source.
+    """
+    search_query: str
+    default_grams: float = 100.0
+    prefer_terms: tuple[str, ...] = ()
+    avoid_terms: tuple[str, ...] = ()
+    unit_grams: dict[str, float] = field(default_factory=dict)
+
+
+_COOKED_DEFAULT_AVOIDS = ("raw", "dry", "dried", "flour", "oil", "tots", "chips")
+
+_GENERIC_FOOD_PROFILES: dict[str, GenericFoodProfile] = {
+    "banana": GenericFoodProfile(
+        search_query="banana raw",
+        default_grams=118,
+        prefer_terms=("banana", "raw"),
+        avoid_terms=("nectar", "baked", "chips", "babyfood"),
+        unit_grams={"large": 136, "small": 101},
+    ),
+    "apple": GenericFoodProfile(
+        search_query="apple raw",
+        default_grams=182,
+        prefer_terms=("apple", "raw"),
+        avoid_terms=("candied", "juice", "sauce", "dried", "pie"),
+        unit_grams={"large": 223, "small": 149},
+    ),
+    "orange": GenericFoodProfile(
+        search_query="orange raw",
+        default_grams=131,
+        prefer_terms=("orange", "raw"),
+        avoid_terms=("juice", "drink", "peel", "marmalade"),
+    ),
+    "strawberries": GenericFoodProfile(
+        search_query="strawberries raw",
+        default_grams=152,
+        prefer_terms=("strawberries", "raw"),
+        avoid_terms=("syrup", "frozen", "sweetened", "jam"),
+        unit_grams={"cup": 152, "cups": 152},
+    ),
+    "blueberries": GenericFoodProfile(
+        search_query="blueberries raw",
+        default_grams=148,
+        prefer_terms=("blueberries", "raw"),
+        avoid_terms=("dried", "syrup", "muffin", "jam"),
+        unit_grams={"cup": 148, "cups": 148},
+    ),
+    "avocado": GenericFoodProfile(
+        search_query="avocado raw",
+        default_grams=150,
+        prefer_terms=("avocado", "raw"),
+        avoid_terms=("oil", "dip", "guacamole"),
+    ),
+    "broccoli": GenericFoodProfile(
+        search_query="broccoli cooked",
+        default_grams=156,
+        prefer_terms=("broccoli", "cooked"),
+        avoid_terms=("raw", "soup", "casserole", "babyfood"),
+        unit_grams={"cup": 156, "cups": 156},
+    ),
+    "spinach": GenericFoodProfile(
+        search_query="spinach raw",
+        default_grams=30,
+        prefer_terms=("spinach", "raw"),
+        avoid_terms=("dip", "souffle", "cooked"),
+        unit_grams={"cup": 30, "cups": 30},
+    ),
+    "potato": GenericFoodProfile(
+        search_query="potato baked flesh",
+        default_grams=173,
+        prefer_terms=("potato", "baked"),
+        avoid_terms=("chips", "fries", "tots", "flour", "raw"),
+    ),
+    "sweet potato": GenericFoodProfile(
+        search_query="sweet potato cooked baked",
+        default_grams=130,
+        prefer_terms=("sweet", "potato", "cooked"),
+        avoid_terms=("tots", "fries", "chips", "flour", "raw"),
+    ),
+    "white rice": GenericFoodProfile(
+        search_query="rice white cooked",
+        default_grams=158,
+        prefer_terms=("rice", "white", "cooked"),
+        avoid_terms=("flour", "dry", "uncooked", "bran"),
+        unit_grams={"cup": 158, "cups": 158},
+    ),
+    "brown rice": GenericFoodProfile(
+        search_query="rice brown cooked",
+        default_grams=195,
+        prefer_terms=("rice", "brown", "cooked"),
+        avoid_terms=("flour", "dry", "uncooked", "bran"),
+        unit_grams={"cup": 195, "cups": 195},
+    ),
+    "rice": GenericFoodProfile(
+        search_query="rice white cooked",
+        default_grams=158,
+        prefer_terms=("rice", "cooked"),
+        avoid_terms=("flour", "dry", "uncooked", "bran"),
+        unit_grams={"cup": 158, "cups": 158},
+    ),
+    "oatmeal": GenericFoodProfile(
+        search_query="oatmeal cooked",
+        default_grams=234,
+        prefer_terms=("oatmeal", "cooked"),
+        avoid_terms=("cookie", "bar", "dry", "instant flavored"),
+        unit_grams={"cup": 234, "cups": 234},
+    ),
+    "eggs": GenericFoodProfile(
+        search_query="egg whole cooked",
+        default_grams=50,
+        prefer_terms=("egg", "whole"),
+        avoid_terms=("white", "substitute", "powder"),
+    ),
+    "egg": GenericFoodProfile(
+        search_query="egg whole cooked",
+        default_grams=50,
+        prefer_terms=("egg", "whole"),
+        avoid_terms=("white", "substitute", "powder"),
+    ),
+    "chicken breast": GenericFoodProfile(
+        search_query="chicken breast cooked roasted",
+        default_grams=100,
+        prefer_terms=("chicken", "breast", "cooked"),
+        avoid_terms=("raw", "skin", "breaded", "fried", "canned"),
+    ),
+    "salmon": GenericFoodProfile(
+        search_query="salmon cooked",
+        default_grams=100,
+        prefer_terms=("salmon", "cooked"),
+        avoid_terms=("oil", "raw", "smoked", "canned"),
+    ),
+    "ground beef": GenericFoodProfile(
+        search_query="ground beef cooked",
+        default_grams=100,
+        prefer_terms=("beef", "ground", "cooked"),
+        avoid_terms=("raw", "patty", "meatballs"),
+    ),
+    "greek yogurt": GenericFoodProfile(
+        search_query="yogurt greek plain",
+        default_grams=170,
+        prefer_terms=("yogurt", "greek", "plain"),
+        avoid_terms=("flavored", "sweetened", "frozen"),
+        unit_grams={"cup": 245, "cups": 245},
+    ),
+    "whole milk": GenericFoodProfile(
+        search_query="milk whole",
+        default_grams=244,
+        prefer_terms=("milk", "whole"),
+        avoid_terms=("cheese", "powder", "evaporated", "chocolate"),
+        unit_grams={"cup": 244, "cups": 244},
+    ),
+    "cheddar cheese": GenericFoodProfile(
+        search_query="cheese cheddar",
+        default_grams=28,
+        prefer_terms=("cheese", "cheddar"),
+        avoid_terms=("sauce", "spread", "powder"),
+        unit_grams={"slice": 28, "slices": 28},
+    ),
+    "almonds": GenericFoodProfile(
+        search_query="almonds",
+        default_grams=28,
+        prefer_terms=("almonds",),
+        avoid_terms=("butter", "milk", "flour", "oil"),
+    ),
+    "peanut butter": GenericFoodProfile(
+        search_query="peanut butter",
+        default_grams=32,
+        prefer_terms=("peanut", "butter"),
+        avoid_terms=("powder", "reduced fat"),
+        unit_grams={"tbsp": 16, "tablespoon": 16, "tablespoons": 16},
+    ),
+    "olive oil": GenericFoodProfile(
+        search_query="olive oil",
+        default_grams=13.5,
+        prefer_terms=("olive", "oil"),
+        avoid_terms=("spray", "dressing"),
+        unit_grams={"tbsp": 13.5, "tablespoon": 13.5, "tablespoons": 13.5, "tsp": 4.5, "teaspoon": 4.5, "teaspoons": 4.5},
+    ),
+    "black beans": GenericFoodProfile(
+        search_query="black beans cooked",
+        default_grams=172,
+        prefer_terms=("beans", "black", "cooked"),
+        avoid_terms=("dry", "dried", "flour", "raw"),
+        unit_grams={"cup": 172, "cups": 172},
+    ),
+    "pasta": GenericFoodProfile(
+        search_query="pasta cooked",
+        default_grams=140,
+        prefer_terms=("pasta", "cooked"),
+        avoid_terms=("dry", "uncooked", "sauce"),
+        unit_grams={"cup": 140, "cups": 140},
+    ),
+}
+
+
 # ---------------------------------------------------------------------------
 # Internal helpers
 # ---------------------------------------------------------------------------
 
-def _score_food(food: dict, query: str) -> int:
+def _score_food(food: dict, query: str, profile: GenericFoodProfile | None = None) -> int:
     """
     Assign a score to a USDA result. Higher score = better match for a generic query.
     This is used to pick the best result from a list of candidates.
@@ -117,11 +319,51 @@ def _score_food(food: dict, query: str) -> int:
         if keyword in description and keyword not in query_words:
             score -= 20
 
+    if profile is not None:
+        for term in profile.prefer_terms:
+            if term in description:
+                score += 12
+        for term in profile.avoid_terms:
+            if term in description:
+                score -= 35
+
+    nutrients = food.get("foodNutrients", [])
+    if nutrients:
+        calories = _extract_calories(nutrients)
+        protein = _extract_nutrient(nutrients, NUTRIENT_ID_PROTEIN)
+        carbs = _extract_nutrient(nutrients, NUTRIENT_ID_CARBS)
+        fat = _extract_nutrient(nutrients, NUTRIENT_ID_FAT)
+        if calories == 0 and protein == 0 and carbs == 0 and fat == 0:
+            score -= 100
+
     # Shorter descriptions tend to be plainer foods ("Bananas, raw" beats
     # "Banana cream pie filling, canned, ready to serve").
     score -= len(description) // 10
 
     return score
+
+
+def _profile_for_query(query: str) -> GenericFoodProfile | None:
+    """Return a canonical generic-food profile for an already-core food query."""
+    q = _normalize_query(query)
+    return _GENERIC_FOOD_PROFILES.get(q)
+
+
+def _grams_from_unit(unit: str, quantity: float, profile: GenericFoodProfile) -> float | None:
+    """Convert supported user units to grams for the given canonical food."""
+    u = unit.lower()
+    if u in {"g", "gram", "grams"}:
+        return quantity
+    if u in {"kg", "kilogram", "kilograms"}:
+        return quantity * 1000
+    if u in {"oz", "ounce", "ounces"}:
+        return quantity * 28.3495
+    if u in {"lb", "lbs", "pound", "pounds"}:
+        return quantity * 453.592
+    grams_per_unit = profile.unit_grams.get(u)
+    if grams_per_unit is not None:
+        return quantity * grams_per_unit
+    return None
 
 
 def _extract_nutrient(nutrients: list, nutrient_id: int) -> float:
@@ -456,7 +698,8 @@ def _fetch_nutrition(query: str, prefer_generic: bool = False) -> dict:
     Leave False (default) for fallback paths from branded/restaurant routing
     where the caller explicitly wants any available USDA data as a last resort.
     """
-    query = _normalize_query(query)
+    profile = _profile_for_query(query) if prefer_generic else None
+    query = profile.search_query if profile is not None else _normalize_query(query)
 
     # Read the key at call time (not module-level) so that test fixtures or
     # conftest.py that load .env after import still pick up the real key.
@@ -477,6 +720,14 @@ def _fetch_nutrition(query: str, prefer_generic: bool = False) -> dict:
             params=params,
             timeout=5.0,
         )
+        if response.status_code == 400 and prefer_generic and "dataType" in params:
+            retry_params = dict(params)
+            retry_params.pop("dataType", None)
+            response = httpx.get(
+                USDA_SEARCH_URL,
+                params=retry_params,
+                timeout=5.0,
+            )
         response.raise_for_status()
 
         foods = response.json().get("foods", [])
@@ -489,7 +740,7 @@ def _fetch_nutrition(query: str, prefer_generic: bool = False) -> dict:
         # Attach _score to each dict so debug logging can show it without
         # re-computing.
         for food in foods:
-            food["_score"] = _score_food(food, query)
+            food["_score"] = _score_food(food, query, profile)
 
         best_food  = max(foods, key=lambda f: f["_score"])
         best_score = best_food["_score"]
@@ -511,6 +762,12 @@ def _fetch_nutrition(query: str, prefer_generic: bool = False) -> dict:
 
         nutrients = best_food.get("foodNutrients", [])
         calories  = _extract_calories(nutrients)
+        protein   = _extract_nutrient(nutrients, NUTRIENT_ID_PROTEIN)
+        carbs     = _extract_nutrient(nutrients, NUTRIENT_ID_CARBS)
+        fat       = _extract_nutrient(nutrients, NUTRIENT_ID_FAT)
+
+        if calories == 0 and (protein > 0 or carbs > 0 or fat > 0):
+            calories = round((protein * 4) + (carbs * 4) + (fat * 9), 1)
 
         # Sanity check: for known meal/drink categories, reject USDA results
         # whose calorie count is implausibly low.  This catches cases where a
@@ -534,20 +791,22 @@ def _fetch_nutrition(query: str, prefer_generic: bool = False) -> dict:
             "pasta":       250,
             "spaghetti":   250,
         }
-        for keyword, floor in _MEAL_CALORIE_FLOOR.items():
-            if keyword in query and calories < floor:
-                log_rejection(query, "usda_meal_calorie_floor",
-                              {"keyword": keyword, "calories": calories, "floor": floor,
-                               "usda_desc": best_food.get("description", "")})
-                return {**_get_fallback_nutrition(query), "is_estimated": True}
+        if profile is None:
+            for keyword, floor in _MEAL_CALORIE_FLOOR.items():
+                if keyword in query and calories < floor:
+                    log_rejection(query, "usda_meal_calorie_floor",
+                                  {"keyword": keyword, "calories": calories, "floor": floor,
+                                   "usda_desc": best_food.get("description", "")})
+                    return {**_get_fallback_nutrition(query), "is_estimated": True}
 
         return {
             "calories":     calories,
-            "protein":      _extract_nutrient(nutrients, NUTRIENT_ID_PROTEIN),
-            "carbs":        _extract_nutrient(nutrients, NUTRIENT_ID_CARBS),
-            "fat":          _extract_nutrient(nutrients, NUTRIENT_ID_FAT),
+            "protein":      protein,
+            "carbs":        carbs,
+            "fat":          fat,
             "is_estimated": False,
             "source_name":  best_food.get("description", ""),  # USDA item description
+            "serving_description": "per 100g",
         }
 
     except Exception as exc:
@@ -590,6 +849,7 @@ def get_nutrition(
     query: str,
     *,
     quantity: float = 0.0,
+    unit: str | None = None,
     size_modifier: str | None = None,
     prefer_generic: bool = False,
     rule_based_only: bool = False,
@@ -642,7 +902,9 @@ def get_nutrition(
     with the original user-facing text if desired.
     """
     qty       = quantity if quantity > 0.0 else float(_extract_leading_quantity(query))
-    size_mult = _SIZE_MULTIPLIERS.get(size_modifier.lower(), 1.0) if size_modifier else 1.0
+    profile   = _profile_for_query(query) if prefer_generic else None
+    size_key  = size_modifier.lower() if size_modifier else None
+    size_mult = _SIZE_MULTIPLIERS.get(size_key, 1.0) if size_key else 1.0
     eff_qty   = qty * size_mult
 
     if rule_based_only:
@@ -652,6 +914,30 @@ def get_nutrition(
 
     # Normalize the query for display: strips leading counts and size words.
     result["name"] = _normalize_query(query) or query.strip()
+
+    if profile is not None and not result.get("is_estimated", True):
+        grams = _grams_from_unit(unit, qty, profile) if unit else None
+        serving_label = None
+        if grams is None:
+            if size_key and size_key in profile.unit_grams:
+                grams = qty * profile.unit_grams[size_key]
+                serving_label = f"{qty:g} {size_key}"
+            else:
+                grams = profile.default_grams * eff_qty
+        elif unit:
+            serving_label = f"{qty:g} {unit}"
+
+        scale = grams / 100.0
+        result["serving_description"] = (
+            serving_label or f"{grams:g} g serving"
+        )
+        return {
+            **result,
+            "calories": round(result["calories"] * scale, 1),
+            "protein":  round(result["protein"]  * scale, 1),
+            "carbs":    round(result["carbs"]    * scale, 1),
+            "fat":      round(result["fat"]      * scale, 1),
+        }
 
     if eff_qty != 1.0:
         return {

@@ -25,17 +25,32 @@ class CreateFoodLog(BaseModel):
     confidence:          Optional[float] = None
     is_estimated:        Optional[bool]  = None
     serving_description: Optional[str]   = None
+    # Serving metadata — optional; omit for old-style logs without serving context.
+    serving_quantity: Optional[float] = None
+    serving_unit:     Optional[str]   = None
+    serving_grams:    Optional[float] = None
+    # Immutable per-1-serving base nutrition — stored so future edits can rescale.
+    base_calories: Optional[float] = None
+    base_protein:  Optional[float] = None
+    base_carbs:    Optional[float] = None
+    base_fat:      Optional[float] = None
 
 
 class UpdateFoodLog(BaseModel):
     """Shape of the request body for PATCH /logs/{log_id}.
     All fields are optional — only the ones supplied will be updated.
+
+    When serving_quantity is provided and the row has base nutrition values,
+    macros are recomputed automatically from base × quantity.
+    Manual macro fields (calories/protein/carbs/fat) are used only when the
+    row has no base nutrition (old rows) or when serving_quantity is absent.
     """
-    name:     Optional[str]   = None
-    calories: Optional[float] = None
-    protein:  Optional[float] = None
-    carbs:    Optional[float] = None
-    fat:      Optional[float] = None
+    name:             Optional[str]   = None
+    calories:         Optional[float] = None
+    protein:          Optional[float] = None
+    carbs:            Optional[float] = None
+    fat:              Optional[float] = None
+    serving_quantity: Optional[float] = None
 
 
 class FoodLogOut(BaseModel):
@@ -60,6 +75,14 @@ class FoodLogOut(BaseModel):
     confidence:          Optional[float] = None
     is_estimated:        bool            = False  # NULL in old rows → False
     serving_description: Optional[str]   = None
+    # Serving metadata — None on old rows.
+    serving_quantity: Optional[float] = None
+    serving_unit:     Optional[str]   = None
+    serving_grams:    Optional[float] = None
+    base_calories:    Optional[float] = None
+    base_protein:     Optional[float] = None
+    base_carbs:       Optional[float] = None
+    base_fat:         Optional[float] = None
 
 
 @router.post("/logs")
@@ -91,6 +114,13 @@ def add_log(
         confidence=entry.confidence,
         is_estimated=entry.is_estimated,
         serving_description=entry.serving_description,
+        serving_quantity=entry.serving_quantity,
+        serving_unit=entry.serving_unit,
+        serving_grams=entry.serving_grams,
+        base_calories=entry.base_calories,
+        base_protein=entry.base_protein,
+        base_carbs=entry.base_carbs,
+        base_fat=entry.base_fat,
     )
     db.add(db_log)
     db.commit()
@@ -147,12 +177,24 @@ def update_log(
         # so we don't leak the existence of other users' data.
         raise HTTPException(status_code=404, detail="Log not found")
 
-    # Apply only the fields the caller actually sent
-    if updates.name     is not None: db_log.name     = updates.name
-    if updates.calories is not None: db_log.calories = updates.calories
-    if updates.protein  is not None: db_log.protein  = updates.protein
-    if updates.carbs    is not None: db_log.carbs    = updates.carbs
-    if updates.fat      is not None: db_log.fat      = updates.fat
+    # Apply only the fields the caller actually sent.
+    if updates.name is not None:
+        db_log.name = updates.name
+
+    if updates.serving_quantity is not None and db_log.base_calories is not None:
+        # Serving-mode edit: recompute macros from the immutable base nutrition.
+        qty = updates.serving_quantity
+        db_log.serving_quantity = qty
+        db_log.calories = round(db_log.base_calories * qty, 1)
+        db_log.protein  = round((db_log.base_protein or 0) * qty, 1)
+        db_log.carbs    = round((db_log.base_carbs   or 0) * qty, 1)
+        db_log.fat      = round((db_log.base_fat     or 0) * qty, 1)
+    else:
+        # Manual macro edit — used for old rows that have no base nutrition.
+        if updates.calories is not None: db_log.calories = updates.calories
+        if updates.protein  is not None: db_log.protein  = updates.protein
+        if updates.carbs    is not None: db_log.carbs    = updates.carbs
+        if updates.fat      is not None: db_log.fat      = updates.fat
 
     db.commit()
     db.refresh(db_log)

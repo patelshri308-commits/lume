@@ -119,6 +119,11 @@ _SIZE_RE = re.compile(
     re.IGNORECASE,
 )
 
+_COMPACT_QTY_UNIT_RE = re.compile(
+    r"^(\d+\.?\d*)\s*(" + _UNIT_ALT + r")\s+",
+    re.IGNORECASE,
+)
+
 
 # ---------------------------------------------------------------------------
 # Public API
@@ -144,21 +149,28 @@ def parse(raw: str) -> ParsedQuery:
 
     remaining = clean
 
-    # ── Leading quantity (decimal, integer, or English number word) ──────────
-    m = _QTY_RE.match(remaining)
+    # ── Leading compact measurement, e.g. "100g chicken" ─────────────────────
+    m = _COMPACT_QTY_UNIT_RE.match(remaining)
     if m:
-        token = m.group(1).lower()
-        try:
-            pq.quantity = float(token)
-        except ValueError:
-            pq.quantity = _NUMBER_WORDS.get(token, 1.0)
+        pq.quantity = float(m.group(1))
+        pq.unit = m.group(2).lower()
         remaining = remaining[m.end():]
+    else:
+        # ── Leading quantity (decimal, integer, or English number word) ──────
+        m = _QTY_RE.match(remaining)
+        if m:
+            token = m.group(1).lower()
+            try:
+                pq.quantity = float(token)
+            except ValueError:
+                pq.quantity = _NUMBER_WORDS.get(token, 1.0)
+            remaining = remaining[m.end():]
 
-    # ── Unit following the quantity ───────────────────────────────────────────
-    m = _UNIT_RE.match(remaining)
-    if m:
-        pq.unit = m.group(1).lower()
-        remaining = remaining[m.end():]
+        # ── Unit following the quantity ───────────────────────────────────────
+        m = _UNIT_RE.match(remaining)
+        if m:
+            pq.unit = m.group(1).lower()
+            remaining = remaining[m.end():]
 
     # ── Size modifier (prefix only, before the food name) ────────────────────
     m = _SIZE_RE.match(remaining)

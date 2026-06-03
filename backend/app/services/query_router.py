@@ -196,6 +196,7 @@ def route_food_query(query: str) -> dict:
     result = get_nutrition(
         search_query,
         quantity=parsed.quantity,
+        unit=parsed.unit,
         size_modifier=parsed.size_modifier,
         prefer_generic=True,
     )

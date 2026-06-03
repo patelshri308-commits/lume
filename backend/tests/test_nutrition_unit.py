@@ -104,6 +104,26 @@ def _usda_response(description: str, data_type: str, calories: float,
     return mock_resp
 
 
+def _usda_multi_response(*foods: tuple[str, str, float, float, float, float]) -> MagicMock:
+    """Return a mock USDA response with multiple candidate foods."""
+    payload = {"foods": []}
+    for description, data_type, calories, protein, carbs, fat in foods:
+        payload["foods"].append({
+            "description": description,
+            "dataType": data_type,
+            "foodNutrients": [
+                {"nutrientId": 1008, "value": calories},
+                {"nutrientId": 1003, "value": protein},
+                {"nutrientId": 1005, "value": carbs},
+                {"nutrientId": 1004, "value": fat},
+            ],
+        })
+    mock_resp = MagicMock()
+    mock_resp.json.return_value = payload
+    mock_resp.raise_for_status.return_value = None
+    return mock_resp
+
+
 # ============================================================
 # Section 1: Classification
 # ============================================================
@@ -141,6 +161,9 @@ class TestClassification:
         # 'banana smoothie' is two words but only 'smoothie' is ambiguous,
         # so the classifier correctly falls through to GENERIC_FOOD.
         ("banana smoothie",    QueryClass.GENERIC_FOOD),
+
+        # Lume treats plain cooked pasta as a generic benchmark food.
+        ("pasta",              QueryClass.GENERIC_FOOD),
     ])
     def test_query_routes_to_correct_class(self, query: str, expected: QueryClass):
         parsed = parse(query)
@@ -180,6 +203,13 @@ class TestClassification:
         )
         assert parsed.unit == "cups"
         assert parsed.core_food == "rice"
+
+    def test_compact_gram_quantity_is_parsed(self):
+        """'100g chicken breast' should parse as a gram measurement."""
+        parsed = parse("100g chicken breast")
+        assert parsed.quantity == pytest.approx(100.0)
+        assert parsed.unit == "g"
+        assert parsed.core_food == "chicken breast"
 
 
 # ============================================================
@@ -293,8 +323,9 @@ class TestNutritionLogic:
 
     def test_fractional_quantity_scales_correctly(self):
         """
-        A fractional quantity (2.5) passed to get_nutrition must multiply
-        all macros by exactly that factor.
+        A fractional household quantity should convert through the canonical
+        serving profile.  Rice defaults to cooked cup semantics, so 2.5 cups
+        uses 2.5 × 158 g of cooked rice.
 
         Protects against: the legacy integer extractor truncating 2.5 → 2
         or 1 when a float quantity is provided by the parser.
@@ -302,26 +333,88 @@ class TestNutritionLogic:
         with patch("app.services.nutrition_service.httpx.get",
                    return_value=_usda_response("Rice, cooked", "SR Legacy", 200.0,
                                                protein=4.0, carbs=44.0, fat=0.5)):
-            result = get_nutrition("rice", quantity=2.5)
+            result = get_nutrition("rice", quantity=2.5, unit="cups", prefer_generic=True)
 
-        assert result["calories"] == pytest.approx(200.0 * 2.5, rel=0.01), (
-            f"calories={result['calories']}; expected {200.0 * 2.5}"
-        )
-        assert result["protein"]  == pytest.approx(4.0 * 2.5,   rel=0.01)
-        assert result["carbs"]    == pytest.approx(44.0 * 2.5,   rel=0.01)
+        scale = (2.5 * 158) / 100
+        assert result["calories"] == pytest.approx(200.0 * scale, rel=0.01)
+        assert result["protein"]  == pytest.approx(4.0 * scale,   rel=0.01)
+        assert result["carbs"]    == pytest.approx(44.0 * scale,  rel=0.01)
+        assert result["serving_description"] == "2.5 cups"
 
     def test_quantity_two_scales_all_macros(self):
         """Ordering 2 of an item should double every macro."""
         with patch("app.services.nutrition_service.httpx.get",
                    return_value=_usda_response("Egg, whole", "Foundation", 70.0,
                                                protein=6.0, carbs=0.6, fat=5.0)):
-            single = get_nutrition("egg")
-            double = get_nutrition("egg", quantity=2.0)
+            single = get_nutrition("egg", prefer_generic=True)
+            double = get_nutrition("egg", quantity=2.0, prefer_generic=True)
 
         for macro in ("calories", "protein", "carbs", "fat"):
             assert double[macro] == pytest.approx(single[macro] * 2, rel=0.01), (
                 f"{macro}: single={single[macro]}, double={double[macro]}"
             )
+
+    def test_gram_unit_uses_exact_weight(self):
+        """A gram measurement should scale from USDA per-100g data directly."""
+        with patch("app.services.nutrition_service.httpx.get",
+                   return_value=_usda_response(
+                       "Chicken, broilers or fryers, breast, meat only, cooked, roasted",
+                       "Foundation", 165.0, protein=31.0, carbs=0.0, fat=3.6
+                   )):
+            result = route_food_query("100g chicken breast")
+
+        assert result["calories"] == pytest.approx(165.0)
+        assert result["protein"] == pytest.approx(31.0)
+        assert result["serving_description"] == "100 g"
+
+    def test_tablespoon_unit_uses_food_specific_weight(self):
+        """Tablespoons must convert to grams instead of multiplying per-100g nutrition."""
+        with patch("app.services.nutrition_service.httpx.get",
+                   return_value=_usda_response(
+                       "Peanut butter, creamy", "SR Legacy",
+                       632.0, protein=24.0, carbs=22.7, fat=49.4
+                   )):
+            result = route_food_query("2 tbsp peanut butter")
+
+        scale = 32 / 100
+        assert result["calories"] == pytest.approx(632.0 * scale, rel=0.01)
+        assert result["serving_description"] == "2 tbsp"
+
+    def test_generic_profile_penalizes_wrong_salmon_form(self):
+        """Plain salmon should prefer cooked fish over salmon oil."""
+        with patch("app.services.nutrition_service.httpx.get",
+                   return_value=_usda_multi_response(
+                       ("Fish oil, salmon", "SR Legacy", 902.0, 0.0, 0.0, 100.0),
+                       ("Fish, salmon, Atlantic, cooked", "Foundation", 206.0, 22.1, 0.0, 12.4),
+                   )):
+            result = route_food_query("salmon")
+
+        assert result["source_name"] == "Fish, salmon, Atlantic, cooked"
+        assert result["calories"] == pytest.approx(206.0)
+
+    def test_whole_milk_profile_penalizes_cheese(self):
+        """Whole milk should not select whole-milk ricotta cheese."""
+        with patch("app.services.nutrition_service.httpx.get",
+                   return_value=_usda_multi_response(
+                       ("Cheese, ricotta, whole milk", "Foundation", 157.0, 7.8, 6.9, 11.0),
+                       ("Milk, whole", "Survey (FNDDS)", 61.0, 3.3, 4.6, 3.2),
+                   )):
+            result = route_food_query("whole milk")
+
+        assert result["source_name"] == "Milk, whole"
+        assert result["calories"] == pytest.approx(61.0 * 2.44, rel=0.01)
+
+    def test_zero_nutrient_oil_candidate_is_rejected(self):
+        """A zero-filled branded oil candidate should not beat usable olive oil data."""
+        with patch("app.services.nutrition_service.httpx.get",
+                   return_value=_usda_multi_response(
+                       ("OLIVE OIL", "Branded", 0.0, 0.0, 0.0, 0.0),
+                       ("Olive oil", "Survey (FNDDS)", 900.0, 0.0, 0.0, 100.0),
+                   )):
+            result = route_food_query("1 tbsp olive oil")
+
+        assert result["source_name"] == "Olive oil"
+        assert result["calories"] == pytest.approx(121.5, rel=0.01)
 
     # ── Meal calorie floor ────────────────────────────────────────────────────
 
@@ -510,7 +603,7 @@ class TestGenericFoodDataTypeFilter:
     ───────
     USDA's full-text search ranks by phrase match.  Branded products named
     "Chicken Breast" outrank the Foundation entry "Chicken, broilers …, breast,
-    meat only, raw" because they contain the exact two-word phrase.
+    meat only, cooked" because they contain the exact two-word phrase.
 
     In our internal scorer all Branded items receive DATA_TYPE_SCORE["Branded"]
     = -30, which means even a perfect word match ("chicken" + "breast" + primary
@@ -540,11 +633,12 @@ class TestGenericFoodDataTypeFilter:
             "app.services.nutrition_service", fromlist=["get_nutrition"]
         ).get_nutrition
 
-        def spy_get_nutrition(query, *, quantity=0.0, size_modifier=None,
+        def spy_get_nutrition(query, *, quantity=0.0, unit=None, size_modifier=None,
                               prefer_generic=False):
             captured_calls.append({"query": query, "prefer_generic": prefer_generic})
             return original_get_nutrition(
                 query, quantity=quantity,
+                unit=unit,
                 size_modifier=size_modifier,
                 prefer_generic=prefer_generic,
             )
@@ -552,7 +646,7 @@ class TestGenericFoodDataTypeFilter:
         with patch("app.services.query_router.get_nutrition", side_effect=spy_get_nutrition), \
              patch("app.services.nutrition_service.httpx.get",
                    return_value=_usda_response(
-                       "Chicken, broilers or fryers, breast, meat only, raw",
+                       "Chicken, broilers or fryers, breast, meat only, cooked, roasted",
                        "Foundation", 165.0, protein=31.0, carbs=0.0, fat=3.6
                    )):
             route_food_query("chicken breast")
@@ -620,6 +714,37 @@ class TestGenericFoodDataTypeFilter:
             f"actual params: {captured_params[0]}"
         )
 
+    def test_prefer_generic_retries_without_datatype_on_400(self):
+        """
+        USDA occasionally rejects filtered searches with HTTP 400.  The generic
+        path should retry once without the dataType filter instead of falling
+        straight to a vague estimate.
+        """
+        from app.services.nutrition_service import _fetch_nutrition
+
+        bad_resp = MagicMock()
+        bad_resp.status_code = 400
+
+        good_resp = _usda_response(
+            "Chicken, broilers or fryers, breast, meat only, cooked, roasted",
+            "Foundation", 165.0, protein=31.0, carbs=0.0, fat=3.6
+        )
+
+        captured_params: list[dict] = []
+
+        def capture_get(url, *, params=None, timeout=None, **kw):
+            captured_params.append(dict(params or {}))
+            return bad_resp if len(captured_params) == 1 else good_resp
+
+        with patch("app.services.nutrition_service.httpx.get", side_effect=capture_get):
+            result = _fetch_nutrition("chicken breast", prefer_generic=True)
+
+        assert len(captured_params) == 2
+        assert "dataType" in captured_params[0]
+        assert "dataType" not in captured_params[1]
+        assert result["is_estimated"] is False
+        assert result["calories"] == pytest.approx(165.0)
+
     def test_branded_only_pool_triggers_fallback_without_filter(self):
         """
         Confirms the pre-fix failure mode: when the USDA pool contains ONLY
@@ -668,7 +793,7 @@ class TestGenericFoodDataTypeFilter:
 
         with patch("app.services.nutrition_service.httpx.get",
                    return_value=_usda_response(
-                       "Chicken, broilers or fryers, breast, meat only, raw",
+                       "Chicken, broilers or fryers, breast, meat only, cooked, roasted",
                        "Foundation", 165.0, protein=31.0, carbs=0.0, fat=3.6
                    )):
             result = _fetch_nutrition("chicken breast", prefer_generic=True)
@@ -689,7 +814,7 @@ class TestGenericFoodDataTypeFilter:
         """
         with patch("app.services.nutrition_service.httpx.get",
                    return_value=_usda_response(
-                       "Chicken, broilers or fryers, breast, meat only, raw",
+                       "Chicken, broilers or fryers, breast, meat only, cooked, roasted",
                        "Foundation", 165.0, protein=31.0, carbs=0.0, fat=3.6
                    )):
             result = route_food_query("chicken breast")

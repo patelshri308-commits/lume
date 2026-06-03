@@ -308,6 +308,10 @@ def classify(parsed: ParsedQuery) -> QueryClass:
 # Private helpers
 # ---------------------------------------------------------------------------
 
+_GENERIC_SINGLE_WORD_OVERRIDES: frozenset[str] = frozenset({
+    "pasta",
+})
+
 def _is_composite(parsed: ParsedQuery) -> bool:
     """
     Return True if the query describes a multi-component meal.
@@ -363,6 +367,9 @@ def _is_ambiguous(parsed: ParsedQuery) -> bool:
         return False
 
     core_words = parsed.core_food.lower().split()
+
+    if parsed.core_food.lower() in _GENERIC_SINGLE_WORD_OVERRIDES:
+        return False
 
     # More than 2 core words → enough descriptive context to route confidently
     if len(core_words) > 2:

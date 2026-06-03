@@ -199,6 +199,7 @@ def _resolve_component(
     return get_nutrition(
         food_query,
         quantity=comp_parsed.quantity,
+        unit=comp_parsed.unit,
         size_modifier=size_mod,
     )
 
