@@ -44,13 +44,15 @@ Each `AuditCase` supports the following fields. Existing checks are unchanged; s
 
 Failure reasons are reported individually in the `reason` column so each distinct problem is visible.
 
-## Current Baseline (after Phase 5A stricter checks)
+## Current Baseline (after Phase 6 coverage expansion)
 
 Live audit run date: `2026-06-03`
 
-Summary: **8/8 passed** (stricter source-name checks active)
+Summary: **28/29 passed** — 8 source-quality + 5 quantity-scaling + 15/16 coverage
 
-| Query | Status | Calories | Source name | Disallowed terms guarding this case |
+### Source-quality cases (8/8)
+
+| Query | Status | Calories | Source name | Disallowed terms |
 | --- | --- | ---: | --- | --- |
 | `banana` | PASS | 100.3 | `Bananas, overripe, raw` | — |
 | `white rice` | PASS | 205.4 | `Rice, white, cooked, as ingredient` | `glutinous` |
@@ -61,13 +63,63 @@ Summary: **8/8 passed** (stricter source-name checks active)
 | `1 tbsp olive oil` | PASS | 121.5 | `Olive oil` | `corn`, `peanut`, `canola`, `vegetable`, `soybean`, `sunflower` |
 | `2 eggs` | PASS | 148.0 | `Eggs, Grade A, Large, egg whole` | `fried`, `egg white`, `substitute` |
 
-Regression tests: **53 passing** (no food-engine behavior changed in Phase 5A).
+### Quantity-scaling cases (5/5)
+
+| Query | Status | Calories | Serving | Source name | Notes |
+| --- | --- | ---: | --- | --- | --- |
+| `1 cup white rice` | PASS | 205.4 | `1 cup` | `Rice, white, cooked, as ingredient` | Cup unit parsed; 158 g scaling. |
+| `2.5 cups white rice` | PASS | 513.5 | `2.5 cups` | `Rice, white, cooked, as ingredient` | Fractional: 2.5 × 205.4 cal. |
+| `2 tbsp peanut butter` | PASS | ~191–202 | `2 tbsp` | `Peanut butter` / `Peanut butter, creamy` | 32 g; source varies by run. |
+| `1 large banana` | PASS | 115.6 | `1 large` | `Bananas, overripe, raw` | Size modifier → 136 g profile. |
+| `1 small apple` | PASS | 96.4 | `1 small` | `Apples, fuji, with skin, raw` | Size modifier → 149 g profile. |
+
+### Coverage cases (15/16)
+
+| Query | Status | Calories | Source name | Notes |
+| --- | --- | ---: | --- | --- |
+| `apple` | PASS | 117.8 | `Apples, fuji, with skin, raw` | |
+| `orange` | PASS | 61.6 | `Oranges, raw, navels` | |
+| `strawberries` | PASS | 55.3 | `Strawberries, raw` | |
+| `blueberries` | PASS | 94.6 | `Blueberries, raw` | |
+| **`avocado`** | **FAIL** | **334.5** | `Avocado, Hass, peeled, raw` | Audit range 150–330 too tight. Hass avocado is ~223 cal/100g × 150 g = 334.5 cal, just above ceiling. Source correct; range needs widening. |
+| `broccoli` | PASS | 34.3 | `Broccoli, chinese, cooked` | |
+| `spinach` | PASS | 6.9 | `Spinach, raw` | |
+| `potato` | PASS | 160.9 | `Potatoes, baked, flesh, with salt` | |
+| `sweet potato` | PASS | 130.0 | `Sweet potato, frozen, cooked, baked, with salt` | |
+| `brown rice` | PASS | 286.6 | `Rice, brown, parboiled, cooked, UNCLE BENS` | |
+| `oatmeal` | PASS | 131.0 | `Oatmeal, multigrain` | |
+| `salmon` | PASS | 231.0 | `Fish, salmon, chinook, cooked, dry heat` | |
+| `ground beef` | PASS | 295.0 | `Beef, ground, patties, frozen, cooked, broiled` | |
+| `greek yogurt` | PASS | 103.7 | `Yogurt, Greek, plain, nonfat` | |
+| `cheddar cheese` | PASS | 114.2 | `Cheese, cheddar` | |
+| `black beans` | PASS | 227.0 | `Beans, black, mature seeds, cooked, boiled, with salt` | |
+
+Regression tests: **53 passing** (no food-engine behavior changed in Phase 6).
 
 ---
 
 ---
 
 ## Phase History
+
+### Phase 6 (completed 2026-06-03)
+
+Expanded coverage benchmark in `scripts/audit_generic_foods.py`. No food-engine behavior changed.
+
+- Added `COVERAGE_BENCHMARK` (16 cases): fruits, vegetables, grains, proteins, dairy, legumes.
+- Each case has a calorie range and targeted `disallowed_source_terms` mirroring the profile's avoid_terms.
+- Summary now reports three sections: source-quality, quantity-scaling, coverage.
+- Live run result: **28/29 passed**. One failure:
+  - `avocado` — audit range 150–330 is too tight. USDA returned `Avocado, Hass, peeled, raw` at 334.5 cal (Hass variety is ~223 cal/100g vs average ~160 cal/100g). Source is correct; range should be widened to ~150–360. No food-engine change needed.
+
+### Phase 5B (completed 2026-06-03)
+
+Added quantity-scaling benchmark to `scripts/audit_generic_foods.py`. No food-engine behavior changed.
+
+- Benchmark split into `SOURCE_QUALITY_BENCHMARK` (8 items) and `QUANTITY_BENCHMARK` (5 items); `SMALL_BENCHMARK` is their concatenation.
+- Summary line now reports each section separately (`Source-quality: N/8`, `Quantity-scaling: N/5`, `Total: N/13`).
+- Added `required_serving_terms` checks to `100g chicken breast` (`"100"`) and `1 tbsp olive oil` (`"tbsp"`) to guard the serving-description path.
+- Five new quantity cases all passed on first live run: cup, fractional cup, tablespoon, large-size modifier, small-size modifier.
 
 ### Phase 5A (completed 2026-06-03)
 
