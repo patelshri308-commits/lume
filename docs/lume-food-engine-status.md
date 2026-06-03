@@ -44,36 +44,36 @@ Each `AuditCase` supports the following fields. Existing checks are unchanged; s
 
 Failure reasons are reported individually in the `reason` column so each distinct problem is visible.
 
-## Current Baseline (after Phase 6 coverage expansion)
+## Current Baseline (after Phase 7A fixes)
 
 Live audit run date: `2026-06-03`
 
-Summary: **28/29 passed** — 8 source-quality + 5 quantity-scaling + 15/16 coverage
+Summary: **29/29 passed** — 8 source-quality + 5 quantity-scaling + 16/16 coverage
 
 ### Source-quality cases (8/8)
 
-| Query | Status | Calories | Source name | Disallowed terms |
+| Query | Status | Calories | Source name | Notes |
 | --- | --- | ---: | --- | --- |
-| `banana` | PASS | 100.3 | `Bananas, overripe, raw` | — |
-| `white rice` | PASS | 205.4 | `Rice, white, cooked, as ingredient` | `glutinous` |
-| `100g chicken breast` | PASS | 165.0 | `Chicken, broilers or fryers, breast, meat only, cooked, roasted` | — |
-| `whole milk` | PASS | 148.8 | `Milk, whole` | `buttermilk`, `cheese`, `evaporated` |
-| `almonds` | PASS | 175.3 | `Nuts, almonds, whole, raw` | `paste`, `milk`, `butter`, `flour` |
-| `pasta` | PASS | 182.0 | `Pasta, homemade, made with egg, cooked` | `gluten-free`, `corn` |
-| `1 tbsp olive oil` | PASS | 121.5 | `Olive oil` | `corn`, `peanut`, `canola`, `vegetable`, `soybean`, `sunflower` |
-| `2 eggs` | PASS | 148.0 | `Eggs, Grade A, Large, egg whole` | `fried`, `egg white`, `substitute` |
+| `banana` | PASS | 100.3 | `Bananas, overripe, raw` | |
+| `white rice` | PASS | 205.4 | `Rice, white, cooked, as ingredient` | |
+| `100g chicken breast` | PASS | 165.0 | `Chicken, broilers or fryers, breast, meat only, cooked, roasted` | |
+| `whole milk` | PASS | 148.8 | `Milk, whole` | |
+| `almonds` | PASS | 175.3 | `Nuts, almonds, whole, raw` | |
+| `pasta` | PASS | 219.8 | `Pasta, cooked, enriched, with added salt` | Improved in Phase 7A (was `Pasta, homemade, made with egg`). |
+| `1 tbsp olive oil` | PASS | 119.3 | `Oil, olive, salad or cooking` | |
+| `2 eggs` | PASS | 148.0 | `Eggs, Grade A, Large, egg whole` | |
 
 ### Quantity-scaling cases (5/5)
 
-| Query | Status | Calories | Serving | Source name | Notes |
-| --- | --- | ---: | --- | --- | --- |
-| `1 cup white rice` | PASS | 205.4 | `1 cup` | `Rice, white, cooked, as ingredient` | Cup unit parsed; 158 g scaling. |
-| `2.5 cups white rice` | PASS | 513.5 | `2.5 cups` | `Rice, white, cooked, as ingredient` | Fractional: 2.5 × 205.4 cal. |
-| `2 tbsp peanut butter` | PASS | ~191–202 | `2 tbsp` | `Peanut butter` / `Peanut butter, creamy` | 32 g; source varies by run. |
-| `1 large banana` | PASS | 115.6 | `1 large` | `Bananas, overripe, raw` | Size modifier → 136 g profile. |
-| `1 small apple` | PASS | 96.4 | `1 small` | `Apples, fuji, with skin, raw` | Size modifier → 149 g profile. |
+| Query | Status | Calories | Serving | Source name |
+| --- | --- | ---: | --- | --- |
+| `1 cup white rice` | PASS | 205.4 | `1 cup` | `Rice, white, cooked, as ingredient` |
+| `2.5 cups white rice` | PASS | 513.5 | `2.5 cups` | `Rice, white, cooked, as ingredient` |
+| `2 tbsp peanut butter` | PASS | ~191–202 | `2 tbsp` | `Peanut butter` / `Peanut butter, creamy` (varies by run) |
+| `1 large banana` | PASS | 115.6 | `1 large` | `Bananas, overripe, raw` |
+| `1 small apple` | PASS | 96.4 | `1 small` | `Apples, fuji, with skin, raw` |
 
-### Coverage cases (15/16)
+### Coverage cases (16/16)
 
 | Query | Status | Calories | Source name | Notes |
 | --- | --- | ---: | --- | --- |
@@ -81,26 +81,49 @@ Summary: **28/29 passed** — 8 source-quality + 5 quantity-scaling + 15/16 cove
 | `orange` | PASS | 61.6 | `Oranges, raw, navels` | |
 | `strawberries` | PASS | 55.3 | `Strawberries, raw` | |
 | `blueberries` | PASS | 94.6 | `Blueberries, raw` | |
-| **`avocado`** | **FAIL** | **334.5** | `Avocado, Hass, peeled, raw` | Audit range 150–330 too tight. Hass avocado is ~223 cal/100g × 150 g = 334.5 cal, just above ceiling. Source correct; range needs widening. |
-| `broccoli` | PASS | 34.3 | `Broccoli, chinese, cooked` | |
+| `avocado` | PASS | 334.5 | `Avocado, Hass, peeled, raw` | Source correct; range widened 330→360 in Phase 7A. |
+| `broccoli` | PASS | 39.0 | `Broccoli raab, cooked` | Improved (was `Broccoli, chinese, cooked`); raab still not plain broccoli — see remaining issues. |
 | `spinach` | PASS | 6.9 | `Spinach, raw` | |
 | `potato` | PASS | 160.9 | `Potatoes, baked, flesh, with salt` | |
-| `sweet potato` | PASS | 130.0 | `Sweet potato, frozen, cooked, baked, with salt` | |
-| `brown rice` | PASS | 286.6 | `Rice, brown, parboiled, cooked, UNCLE BENS` | |
-| `oatmeal` | PASS | 131.0 | `Oatmeal, multigrain` | |
+| `sweet potato` | PASS | 117.0 | `Sweet potato, cooked, baked in skin, flesh, with salt` | Improved in Phase 7A (was frozen). |
+| `brown rice` | PASS | 241.8 | `Rice, brown, cooked, as ingredient` | Improved in Phase 7A (was Uncle Ben's parboiled). |
+| `oatmeal` | PASS | 187.2 | `Oatmeal, fast food, plain` | Improved in Phase 7A (was multigrain); fast-food variant still not ideal — see remaining issues. |
 | `salmon` | PASS | 231.0 | `Fish, salmon, chinook, cooked, dry heat` | |
-| `ground beef` | PASS | 295.0 | `Beef, ground, patties, frozen, cooked, broiled` | |
+| `ground beef` | PASS | 240.0 | `Beef, ground, unspecified fat content, cooked` | Improved in Phase 7A (was frozen patties). |
 | `greek yogurt` | PASS | 103.7 | `Yogurt, Greek, plain, nonfat` | |
 | `cheddar cheese` | PASS | 114.2 | `Cheese, cheddar` | |
 | `black beans` | PASS | 227.0 | `Beans, black, mature seeds, cooked, boiled, with salt` | |
 
-Regression tests: **53 passing** (no food-engine behavior changed in Phase 6).
-
----
+Regression tests: **59 passing** (6 new tests added in Phase 7A).
 
 ---
 
 ## Phase History
+
+### Phase 7A (completed 2026-06-03)
+
+Implemented targeted food-engine profile fixes from Phase 7 audit review.
+
+**Profile changes in `nutrition_service.py`:**
+
+| Profile | Change |
+| --- | --- |
+| `broccoli` | Added `"chinese"` to avoid_terms |
+| `oatmeal` | Added `"multigrain"` to avoid_terms; changed search_query to `"oatmeal cooked plain"` |
+| `ground beef` | Added `"patties"` and `"frozen"` to avoid_terms (plural gap fix) |
+| `sweet potato` | Added `"frozen"` to avoid_terms |
+| `brown rice` | Added `"parboiled"` to avoid_terms |
+| `pasta` | Added `"homemade"` to avoid_terms |
+
+**Audit fix:** Widened `avocado` max_calories from 330 → 360 in `audit_generic_foods.py`.
+
+**Tests:** 6 new regression tests added; 59 total passing.
+
+**Live audit result: 29/29 passed.**
+
+**Remaining suspicious sources (passes, not failures):**
+- `broccoli` → `Broccoli raab, cooked` — raab is a different plant from regular broccoli; fixing `chinese` exposed raab as the next fallback in the USDA pool. Add `"raab"` to avoid_terms in a future phase.
+- `oatmeal` → `Oatmeal, fast food, plain` — FNDDS fast-food entry; nutritionally close (80 cal/100g vs 71 cal/100g expected) but not ideal. The `"plain"` qualifier is correct; the source is acceptable for now.
 
 ### Phase 6 (completed 2026-06-03)
 
@@ -110,7 +133,7 @@ Expanded coverage benchmark in `scripts/audit_generic_foods.py`. No food-engine 
 - Each case has a calorie range and targeted `disallowed_source_terms` mirroring the profile's avoid_terms.
 - Summary now reports three sections: source-quality, quantity-scaling, coverage.
 - Live run result: **28/29 passed**. One failure:
-  - `avocado` — audit range 150–330 is too tight. USDA returned `Avocado, Hass, peeled, raw` at 334.5 cal (Hass variety is ~223 cal/100g vs average ~160 cal/100g). Source is correct; range should be widened to ~150–360. No food-engine change needed.
+  - `avocado` — audit range too tight; widened in Phase 7A.
 
 ### Phase 5B (completed 2026-06-03)
 

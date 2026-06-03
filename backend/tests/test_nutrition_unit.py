@@ -493,6 +493,92 @@ class TestNutritionLogic:
         )
         assert result["calories"] == pytest.approx(884.0 * (13.5 / 100), rel=0.01)
 
+    # ── Phase 7A: avoid_term gap fixes ───────────────────────────────────────
+
+    def test_broccoli_profile_penalizes_chinese_broccoli(self):
+        """Plain broccoli should prefer regular cooked broccoli over Chinese broccoli (gai lan)."""
+        with patch("app.services.nutrition_service.httpx.get",
+                   return_value=_usda_multi_response(
+                       ("Broccoli, chinese, cooked", "Survey (FNDDS)", 22.0, 2.3, 3.8, 0.7),
+                       ("Broccoli, cooked, boiled, drained, without salt", "SR Legacy", 35.0, 2.4, 7.2, 0.4),
+                   )):
+            result = route_food_query("broccoli")
+
+        assert result["source_name"] == "Broccoli, cooked, boiled, drained, without salt", (
+            f"source_name={result['source_name']!r}; Chinese broccoli should be "
+            "penalised by the 'chinese' avoid_term so regular cooked broccoli wins."
+        )
+
+    def test_oatmeal_profile_penalizes_multigrain(self):
+        """Plain oatmeal should prefer plain cooked oatmeal over multigrain oatmeal."""
+        with patch("app.services.nutrition_service.httpx.get",
+                   return_value=_usda_multi_response(
+                       ("Oatmeal, multigrain", "Survey (FNDDS)", 56.0, 2.1, 12.2, 0.5),
+                       ("Oatmeal, regular and quick, cooked with water, without salt", "SR Legacy", 71.0, 2.5, 12.0, 1.4),
+                   )):
+            result = route_food_query("oatmeal")
+
+        assert result["source_name"] == "Oatmeal, regular and quick, cooked with water, without salt", (
+            f"source_name={result['source_name']!r}; multigrain oatmeal should be "
+            "penalised by the 'multigrain' avoid_term so plain cooked oatmeal wins."
+        )
+
+    def test_ground_beef_profile_penalizes_frozen_patties(self):
+        """Ground beef should prefer loose cooked beef over frozen formed patties."""
+        with patch("app.services.nutrition_service.httpx.get",
+                   return_value=_usda_multi_response(
+                       ("Beef, ground, patties, frozen, cooked, broiled", "Survey (FNDDS)", 295.0, 23.0, 0.0, 21.8),
+                       ("Beef, ground, 80% lean meat / 20% fat, cooked, pan-browned", "SR Legacy", 215.0, 24.0, 0.0, 13.0),
+                   )):
+            result = route_food_query("ground beef")
+
+        assert result["source_name"] == "Beef, ground, 80% lean meat / 20% fat, cooked, pan-browned", (
+            f"source_name={result['source_name']!r}; 'patties' (plural) and 'frozen' "
+            "must both be caught by avoid_terms so loose cooked ground beef wins."
+        )
+
+    def test_sweet_potato_profile_penalizes_frozen(self):
+        """Sweet potato should prefer fresh baked over frozen cooked."""
+        with patch("app.services.nutrition_service.httpx.get",
+                   return_value=_usda_multi_response(
+                       ("Sweet potato, frozen, cooked, baked, with salt", "Survey (FNDDS)", 100.0, 1.7, 23.4, 0.1),
+                       ("Sweet potato, cooked, baked in skin, flesh, without salt", "SR Legacy", 86.0, 1.6, 20.1, 0.1),
+                   )):
+            result = route_food_query("sweet potato")
+
+        assert result["source_name"] == "Sweet potato, cooked, baked in skin, flesh, without salt", (
+            f"source_name={result['source_name']!r}; 'frozen' should be penalised "
+            "so fresh baked sweet potato wins."
+        )
+
+    def test_brown_rice_profile_penalizes_parboiled(self):
+        """Brown rice should prefer plain long-grain cooked over parboiled/branded variants."""
+        with patch("app.services.nutrition_service.httpx.get",
+                   return_value=_usda_multi_response(
+                       ("Rice, brown, parboiled, cooked, UNCLE BENS", "Survey (FNDDS)", 147.0, 3.1, 31.3, 0.8),
+                       ("Rice, brown, long-grain, regular, cooked, enriched", "SR Legacy", 123.0, 2.6, 25.6, 0.9),
+                   )):
+            result = route_food_query("brown rice")
+
+        assert result["source_name"] == "Rice, brown, long-grain, regular, cooked, enriched", (
+            f"source_name={result['source_name']!r}; 'parboiled' should be penalised "
+            "so plain long-grain brown rice wins."
+        )
+
+    def test_pasta_profile_penalizes_homemade_egg_pasta(self):
+        """Plain pasta should prefer enriched cooked pasta over homemade egg pasta."""
+        with patch("app.services.nutrition_service.httpx.get",
+                   return_value=_usda_multi_response(
+                       ("Pasta, homemade, made with egg, cooked", "Survey (FNDDS)", 131.0, 5.3, 23.5, 1.7),
+                       ("Pasta, cooked, enriched, without added salt", "SR Legacy", 157.0, 5.8, 30.9, 0.9),
+                   )):
+            result = route_food_query("pasta")
+
+        assert result["source_name"] == "Pasta, cooked, enriched, without added salt", (
+            f"source_name={result['source_name']!r}; 'homemade' should be penalised "
+            "so plain enriched pasta wins."
+        )
+
     # ── Meal calorie floor ────────────────────────────────────────────────────
 
     def test_banana_smoothie_floor_rejects_plain_banana(self):

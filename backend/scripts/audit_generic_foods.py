@@ -135,7 +135,7 @@ COVERAGE_BENCHMARK: list[AuditCase] = [
         disallowed_source_terms=("dried", "jam"),
     ),
     AuditCase(
-        "avocado", 150, 330,
+        "avocado", 150, 360,
         disallowed_source_terms=("oil", "guacamole"),
     ),
     # Vegetables
