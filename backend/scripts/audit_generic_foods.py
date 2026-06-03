@@ -34,17 +34,42 @@ class AuditCase:
     max_calories: float
     require_source_backed: bool = True
     expected_source_type: str = "generic"
+    # Source-name quality checks (case-insensitive substring match).
+    # Fail if source_name lacks any required term.
+    required_source_terms: tuple[str, ...] = ()
+    # Fail if source_name contains any disallowed term.
+    disallowed_source_terms: tuple[str, ...] = ()
+    # Fail if serving_description lacks any required term.
+    required_serving_terms: tuple[str, ...] = ()
 
 
 SMALL_BENCHMARK = [
     AuditCase("banana", 70, 140),
-    AuditCase("white rice", 120, 230),
+    AuditCase(
+        "white rice", 120, 230,
+        disallowed_source_terms=("glutinous",),
+    ),
     AuditCase("100g chicken breast", 120, 220),
-    AuditCase("whole milk", 120, 180),
-    AuditCase("almonds", 140, 210),
-    AuditCase("pasta", 120, 260),
-    AuditCase("1 tbsp olive oil", 100, 140),
-    AuditCase("2 eggs", 120, 220),
+    AuditCase(
+        "whole milk", 120, 180,
+        disallowed_source_terms=("buttermilk", "cheese", "evaporated"),
+    ),
+    AuditCase(
+        "almonds", 140, 210,
+        disallowed_source_terms=("paste", "milk", "butter", "flour"),
+    ),
+    AuditCase(
+        "pasta", 120, 260,
+        disallowed_source_terms=("gluten-free", "corn"),
+    ),
+    AuditCase(
+        "1 tbsp olive oil", 100, 140,
+        disallowed_source_terms=("corn", "peanut", "canola", "vegetable", "soybean", "sunflower"),
+    ),
+    AuditCase(
+        "2 eggs", 120, 220,
+        disallowed_source_terms=("fried", "egg white", "substitute"),
+    ),
 ]
 
 
@@ -57,6 +82,8 @@ def _round(value: Any) -> Any:
 def _evaluate(case: AuditCase, result: dict[str, Any]) -> tuple[str, str]:
     failures: list[str] = []
 
+    # ── Existing checks ───────────────────────────────────────────────────────
+
     calories = result.get("calories")
     if not isinstance(calories, (int, float)):
         failures.append("missing calories")
@@ -68,6 +95,26 @@ def _evaluate(case: AuditCase, result: dict[str, Any]) -> tuple[str, str]:
 
     if case.require_source_backed and result.get("is_estimated") is True:
         failures.append("estimated result")
+
+    # ── Source-name quality checks ────────────────────────────────────────────
+
+    source_name = (result.get("source_name") or "").lower()
+
+    for term in case.required_source_terms:
+        if term.lower() not in source_name:
+            failures.append(f"source missing '{term}'")
+
+    for term in case.disallowed_source_terms:
+        if term.lower() in source_name:
+            failures.append(f"source contains disallowed '{term}'")
+
+    # ── Serving-description quality checks ────────────────────────────────────
+
+    serving = (result.get("serving_description") or "").lower()
+
+    for term in case.required_serving_terms:
+        if term.lower() not in serving:
+            failures.append(f"serving missing '{term}'")
 
     return ("FAIL", "; ".join(failures)) if failures else ("PASS", "")
 
