@@ -43,6 +43,30 @@ python3 scripts/audit_generic_foods.py --json
 
 The script may call USDA through existing backend code. Do not treat one live run as a permanent truth source; use it as a quick signal for current behavior.
 
+## Current Phase 1 Audit Results
+
+Run date: `2026-06-02 CDT`
+
+Command:
+
+```bash
+cd backend
+python3 scripts/audit_generic_foods.py
+```
+
+Summary: `7/8 passed`
+
+| Query | Status | Calories | Estimated | Serving | Source | Notes |
+| --- | --- | ---: | --- | --- | --- | --- |
+| `banana` | PASS | 100.3 | false | `118 g serving` | `Bananas, overripe, raw` | Source-backed, but source display is more specific than ideal. |
+| `white rice` | PASS | 153.3 | false | `158 g serving` | `Rice, white, glutinous, unenriched, cooked` | Passed range check, but glutinous rice may be the wrong default. |
+| `100g chicken breast` | PASS | 165.0 | false | `100 g` | `Chicken, broilers or fryers, breast, meat only, cooked, roasted` | Good source-backed result. |
+| `whole milk` | PASS | 151.3 | false | `244 g serving` | `Milk, buttermilk, fluid, whole` | Passed range check, but buttermilk is likely the wrong source for plain whole milk. |
+| `almonds` | FAIL | 250 | true | `None` | `None` | Worst failure: estimated fallback and calories outside the expected range. |
+| `pasta` | PASS | 176.4 | false | `140 g serving` | `Pasta, gluten-free, corn, cooked` | Passed range check, but gluten-free corn pasta is likely the wrong default. |
+| `1 tbsp olive oil` | PASS | 119.3 | false | `1 tbsp` | `Oil, corn, peanut, and olive` | Calories are reasonable, but source is a mixed-oil entry rather than plain olive oil. |
+| `2 eggs` | PASS | 196.0 | false | `100 g serving` | `Egg, whole, cooked, fried` | Passed range check, but fried egg may be the wrong default for plain eggs. |
+
 ## Known Issues To Investigate Later
 
 - Generic foods may return inaccurate calories/macros even when the app understands the food.
@@ -54,8 +78,8 @@ The script may call USDA through existing backend code. Do not treat one live ru
 
 ## Next Steps
 
-1. Run the small audit and record current failures without changing behavior.
-2. Prioritize the highest-impact generic-food issues from the audit.
+1. Fix `almonds` first because it is the only current hard failure: estimated fallback, no source, and calories outside the expected range.
+2. Then improve source ranking for passed-but-suspicious items: `whole milk`, `pasta`, `1 tbsp olive oil`, `2 eggs`, and `white rice`.
 3. Propose focused behavior changes before implementing them.
 4. Add or update regression tests for any approved food-engine fixes.
 5. Only after local validation, discuss whether any Supabase migration or deployment change is needed.
