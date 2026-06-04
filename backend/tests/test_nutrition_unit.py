@@ -1544,11 +1544,13 @@ class TestMealSizeProfiles:
     def test_chipotle_chicken_bowl_rule_based_realistic(self):
         """
         'chipotle chicken bowl' (RESTAURANT_ITEM) falls back to rule-based
-        when OFF misses.  The fallback must now return a realistic bowl estimate
+        when OFF misses.  The fallback must return a realistic bowl estimate
         (target 500–850 kcal) instead of the former generic 250 kcal.
+
+        OFF is patched to return None so the rule-based path is isolated.
         """
-        # No USDA mock needed — RESTAURANT_ITEM uses rule_based_only=True
-        result = route_food_query("chipotle chicken bowl")
+        with patch("app.services.query_router.search_restaurant_item", return_value=None):
+            result = route_food_query("chipotle chicken bowl")
 
         assert 500 <= result["calories"] <= 850, (
             f"Expected 500–850 kcal for chipotle chicken bowl (rule-based), "
@@ -1793,9 +1795,11 @@ class TestSourceSelectionCleanup:
 
     def test_costco_hot_dog_realistic_calories(self):
         """
-        'costco hot dog' (RESTAURANT_ITEM → rule-based fallback) must return
-        a realistic hot-dog estimate (target 280–550 kcal), not 91 kcal from
-        USDA 'Pickle relish, hot dog'.
+        'costco hot dog' (RESTAURANT_ITEM) must return a realistic hot-dog
+        estimate (target 280–550 kcal), not 91 kcal from USDA 'Pickle relish'.
+
+        Result may come from OFF (is_estimated=False) or the rule-based fallback
+        (is_estimated=True) depending on what OFF returns at call time.
         """
         result = route_food_query("costco hot dog")
 
@@ -1803,8 +1807,137 @@ class TestSourceSelectionCleanup:
             f"Expected 280–550 kcal for costco hot dog, got {result['calories']}. "
             "Previously returned 91 kcal (USDA 'Pickle relish, hot dog')."
         )
-        assert result.get("is_estimated") is True
-        assert result.get("source_type") == "restaurant_guess"
+        # Source must be restaurant (either a live OFF hit or rule-based fallback)
+        assert result.get("source_type") in ("restaurant", "restaurant_guess"), (
+            f"source_type={result.get('source_type')!r}; expected restaurant path"
+        )
+
+
+# ============================================================
+# Phase 10C — OFF serving-size scaling
+# ============================================================
+
+class TestOFFServingScaling:
+    """
+    Unit tests for the three-level serving-size cascade added in Phase 10C.
+
+    OFF v3 search results rarely include serving_size.  The cascade falls
+    back to (1) fl-oz quantity field for beverages, (2) _OFF_SERVING_GRAMS
+    keyword lookup for known foods.  All tests are offline — they call
+    _normalize_product directly with mock product dicts.
+    """
+
+    # ── Helper lookup tables ──────────────────────────────────────────────────
+
+    def test_packaged_serving_grams_hershey_bar(self):
+        from app.services.packaged_product_service import _serving_grams_for_name
+        assert _serving_grams_for_name("Hershey Bar") == pytest.approx(43.0)
+
+    def test_packaged_serving_grams_oreo_cookies(self):
+        from app.services.packaged_product_service import _serving_grams_for_name
+        assert _serving_grams_for_name("Oreo Cookies") == pytest.approx(34.0)
+
+    def test_packaged_serving_grams_unknown_returns_none(self):
+        from app.services.packaged_product_service import _serving_grams_for_name
+        assert _serving_grams_for_name("Random Product XYZ") is None
+
+    def test_restaurant_serving_grams_chipotle_bowl(self):
+        from app.services.restaurant_service import _serving_grams_for_name
+        assert _serving_grams_for_name("Chipotle Chicken Bowl") == pytest.approx(450.0)
+
+    def test_fl_oz_only_parses_frappuccino_bottle(self):
+        from app.services.packaged_product_service import _parse_fl_oz_only
+        grams = _parse_fl_oz_only("13.7 fl oz")
+        assert grams == pytest.approx(13.7 * 29.5735, rel=0.01)
+
+    def test_fl_oz_only_rejects_grams_string(self):
+        """Package weights in grams must not be used as serving proxy."""
+        from app.services.packaged_product_service import _parse_fl_oz_only
+        assert _parse_fl_oz_only("263 g") is None
+
+    def test_fl_oz_only_rejects_solid_oz(self):
+        """Plain 'oz' (solid food) must not be treated as fl oz."""
+        from app.services.packaged_product_service import _parse_fl_oz_only
+        assert _parse_fl_oz_only("9 oz") is None
+
+    # ── _normalize_product integration ───────────────────────────────────────
+
+    def _make_product(self, name, brands, cal100, protein=5.0, carbs=20.0,
+                      fat=5.0, quantity=None):
+        """Build a minimal OFF v3 product dict."""
+        return {
+            "product_name": name,
+            "brands": brands,
+            "nutriments": {
+                "energy-kcal_100g": cal100,
+                "proteins_100g":    protein,
+                "carbohydrates_100g": carbs,
+                "fat_100g":         fat,
+            },
+            **({"quantity": quantity} if quantity else {}),
+        }
+
+    def test_hershey_bar_scales_to_43g_serving(self):
+        """Hershey Bar (488 kcal/100g) must scale to a 43g serving (~210 kcal)."""
+        from app.services.packaged_product_service import _normalize_product
+        product = self._make_product("Hershey Bar", ["Hershey's"], 488.0)
+        result = _normalize_product(product)
+        assert result is not None
+        # 488 × (43/100) ≈ 209.8 kcal
+        assert 190 <= result["calories"] <= 230, (
+            f"Expected 190–230 kcal for Hershey Bar (43g serving), got {result['calories']}"
+        )
+
+    def test_oreo_cookies_scales_to_34g_serving(self):
+        """Oreo Cookies (467 kcal/100g) must scale to a 34g serving (~159 kcal)."""
+        from app.services.packaged_product_service import _normalize_product
+        product = self._make_product("Oreo Cookies", ["Oreo"], 467.0)
+        result = _normalize_product(product)
+        assert result is not None
+        # 467 × (34/100) ≈ 158.8 kcal
+        assert 140 <= result["calories"] <= 185, (
+            f"Expected 140–185 kcal for Oreo Cookies (34g serving), got {result['calories']}"
+        )
+
+    def test_starbucks_frappuccino_scales_from_fl_oz_quantity(self):
+        """
+        Starbucks Caramel Frappuccino (74 kcal/100g, qty='13.7 fl oz') must
+        scale via the fl-oz quantity fallback to ~300 kcal.
+        """
+        from app.services.restaurant_service import _normalize_product
+        product = self._make_product(
+            "Caramel Frappuccino", ["Starbucks"], 74.0, quantity="13.7 fl oz"
+        )
+        result = _normalize_product(product)
+        assert result is not None
+        # 74 × (13.7 × 29.5735 / 100) ≈ 300 kcal
+        assert 258 <= result["calories"] <= 370, (
+            f"Expected 258–370 kcal for Caramel Frappuccino (13.7 fl oz), got {result['calories']}"
+        )
+
+    def test_chipotle_chicken_bowl_scales_to_450g_serving(self):
+        """
+        Chipotle Chicken Bowl (147 kcal/100g) must scale to a 450g serving
+        (~661 kcal) via the _OFF_SERVING_GRAMS keyword fallback.
+        """
+        from app.services.restaurant_service import _normalize_product
+        product = self._make_product("Chipotle Chicken Bowl", [], 147.0)
+        result = _normalize_product(product)
+        assert result is not None
+        # 147 × (450/100) = 661.5 kcal
+        assert 480 <= result["calories"] <= 780, (
+            f"Expected 480–780 kcal for Chipotle Chicken Bowl (450g serving), got {result['calories']}"
+        )
+
+    def test_unknown_product_returns_per_100g_unscaled(self):
+        """A product with no known serving and no fl-oz qty must return per-100g."""
+        from app.services.packaged_product_service import _normalize_product
+        product = self._make_product("Some Random Snack Bar", [], 400.0)
+        result = _normalize_product(product)
+        assert result is not None
+        assert result["calories"] == 400, (
+            "Unknown product should return per-100g value (no serving-size applied)"
+        )
 
     def test_hot_dog_fallback_reasonable(self):
         """'hot dog' rule-based fallback must return a realistic ballpark estimate."""

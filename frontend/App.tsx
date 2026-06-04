@@ -251,6 +251,30 @@ function getSourceShortLabel(meta: FoodSourceMeta): string | null {
   return info.label;
 }
 
+// Maps source_type to the human-readable data provider name shown in result details.
+function getProviderName(meta: FoodSourceMeta): string | null {
+  const { source_type, is_estimated } = meta;
+  if (is_estimated) return "Lume estimate";
+  switch (source_type) {
+    case "barcode":
+    case "packaged_product":
+    case "restaurant":
+      return "Open Food Facts";
+    case "generic":
+    case "usda":
+    case "verified_generic":
+      return "USDA";
+    case "composite_meal":
+      return "Combined estimate";
+    case "packaged_guess":
+    case "restaurant_guess":
+    case "ambiguous_estimate":
+      return "Lume estimate";
+    default:
+      return null;
+  }
+}
+
 // Thin shell — SafeAreaProvider must be an ancestor of any component that
 // calls useSafeAreaInsets(), so it lives here, above AppInner.
 export default function App() {
@@ -570,13 +594,18 @@ function AppInner() {
       );
       setQuery("");      // clear input for next item
       Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
-      const shortLabel = getSourceShortLabel({
+      const _meta = {
         source_type:         food.source_type,
         confidence:          food.confidence,
         is_estimated:        food.is_estimated,
         serving_description: food.serving_description,
-      });
-      setLogMessage(shortLabel ? `Food logged · ${shortLabel}` : "Food logged");
+      };
+      const shortLabel   = getSourceShortLabel(_meta);
+      const providerName = getProviderName(_meta);
+      const servingHint  = food.serving_description?.trim() || null;
+      // e.g. "Food logged · USDA · 118 g serving"  or  "Food logged · Open Food Facts · 43 g"
+      const msgParts = ["Food logged", providerName ?? shortLabel, servingHint].filter(Boolean);
+      setLogMessage(msgParts.join(" · "));
       await loadSummary();
       await loadLogs();
       await loadWeekly();
@@ -1388,7 +1417,7 @@ function AppInner() {
         </View>
         {searching && <Text style={styles.searchingText}>{scanningLabel}</Text>}
         {!searching && logMessage ? (
-          <Text style={logMessage.startsWith("Logged") || logMessage === "Food logged" ? styles.success : styles.error}>
+          <Text style={logMessage.startsWith("Logged") || logMessage.startsWith("Food logged") ? styles.success : styles.error}>
             {logMessage}
           </Text>
         ) : null}
@@ -1512,9 +1541,16 @@ function AuthShell({ glowOuter, glowMid, glowCore, glowShimmer, children }: Auth
 // plus serving context if available.  Renders nothing when there is no info.
 // ---------------------------------------------------------------------------
 function SourceBadgeRow({ meta }: { meta: FoodSourceMeta }) {
-  const info = getSourceBadgeInfo(meta);
-  const serving = meta.serving_description?.trim() || null;
-  if (!info && !serving) return null;
+  const info     = getSourceBadgeInfo(meta);
+  const provider = getProviderName(meta);
+  const serving  = meta.serving_description?.trim() || null;
+
+  // Build the subtitle: "Open Food Facts · 43 g serving"
+  // If provider and serving are the same string, show only once.
+  const metaParts = [provider, serving].filter(Boolean);
+  const metaText  = metaParts.join(" · ") || null;
+
+  if (!info && !metaText) return null;
   return (
     <View style={styles.sourceBadgeRow}>
       {info && (
@@ -1522,8 +1558,8 @@ function SourceBadgeRow({ meta }: { meta: FoodSourceMeta }) {
           <Text style={[styles.sourceBadgeText, { color: info.fg }]}>{info.label}</Text>
         </View>
       )}
-      {serving && (
-        <Text style={styles.servingDescription} numberOfLines={1}>{serving}</Text>
+      {metaText && (
+        <Text style={styles.sourceMetaText} numberOfLines={1}>{metaText}</Text>
       )}
     </View>
   );
@@ -2064,6 +2100,7 @@ function WaterIntakeScreen({ onBack }: { onBack: () => void }) {
   const [bottleCount, setBottleCount]   = useState<number>(0);
   const [directOz, setDirectOz]         = useState<number>(0);
   const [showTracking, setShowTracking] = useState(false);
+  const [isEditing,   setIsEditing]    = useState(false);    // true when editing from tracking mode
   const [setupLoaded, setSetupLoaded]   = useState(false);   // gates render until storage is read
   const [userId, setUserId]             = useState<string | null>(null);
   const [streak, setStreak]             = useState<number>(0);
@@ -2276,6 +2313,7 @@ function WaterIntakeScreen({ onBack }: { onBack: () => void }) {
   // problem when the user comes back to edit and re-selects the same values.
   const transitionToTracking = () => {
     if (showTracking) return;
+    setIsEditing(false);
     Animated.timing(cardOpacity, {
       toValue: 0, duration: 220, useNativeDriver: true,
     }).start(() => {
@@ -2287,6 +2325,7 @@ function WaterIntakeScreen({ onBack }: { onBack: () => void }) {
   };
 
   const resetToSetup = () => {
+    setIsEditing(true);
     Animated.timing(cardOpacity, {
       toValue: 0, duration: 180, useNativeDriver: true,
     }).start(() => {
@@ -2310,8 +2349,12 @@ function WaterIntakeScreen({ onBack }: { onBack: () => void }) {
         style={setupStyles.scroll}
         contentContainerStyle={setupStyles.container}
       >
-        {/* Back navigation — reuses the same pattern as AccountScreen */}
-        <TouchableOpacity onPress={onBack} style={setupStyles.acctBackButton} activeOpacity={0.7}>
+        {/* Back navigation — goes to tracking when editing, otherwise exits to home */}
+        <TouchableOpacity
+          onPress={isEditing ? transitionToTracking : onBack}
+          style={setupStyles.acctBackButton}
+          activeOpacity={0.7}
+        >
           <Ionicons name="arrow-back" size={18} color="#555" />
           <Text style={setupStyles.acctBackText}>Back</Text>
         </TouchableOpacity>
@@ -2587,6 +2630,22 @@ function WaterIntakeScreen({ onBack }: { onBack: () => void }) {
                   </TouchableOpacity>
                 ))}
               </View>
+
+              {/* Save button — always visible in setup mode so the user can
+                  confirm changes (especially daily-goal-only edits) and
+                  return to the tracking view without going back to home. */}
+              {usesBottle !== null && (usesBottle === "no" || bottleSize !== null) && (
+                <TouchableOpacity
+                  onPress={() => {
+                    saveSetup({ usesBottle: usesBottle!, bottleSize, dailyGoalOz });
+                    transitionToTracking();
+                  }}
+                  style={waterStyles.saveButton}
+                  activeOpacity={0.8}
+                >
+                  <Text style={waterStyles.saveButtonText}>Save</Text>
+                </TouchableOpacity>
+              )}
             </>
 
           )}
@@ -3675,6 +3734,12 @@ const styles = StyleSheet.create({
     color: "#aaa",
     flexShrink: 1,
   },
+  sourceMetaText: {
+    fontSize: 10,
+    fontFamily: "Inter-Variable",
+    color: "#999",
+    flexShrink: 1,
+  },
   // Log entry action buttons (Edit + Delete stacked)
   logEntryActions: {
     alignItems: "flex-end",
@@ -4359,6 +4424,20 @@ const waterStyles = StyleSheet.create({
     fontFamily: "Inter-Variable",
     fontSize: 12,
     color: "rgba(26,26,20,0.35)",
+  },
+
+  // Save button — shown at the bottom of setup/edit mode
+  saveButton: {
+    marginTop: 20,
+    backgroundColor: "#1A1A14",
+    borderRadius: 12,
+    paddingVertical: 13,
+    alignItems: "center",
+  },
+  saveButtonText: {
+    fontFamily: "Chillax-Medium",
+    fontSize: 15,
+    color: "#fff",
   },
 
   // ── last 7 days chart card ─────────────────────────────────────────────────

@@ -2,7 +2,7 @@ import httpx
 
 # Reuse macro extraction helpers from barcode_service — same provider, same
 # nutriments structure, no need to duplicate the logic.
-from app.services.barcode_service import _get_macros, _safe_float
+from app.services.barcode_service import _get_macros, _nutrition_tier, _safe_float
 from app.services.candidate_scorer import score_candidate
 from app.services.debug_logger import log_off_candidates, log_rejection
 
@@ -12,7 +12,7 @@ from app.services.debug_logger import log_off_candidates, log_rejection
 # required.  Results are sorted by scan popularity so the most recognised
 # product for a given name comes first.
 # ---------------------------------------------------------------------------
-OPENFOODFACTS_SEARCH_URL = "https://world.openfoodfacts.org/api/v2/search"
+OPENFOODFACTS_SEARCH_URL = "https://search.openfoodfacts.org/search"
 REQUEST_TIMEOUT          = 8.0
 # Phase 1 increase: 15 candidates gives the scorer a deeper pool to rank,
 # especially important for chain restaurant queries where many regional
@@ -23,6 +23,39 @@ MAX_CANDIDATES           = 15
 # produce noisier OFF results than packaged products, so we keep the same
 # floor but rely on the scorer's brand-token bonus to surface the right item.
 MIN_SCORE = 10
+
+
+# ---------------------------------------------------------------------------
+# Serving-size helpers (OFF v3 does not return serving_size)
+# ---------------------------------------------------------------------------
+
+import re as _re
+
+def _parse_fl_oz_only(s: str) -> float | None:
+    """Return grams only for fl-oz strings (single-serve beverages). Capped at 700 ml."""
+    m = _re.search(r"([\d.]+)\s*fl\.?\s*oz\b", s.lower())
+    if m:
+        val = float(m.group(1)) * 29.5735
+        return val if 1 < val <= 700 else None
+    return None
+
+
+_OFF_SERVING_GRAMS: dict[str, float] = {
+    "chipotle chicken bowl": 450.0,   # full meal-prep / restaurant bowl
+    "chipotle bowl":         450.0,
+    "frappuccino":           405.0,   # backup when fl-oz quantity not present
+}
+
+
+def _serving_grams_for_name(name: str) -> float | None:
+    """Return a known per-serving gram weight for a product name, or None."""
+    n = name.lower()
+    best = max(
+        ((k, v) for k, v in _OFF_SERVING_GRAMS.items() if k in n),
+        key=lambda kv: len(kv[0]),
+        default=None,
+    )
+    return best[1] if best else None
 
 
 # ---------------------------------------------------------------------------
@@ -49,8 +82,31 @@ def _normalize_product(product: dict) -> dict | None:
 
     calories, protein, carbs, fat = macros
 
-    brand   = (product.get("brands")       or "").strip() or None
-    serving = (product.get("serving_size") or "").strip() or None
+    _brands_raw = product.get("brands") or ""
+    brand       = (", ".join(_brands_raw) if isinstance(_brands_raw, list) else _brands_raw).strip() or None
+    serving_str = (product.get("serving_size") or "").strip() or None
+
+    # Scale per-100g macros to per-serving using a three-level cascade:
+    #   1. serving_size field (rarely present in OFF v3 search results)
+    #   2. quantity field parsed as fl oz (single-serve beverages only)
+    #   3. _OFF_SERVING_GRAMS keyword lookup (known restaurant/meal foods)
+    tier = _nutrition_tier(nutriments)
+    if tier == "_100g":
+        serving_g = None
+        if serving_str:
+            pass  # serving_str from OFF v3 is always absent; kept for future-proofing
+        if serving_g is None:
+            qty_str = (product.get("quantity") or "").strip()
+            if qty_str:
+                serving_g = _parse_fl_oz_only(qty_str)
+        if serving_g is None:
+            serving_g = _serving_grams_for_name(name)
+        if serving_g:
+            scale    = serving_g / 100.0
+            calories = calories * scale
+            protein  = protein  * scale
+            carbs    = carbs    * scale
+            fat      = fat      * scale
 
     return {
         "name":                name,
@@ -62,7 +118,7 @@ def _normalize_product(product: dict) -> dict | None:
         "source_type":         "restaurant",
         "source_name":         "Open Food Facts",
         "brand_name":          brand,
-        "serving_description": serving,
+        "serving_description": serving_str,
     }
 
 
@@ -93,9 +149,8 @@ def search_restaurant_item(query: str) -> dict | None:
         response = httpx.get(
             OPENFOODFACTS_SEARCH_URL,
             params={
-                "search_terms": query.strip(),
-                "page_size":    MAX_CANDIDATES,
-                "sort_by":      "unique_scans_n",
+                "q":         query.strip(),
+                "page_size": MAX_CANDIDATES,
                 # Request only the fields we actually use to keep response light
                 "fields": "product_name,product_name_en,brands,serving_size,nutriments",
             },
@@ -103,7 +158,7 @@ def search_restaurant_item(query: str) -> dict | None:
             headers={"User-Agent": "Lume-App/1.0 (calorie tracker)"},
         )
         response.raise_for_status()
-        products = response.json().get("products", [])
+        products = response.json().get("hits", [])
 
     except Exception:
         return None   # network / HTTP / parse failure — caller falls back

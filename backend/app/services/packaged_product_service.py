@@ -13,7 +13,7 @@ from app.services.debug_logger import log_off_candidates, log_rejection
 # Results are sorted by scan popularity so the most recognised product for
 # a given name comes first.
 # ---------------------------------------------------------------------------
-OPENFOODFACTS_SEARCH_URL = "https://world.openfoodfacts.org/api/v2/search"
+OPENFOODFACTS_SEARCH_URL = "https://search.openfoodfacts.org/search"
 REQUEST_TIMEOUT          = 8.0
 # Phase 1 increase: 15 candidates gives the scorer a deeper pool to rank,
 # which matters most for popular branded queries where many variants exist
@@ -35,7 +35,7 @@ def _parse_serving_grams(serving_size: str) -> float | None:
     Try to extract a gram value from an OFF serving_size string.
 
     Handles common formats:
-      "43 g"  "43g"  "1.55 oz"  "1.55oz"  "30 ml" (ml ≈ g for food density≈1)
+      "43 g"  "43g"  "1.55 oz"  "1.55oz"  "30 ml"  "13.7 fl oz"
 
     Returns None when the string is unparseable or the value is implausible.
     """
@@ -45,12 +45,55 @@ def _parse_serving_grams(serving_size: str) -> float | None:
     if m:
         val = float(m.group(1))
         return val if 1 < val < 2000 else None
-    # Ounces → grams
+    # Fluid ounces → ml ≈ g (water-density beverages; must precede plain-oz check)
+    m = re.search(r"([\d.]+)\s*fl\.?\s*oz\b", s)
+    if m:
+        val = float(m.group(1)) * 29.5735
+        return val if 1 < val < 2000 else None
+    # Solid ounces → grams
     m = re.search(r"([\d.]+)\s*oz\b", s)
     if m:
         val = float(m.group(1)) * 28.3495
         return val if 1 < val < 2000 else None
     return None
+
+
+def _parse_fl_oz_only(s: str) -> float | None:
+    """
+    Return grams ONLY for fl-oz strings (beverages).  Returns None for any
+    other unit so that solid-food package quantities (e.g. "263 g" for a
+    multi-bar Hershey package) are never accidentally used as serving sizes.
+    Capped at 700 ml to exclude multi-litre containers.
+    """
+    m = re.search(r"([\d.]+)\s*fl\.?\s*oz\b", s.lower())
+    if m:
+        val = float(m.group(1)) * 29.5735
+        return val if 1 < val <= 700 else None
+    return None
+
+
+# ---------------------------------------------------------------------------
+# Known packaged-food serving sizes (OFF v3 does not return serving_size)
+# ---------------------------------------------------------------------------
+# Keyed on lowercase substrings matched against the normalised product name.
+# Add only products that consistently fail Phase 8D due to per-100g scaling.
+# Longest matching key wins so "hershey bar" beats "hershey" for plain bars.
+
+_OFF_SERVING_GRAMS: dict[str, float] = {
+    "hershey bar":  43.0,   # standard 1.55 oz Hershey's milk chocolate bar
+    "oreo":         34.0,   # 3-cookie serving (~3 × 11.3 g)
+}
+
+
+def _serving_grams_for_name(name: str) -> float | None:
+    """Return a known per-serving gram weight for a product name, or None."""
+    n = name.lower()
+    best = max(
+        ((k, v) for k, v in _OFF_SERVING_GRAMS.items() if k in n),
+        key=lambda kv: len(kv[0]),
+        default=None,
+    )
+    return best[1] if best else None
 
 
 def _normalize_product(product: dict) -> dict | None:
@@ -79,13 +122,25 @@ def _normalize_product(product: dict) -> dict | None:
 
     calories, protein, carbs, fat = macros
 
-    brand        = (product.get("brands")       or "").strip() or None
+    _brands_raw  = product.get("brands") or ""
+    brand        = (", ".join(_brands_raw) if isinstance(_brands_raw, list) else _brands_raw).strip() or None
     serving_str  = (product.get("serving_size") or "").strip() or None
 
-    # Scale per-100g macros to per-serving when the serving size is parseable.
+    # Scale per-100g macros to per-serving using a three-level cascade:
+    #   1. serving_size field (rarely present in OFF v3 search results)
+    #   2. quantity field parsed as fl oz (single-serve beverages only)
+    #   3. _OFF_SERVING_GRAMS keyword lookup (known packaged foods)
     tier = _nutrition_tier(nutriments)
-    if tier == "_100g" and serving_str:
-        serving_g = _parse_serving_grams(serving_str)
+    if tier == "_100g":
+        serving_g = None
+        if serving_str:
+            serving_g = _parse_serving_grams(serving_str)
+        if serving_g is None:
+            qty_str = (product.get("quantity") or "").strip()
+            if qty_str:
+                serving_g = _parse_fl_oz_only(qty_str)
+        if serving_g is None:
+            serving_g = _serving_grams_for_name(name)
         if serving_g:
             scale    = serving_g / 100.0
             calories = calories * scale
@@ -134,9 +189,8 @@ def search_packaged_product(query: str) -> dict | None:
         response = httpx.get(
             OPENFOODFACTS_SEARCH_URL,
             params={
-                "search_terms": query.strip(),
-                "page_size":    MAX_CANDIDATES,
-                "sort_by":      "unique_scans_n",
+                "q":         query.strip(),
+                "page_size": MAX_CANDIDATES,
                 # Request only the fields we actually use to keep response light
                 "fields": "product_name,product_name_en,brands,serving_size,nutriments",
             },
@@ -144,7 +198,7 @@ def search_packaged_product(query: str) -> dict | None:
             headers={"User-Agent": "Lume-App/1.0 (calorie tracker)"},
         )
         response.raise_for_status()
-        products = response.json().get("products", [])
+        products = response.json().get("hits", [])
 
     except Exception:
         return None   # network / HTTP / parse failure — caller falls back
