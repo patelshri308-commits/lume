@@ -49,7 +49,7 @@ Each `AuditCase` supports the following fields. Existing checks are unchanged; s
 
 Failure reasons are reported individually in the `reason` column so each distinct problem is visible.
 
-## Current Baseline (after Phase 8B pilot)
+## Current Baseline (after Phase 9D)
 
 Live audit run date: `2026-06-04`
 
@@ -99,11 +99,133 @@ Summary: **29/29 passed** — 8 source-quality + 5 quantity-scaling + 16/16 cove
 | `cheddar cheese` | PASS | 114.2 | `Cheese, cheddar` | |
 | `black beans` | PASS | 227.0 | `Beans, black, mature seeds, cooked, boiled, with salt` | |
 
-Regression tests: **64 passing** (4 new Phase 8B tests; 7 existing tests updated to reflect verified-food behavior).
+Regression tests: **111 passing** (4 new Phase 8B tests; 7 existing tests updated to reflect verified-food behavior).
 
 ---
 
 ## Phase History
+
+### Phase 9D (completed 2026-06-04)
+
+Fixed unit and portion scaling issues for butter, sugar, steak, and coffee-with-milk. No external APIs, frontend, database schema, or deployment changes.
+
+**Files changed:**
+- `backend/app/services/nutrition_service.py` — added profiles for `butter` (tbsp=14.2g, tsp=4.7g), `sugar` (tsp=4g, tbsp=12g), and `steak` (default=170g); added steak prep-variant aliases (`beef steak`, `sirloin steak`, `ribeye`, `ny strip`, `filet mignon`); added `"coffee with milk"` and `"coffee with cream"` to `_KNOWN_WHOLE_FOODS`; added `"coffee with": 35` to `_MEAL_CALORIE_FLOOR`; added fallback rule for coffee+milk/cream queries.
+- `backend/app/services/composite_service.py` — added `"coffee with milk"` and `"coffee with cream"` to `_KNOWN_WHOLE_FOODS`.
+- `backend/tests/test_nutrition_unit.py` — added `TestUnitAndPortionScaling` class (11 new tests).
+
+**Before / after:**
+
+| Query | Before | After |
+| --- | --- | --- |
+| `1 tbsp butter` | 717 kcal (per-100g unscaled, FAIL) | ~102 kcal (14.2g × profile USDA, PASS) |
+| `1 tsp sugar` | 387 kcal (per-100g unscaled, FAIL) | ~16 kcal (4g × profile USDA, PASS) |
+| `4 oz steak` | 0 kcal (oz treated as item count, FAIL) | ~307 kcal (113g × profile USDA, PASS) |
+| `coffee with milk` | ~250 kcal (full-cup milk composited, FAIL) | 50 kcal (floor → fallback splash, PASS) |
+
+**Mechanism — butter/sugar/steak:** Adding `GenericFoodProfile` entries activates `_grams_from_unit` for tbsp/tsp/oz unit conversions. Without a profile, these units were ignored and USDA per-100g data was returned unscaled.
+
+**Mechanism — coffee with milk:**
+- `_KNOWN_WHOLE_FOODS` prevents composite decomposition (which was adding a full cup of milk, 244g → ~150 kcal fallback).
+- `_MEAL_CALORIE_FLOOR["coffee with"] = 35` rejects USDA diluted-coffee entries (~10–17 kcal/100g) and falls back to the `_get_fallback_nutrition` splash estimate (~50 kcal).
+- Explicit user quantity is preserved: "coffee with 1 cup milk" does not match the whole-food shortcut and still decomposes into 2 components.
+
+**Phase 8D benchmark: 38/46 (82%)** — up from 37/46 (80%) after Phase 9C.
+
+**Tests: 111/111 passing** (11 new Phase 9D tests). Phase 8B audit unchanged (29/29).
+
+**Remaining Phase 9 targets (post-9D):**
+- **OFF search coverage** — McDonald's, Chipotle, Hershey, Oreo all return 0 results.
+- **`costco hot dog`** — routes to USDA "Pickle relish, hot dog"; `costco` not in `_RESTAURANT_SIGNALS`.
+- **`turkey sandwich on rye`** — USDA selects rye crackers with cheese filling (817 kcal) instead of a sandwich. Needs avoid_terms for "crackers" or a more specific profile.
+- **Composite "with" portioning** for add-ins other than milk/cream.
+
+---
+
+### Phase 9C (completed 2026-06-04)
+
+Added meal-size profiles for common bowl/meal/drink queries so the engine returns realistic whole-serving nutrition instead of per-100g fragments. No APIs, no schema changes, no routing-architecture changes.
+
+**Files changed:**
+- `backend/app/services/nutrition_service.py` — added 5 meal/drink profiles (`chicken rice bowl`, `chicken bowl`, `salad with chicken`, `chicken salad`, `protein shake`); added bowl/chipotle/protein-shake patterns to `_get_fallback_nutrition`; added `shake` (100 kcal) and `bowl` (200 kcal) entries to `_MEAL_CALORIE_FLOOR`; added two aliases (`chicken and rice bowl`, `chicken and rice` → `chicken rice bowl`).
+- `backend/app/services/composite_service.py` — added `chicken and rice bowl` and `chicken rice bowl` to `_KNOWN_WHOLE_FOODS`.
+- `backend/tests/test_nutrition_unit.py` — added `TestMealSizeProfiles` class (7 new tests).
+
+**Profiles added:**
+
+| Profile key | `default_grams` | `search_query` | Key `avoid_terms` |
+| --- | --- | --- | --- |
+| `chicken rice bowl` | 400 g | `bowl chicken rice cooked` | frozen, entree, meal kit, baby |
+| `chicken bowl` | 350 g | `bowl chicken cooked` | frozen, entree, baby |
+| `salad with chicken` | 300 g | `salad chicken breast` | pasta, noodle, soup, baby |
+| `chicken salad` | 200 g | `chicken salad` | noodle, soup, pasta, baby |
+| `protein shake` | 330 g | `protein shake beverage` | powder, dry, mix, isolate |
+
+**`banana smoothie` intentionally has NO profile.** The existing `_MEAL_CALORIE_FLOOR["smoothie": 150]` rejects low-calorie USDA ingredient hits and returns the rule-based 300 kcal smoothie estimate. Adding a profile would bypass that floor and risk under-scaling.
+
+**`salad with chicken` intentionally NOT in `_KNOWN_WHOLE_FOODS`.** Composite decomposition (salad ≈ 30 kcal + chicken ≈ 165 kcal ≈ 200 kcal) stays within the Phase 8D range and avoids USDA selecting a high-fat prepared chicken salad when looked up as a whole food.
+
+**`_get_fallback_nutrition` additions:**
+- `chipotle` → 680 kcal (added before generic burrito pattern)
+- `protein shake` / `shake + protein` → 200 kcal (added before smoothie pattern, in both phrase-priority blocks)
+- `bowl` → 580 kcal (generic meal bowl fallback for queries with no profile)
+
+**Before / after (Phase 8D queries):**
+
+| Query | Before | After |
+| --- | --- | --- |
+| `chicken rice bowl` | 126 kcal (frozen entree per-100g, FAIL) | 620 kcal (400g × profile USDA, PASS) |
+| `protein shake` | 61 kcal (SlimFast per-100g, WARNING) | 201 kcal (330g × profile USDA, PASS) |
+| `chipotle chicken bowl` | 250 kcal (generic rule-based, FAIL) | 680 kcal (chipotle fallback, PASS) |
+| `banana smoothie` | 300 kcal (smoothie floor + fallback, PASS) | 300 kcal (unchanged, PASS) |
+| `salad with chicken` | ~200–450 kcal (composite decomposition, PASS) | 414 kcal (composite decomposition, PASS) |
+
+**Phase 8D benchmark: 38/46 (82%)** — up from 25/46 (54%) at the Phase 8D baseline.
+
+By category after Phase 9 (9A + 9B + 9C + 9D):
+- Serving-size ambiguity: 7/7
+- Egg & protein: 10/11
+- Sandwiches: 5/6
+- Restaurant/branded: 4/8 (OFF search coverage is the remaining bottleneck)
+- Composite foods: 7/7 ← coffee with milk fixed in 9D
+- Quantity scaling: 5/7
+
+**Tests: 111/111 passing** (11 new Phase 9D tests). Phase 8B audit unchanged (29/29).
+
+**Remaining ambiguous case — `chicken salad`:** This query can mean (a) a leafy salad with chicken breast or (b) a mayo-based chicken salad spread. USDA FNDDS "Salad, chicken" typically describes a mayo-based preparation (~200 kcal/100g). The profile uses `default_grams=200` which gives a conservative single-serving result for either interpretation. If the user wants grilled chicken on greens, the result may over-estimate; if they want a mayo sandwich filling, it may be accurate. Not fixable without further query context.
+
+---
+
+### Phase 9B (completed 2026-06-04)
+
+Added composite-food guardrails to prevent known single-food phrases from being over-fragmented, plus USDA-steering profiles for common sandwiches. No new APIs, no routing architecture changes, no schema changes.
+
+**Root cause of over-fragmentation:**
+`_is_composite` fires when `" and "` is present in `core_food` (e.g. "peanut butter **and** jelly sandwich"). `_build_components` then splits on `" and "` → `["peanut butter", "jelly sandwich"]`. "jelly sandwich" had no matching USDA entry and triggered the generic sandwich fallback (450 kcal), summing to 188 + 677 = 865 kcal.
+
+**Files changed:**
+- `backend/app/services/composite_service.py` — added `_KNOWN_WHOLE_FOODS` frozenset; added known-whole-food fast-path at the top of `decompose_composite` that calls `get_nutrition(query, prefer_generic=True)` directly and skips component splitting.
+- `backend/app/services/nutrition_service.py` — added 6 sandwich profiles in `_GENERIC_FOOD_PROFILES` (`peanut butter and jelly sandwich`, `peanut butter sandwich`, `grilled cheese sandwich`, `turkey sandwich`, `turkey sandwich on wheat`, `turkey sandwich on rye`); added PBJ short-form aliases (`pbj sandwich`, `peanut butter jelly sandwich`) to `_PROFILE_ALIASES`.
+- `backend/tests/test_nutrition_unit.py` — added `TestCompositeGuardrails` class (9 new tests).
+
+**Known-whole-food set:**
+```
+peanut butter and jelly sandwich  |  pbj sandwich  |  peanut butter jelly sandwich
+peanut butter sandwich  |  grilled cheese sandwich
+turkey sandwich  |  turkey sandwich on wheat  |  turkey sandwich on rye
+```
+
+**Before / after:**
+
+| Query | Before | After |
+| --- | --- | --- |
+| `peanut butter and jelly sandwich` | 865 kcal (fragmented: PB + jelly sandwich) | ~387 kcal (167g × profile USDA) |
+| `peanut butter sandwich` | 478 kcal from "Cookies, peanut butter sandwich" | ~364 kcal from "Sandwich, peanut butter" (avoid_terms blocks cookie) |
+| `turkey sandwich on wheat` | 450 kcal (rule-based fallback) | ~340 kcal (profile USDA + 170g default) |
+
+**Tests: 93/93 passing** (9 new Phase 9B tests). Phase 8B audit unchanged (29/29).
+
+---
 
 ### Phase 9A (completed 2026-06-04)
 
@@ -381,9 +503,11 @@ Added the audit script (`scripts/audit_generic_foods.py`) and documented the ben
    - **OFF search coverage** — investigate why McDonald's, Chipotle, Hershey, Oreo all return 0 results from Open Food Facts. All show `restaurant_guess`/`packaged_guess`; only rule-based fallbacks fire.
    - ~~**Plural-form aliases**~~ — done in Phase 9A (`bananas`, `apples`, `oranges`, `chicken breasts` aliased in both `_PROFILE_ALIASES` and `_VERIFIED_ALIASES`).
    - ~~**Prep-modifier aliases**~~ — done in Phase 9A (`scrambled/fried/boiled/poached eggs`, `grilled/baked chicken breast` aliased in `_PROFILE_ALIASES`).
-   - **Unit-missing profiles** — add `butter` (tbsp=14g, tsp=4.7g) and `sugar` (tsp=4g, tbsp=12g) profiles so tbsp/tsp queries scale correctly instead of returning per-100g.
-   - **Steak oz profile** — add `steak` profile with `default_grams=170` and `_grams_from_unit` oz support.
-   - **Composite "with" portioning** — "with milk" defaults to a full cup (244g); should use condiment-size (30g) for beverage add-ins.
+   - ~~**Unit-missing profiles**~~ — done in Phase 9D (`butter` tbsp=14.2g/tsp=4.7g, `sugar` tsp=4g/tbsp=12g).
+   - ~~**Steak oz profile**~~ — done in Phase 9D (`steak` profile, default_grams=170, oz handled by `_grams_from_unit`).
+   - ~~**Composite "with" portioning (coffee)**~~ — done in Phase 9D (`coffee with milk` in `_KNOWN_WHOLE_FOODS` + `"coffee with": 35` floor → 50 kcal fallback).
+   - **Composite "with" portioning (other add-ins)** — "with X" for non-coffee composites may still over-portion; revisit if needed.
    - **`costco hot dog`** — add `costco` to `_RESTAURANT_SIGNALS` or add `hot dog` profile with avoid_terms for relish.
+   - **`turkey sandwich on rye`** — USDA selects "Crackers, rye, sandwich-type with cheese filling" (817 kcal). Add `"crackers"` to avoid_terms for the `turkey sandwich on rye` profile.
 5. Add regression tests for any Phase 9 fixes before merging.
 6. Only after local validation, discuss whether any Supabase migration or deployment change is needed.

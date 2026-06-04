@@ -1236,3 +1236,607 @@ class TestProfileAliases:
         assert abs(result["calories"] - 165.0) < 2.0, (
             f"Expected ~165.0 kcal (100g default), got {result['calories']}"
         )
+
+
+# ============================================================
+# Phase 9B — Composite food guardrails
+# ============================================================
+
+class TestCompositeGuardrails:
+    """
+    Verifies that known whole-food composite phrases are not over-fragmented
+    by the composite service and that sandwich profiles steer USDA toward
+    correct sources.
+
+    All tests are offline-only; USDA is patched.
+    """
+
+    # ── Core anti-fragmentation tests ────────────────────────────────────────
+
+    def test_pbj_sandwich_not_decomposed_into_two_components(self):
+        """
+        'peanut butter and jelly sandwich' must not be split into
+        ['peanut butter', 'jelly sandwich'].  The known-whole-food fast-path
+        must fire and return a single-serving result.
+
+        Before Phase 9B this returned ~865 kcal from fragmented components.
+        """
+        with patch("app.services.nutrition_service.httpx.get",
+                   return_value=_usda_response(
+                       "Sandwich, peanut butter and jelly", "Survey (FNDDS)",
+                       calories=232.0, protein=9.0, carbs=37.0, fat=7.5
+                   )):
+            result = route_food_query("peanut butter and jelly sandwich")
+
+        # Decomposition would produce serving="2-component meal";
+        # the fast-path produces a gram-based serving from the profile.
+        assert result.get("serving_description") != "2-component meal", (
+            "PBJ sandwich was still fragmented into components "
+            "(serving='2-component meal'); the known-whole-food guard did not fire"
+        )
+        assert result.get("source_type") == "composite_meal"
+        assert result.get("is_estimated") is False
+        # Profile applies 167 g default: 232 kcal/100 g × 1.67 ≈ 387 kcal
+        assert 330 <= result["calories"] <= 470, (
+            f"Expected 330-470 kcal for a PBJ sandwich, got {result['calories']}"
+        )
+
+    def test_pbj_sandwich_calories_far_below_865(self):
+        """Explicit regression: PBJ must return less than 700 kcal."""
+        with patch("app.services.nutrition_service.httpx.get",
+                   return_value=_usda_response(
+                       "Sandwich, peanut butter and jelly", "Survey (FNDDS)",
+                       calories=232.0, protein=9.0, carbs=37.0, fat=7.5
+                   )):
+            result = route_food_query("peanut butter and jelly sandwich")
+        assert result["calories"] < 700, (
+            f"PBJ sandwich returned {result['calories']} kcal — over-fragmentation "
+            "regression detected (expected < 700 kcal)"
+        )
+
+    # ── Profile alias resolution tests ───────────────────────────────────────
+
+    def test_pbj_short_form_resolves_to_pbj_profile(self):
+        """'pbj sandwich' alias must resolve to the PBJ sandwich profile."""
+        from app.services.nutrition_service import _profile_for_query
+        pbj_full  = _profile_for_query("peanut butter and jelly sandwich")
+        pbj_short = _profile_for_query("pbj sandwich")
+        assert pbj_short is not None
+        assert pbj_short is pbj_full, (
+            "'pbj sandwich' did not alias to the 'peanut butter and jelly sandwich' profile"
+        )
+
+    def test_peanut_butter_jelly_no_and_resolves_to_pbj_profile(self):
+        """'peanut butter jelly sandwich' (no 'and') must alias to the PBJ profile."""
+        from app.services.nutrition_service import _profile_for_query
+        pbj_full  = _profile_for_query("peanut butter and jelly sandwich")
+        pbj_nand  = _profile_for_query("peanut butter jelly sandwich")
+        assert pbj_nand is not None
+        assert pbj_nand is pbj_full
+
+    # ── USDA source steering tests ────────────────────────────────────────────
+
+    def test_peanut_butter_sandwich_does_not_return_cookie_source(self):
+        """
+        'peanut butter sandwich' must steer USDA away from
+        'Cookies, peanut butter sandwich, regular'.
+
+        The profile's avoid_terms=('cookie', 'wafer') must penalise the cookie
+        entry so a real sandwich entry wins.
+        """
+        with patch("app.services.nutrition_service.httpx.get",
+                   return_value=_usda_multi_response(
+                       # Wrong result (cookie) — must be penalised by avoid_terms
+                       ("Cookies, peanut butter sandwich, regular", "SR Legacy",
+                        478.0, 8.8, 65.6, 20.7),
+                       # Correct result — should win
+                       ("Sandwich, peanut butter", "Survey (FNDDS)",
+                        260.0, 11.0, 30.0, 12.0),
+                   )):
+            result = route_food_query("peanut butter sandwich")
+
+        assert "cookie" not in (result.get("source_name") or "").lower(), (
+            f"peanut butter sandwich matched a cookie source: {result.get('source_name')!r}"
+        )
+        # Profile applies 140 g default; mocked sandwich is 260 kcal/100g × 1.40 = 364 kcal
+        assert result.get("is_estimated") is False
+        assert 280 <= result["calories"] <= 440, (
+            f"Expected 280-440 kcal for a PB sandwich, got {result['calories']}"
+        )
+
+    # ── Reasonable calorie range tests ───────────────────────────────────────
+
+    def test_grilled_cheese_sandwich_reasonable_calories(self):
+        """'grilled cheese sandwich' must return a reasonable calorie estimate."""
+        with patch("app.services.nutrition_service.httpx.get",
+                   return_value=_usda_response(
+                       "Sandwich, grilled cheese", "Survey (FNDDS)",
+                       calories=305.0, protein=14.0, carbs=25.0, fat=16.0
+                   )):
+            result = route_food_query("grilled cheese sandwich")
+
+        # 305 kcal/100g × 125g = 381 kcal from profile default
+        assert 280 <= result["calories"] <= 520, (
+            f"Expected 280-520 kcal for grilled cheese sandwich, got {result['calories']}"
+        )
+        assert result.get("is_estimated") is False
+
+    def test_turkey_sandwich_reasonable_calories(self):
+        """'turkey sandwich' must return a reasonable calorie estimate."""
+        with patch("app.services.nutrition_service.httpx.get",
+                   return_value=_usda_response(
+                       "Sandwich, turkey", "Survey (FNDDS)",
+                       calories=202.0, protein=16.0, carbs=23.0, fat=5.8
+                   )):
+            result = route_food_query("turkey sandwich")
+
+        # 202 kcal/100g × 170g = 343 kcal from profile default
+        assert 250 <= result["calories"] <= 480, (
+            f"Expected 250-480 kcal for turkey sandwich, got {result['calories']}"
+        )
+        assert result.get("is_estimated") is False
+
+    def test_turkey_sandwich_on_wheat_reasonable_calories(self):
+        """'turkey sandwich on wheat' (composite route) must return a reasonable estimate."""
+        with patch("app.services.nutrition_service.httpx.get",
+                   return_value=_usda_response(
+                       "Sandwich, turkey, on wheat", "Survey (FNDDS)",
+                       calories=200.0, protein=17.0, carbs=25.0, fat=5.0
+                   )):
+            result = route_food_query("turkey sandwich on wheat")
+
+        assert 250 <= result["calories"] <= 480, (
+            f"Expected 250-480 kcal for turkey sandwich on wheat, got {result['calories']}"
+        )
+        assert result.get("is_estimated") is False
+        assert result.get("source_type") == "composite_meal"
+
+    def test_turkey_sandwich_on_rye_reasonable_calories(self):
+        """'turkey sandwich on rye' (composite route) must return a reasonable estimate."""
+        with patch("app.services.nutrition_service.httpx.get",
+                   return_value=_usda_response(
+                       "Sandwich, turkey, on rye", "Survey (FNDDS)",
+                       calories=200.0, protein=17.0, carbs=25.0, fat=5.0
+                   )):
+            result = route_food_query("turkey sandwich on rye")
+
+        assert 250 <= result["calories"] <= 480, (
+            f"Expected 250-480 kcal for turkey sandwich on rye, got {result['calories']}"
+        )
+        assert result.get("is_estimated") is False
+        assert result.get("source_type") == "composite_meal"
+
+
+# ============================================================
+# Phase 9C — Meal-size profiles
+# ============================================================
+
+class TestMealSizeProfiles:
+    """
+    Verifies that common meal-style queries return full-serving calorie
+    estimates rather than per-100g fragments.
+
+    All tests are offline; USDA is patched with realistic Survey (FNDDS)
+    per-100g values.  After profile scaling the totals should fall in the
+    target ranges from the Phase 9C spec.
+    """
+
+    def test_chicken_rice_bowl_full_meal_range(self):
+        """'chicken rice bowl' must return a full-bowl serving (target 450–700 kcal)."""
+        with patch("app.services.nutrition_service.httpx.get",
+                   return_value=_usda_response(
+                       "Bowl, rice, with chicken", "Survey (FNDDS)",
+                       calories=140.0, protein=12.0, carbs=20.0, fat=3.0
+                   )):
+            result = route_food_query("chicken rice bowl")
+
+        # Profile applies 400 g default: 140 × 4.0 = 560 kcal
+        assert 450 <= result["calories"] <= 700, (
+            f"Expected 450–700 kcal for chicken rice bowl, got {result['calories']}. "
+            "Likely returned per-100g instead of full-bowl serving."
+        )
+        assert result.get("serving_description") != "per 100g"
+        assert result.get("is_estimated") is False
+
+    def test_chicken_and_rice_bowl_not_fragmented(self):
+        """
+        'chicken and rice bowl' (COMPOSITE_MEAL due to 'and') must not be
+        split into ['chicken', 'rice bowl'].  The _KNOWN_WHOLE_FOODS guard
+        must fire and return a single-bowl result.
+        """
+        with patch("app.services.nutrition_service.httpx.get",
+                   return_value=_usda_response(
+                       "Bowl, rice, with chicken", "Survey (FNDDS)",
+                       calories=140.0, protein=12.0, carbs=20.0, fat=3.0
+                   )):
+            result = route_food_query("chicken and rice bowl")
+
+        assert 450 <= result["calories"] <= 700, (
+            f"Expected 450–700 kcal for chicken and rice bowl, got {result['calories']}"
+        )
+        assert result.get("serving_description") != "2-component meal", (
+            "'chicken and rice bowl' was fragmented into components"
+        )
+        assert result.get("source_type") == "composite_meal"
+
+    def test_chicken_bowl_full_meal_range(self):
+        """'chicken bowl' must return a full-bowl serving (target 400–700 kcal)."""
+        with patch("app.services.nutrition_service.httpx.get",
+                   return_value=_usda_response(
+                       "Bowl, chicken", "Survey (FNDDS)",
+                       calories=140.0, protein=20.0, carbs=15.0, fat=4.0
+                   )):
+            result = route_food_query("chicken bowl")
+
+        # Profile: 350 g × 1.40 = 490 kcal
+        assert 400 <= result["calories"] <= 700, (
+            f"Expected 400–700 kcal for chicken bowl, got {result['calories']}"
+        )
+        assert result.get("serving_description") != "per 100g"
+        assert result.get("is_estimated") is False
+
+    def test_salad_with_chicken_composite_reasonable_range(self):
+        """
+        'salad with chicken' (COMPOSITE_MEAL) is decomposed into salad + chicken
+        components and the totals must land in a reasonable range (150–600 kcal).
+
+        Each component call receives the same mock, so the test verifies the
+        aggregation path produces a plausible result rather than pinning an
+        exact serving size.
+        """
+        with patch("app.services.nutrition_service.httpx.get",
+                   return_value=_usda_response(
+                       "Salad, chicken, grilled", "Survey (FNDDS)",
+                       calories=120.0, protein=14.0, carbs=6.0, fat=5.0
+                   )):
+            result = route_food_query("salad with chicken")
+
+        # Decomposition: salad (~120 kcal) + chicken (~120 kcal) ≈ 240 kcal
+        assert 150 <= result["calories"] <= 600, (
+            f"Expected 150–600 kcal for salad with chicken composite, got {result['calories']}"
+        )
+        assert result.get("source_type") == "composite_meal"
+
+    def test_banana_smoothie_full_drink_range(self):
+        """
+        'banana smoothie' must return a full-drink estimate (target 250–500 kcal).
+
+        No profile is registered for 'banana smoothie' — the _MEAL_CALORIE_FLOOR
+        for 'smoothie' (150 kcal/100g) rejects ingredient-level USDA hits and
+        falls back to the rule-based 300 kcal smoothie estimate.
+        """
+        # Mock USDA returning the raw banana ingredient (would trigger floor)
+        with patch("app.services.nutrition_service.httpx.get",
+                   return_value=_usda_response(
+                       "Bananas, raw", "Foundation",
+                       calories=85.0, protein=1.1, carbs=22.8, fat=0.3
+                   )):
+            result = route_food_query("banana smoothie")
+
+        # Floor rejects 85 kcal < 150 floor → rule-based fallback 300 kcal
+        assert 250 <= result["calories"] <= 500, (
+            f"Expected 250–500 kcal for banana smoothie, got {result['calories']}"
+        )
+        # Floor-triggered results use is_estimated=True
+        assert result.get("is_estimated") is True
+
+    def test_protein_shake_full_drink_range(self):
+        """
+        'protein shake' must return a full-bottle serving (target 150–350 kcal).
+
+        Before Phase 9C it returned ~61 kcal (per-100g SlimFast RTD unscaled).
+        """
+        with patch("app.services.nutrition_service.httpx.get",
+                   return_value=_usda_response(
+                       "Protein shake, ready to drink", "Survey (FNDDS)",
+                       calories=65.0, protein=15.0, carbs=5.0, fat=2.0
+                   )):
+            result = route_food_query("protein shake")
+
+        # Profile: 330 g × 0.65 = 214 kcal
+        assert 150 <= result["calories"] <= 350, (
+            f"Expected 150–350 kcal for protein shake, got {result['calories']}. "
+            "Likely returned per-100g instead of full-bottle serving."
+        )
+        assert result.get("serving_description") != "per 100g"
+        assert result.get("is_estimated") is False
+
+    def test_chipotle_chicken_bowl_rule_based_realistic(self):
+        """
+        'chipotle chicken bowl' (RESTAURANT_ITEM) falls back to rule-based
+        when OFF misses.  The fallback must now return a realistic bowl estimate
+        (target 500–850 kcal) instead of the former generic 250 kcal.
+        """
+        # No USDA mock needed — RESTAURANT_ITEM uses rule_based_only=True
+        result = route_food_query("chipotle chicken bowl")
+
+        assert 500 <= result["calories"] <= 850, (
+            f"Expected 500–850 kcal for chipotle chicken bowl (rule-based), "
+            f"got {result['calories']}"
+        )
+        assert result.get("source_type") == "restaurant_guess"
+        assert result.get("is_estimated") is True
+
+
+# ============================================================
+# Phase 9D — Unit and portion scaling fixes
+# ============================================================
+
+class TestUnitAndPortionScaling:
+    """
+    Verifies that tbsp/tsp/oz unit queries scale correctly from per-100g USDA
+    data, and that 'coffee with milk' returns a realistic splash-sized estimate
+    rather than a full cup of milk.
+
+    All tests are offline; USDA is patched with realistic per-100g values.
+    """
+
+    # ── Butter ────────────────────────────────────────────────────────────────
+
+    def test_1_tbsp_butter_reasonable_calories(self):
+        """1 tbsp butter (14.2 g) must return ~90–115 kcal, not 717 kcal (per-100g)."""
+        with patch("app.services.nutrition_service.httpx.get",
+                   return_value=_usda_response(
+                       "Butter, salted", "SR Legacy",
+                       calories=717.0, protein=0.9, carbs=0.1, fat=81.1
+                   )):
+            result = route_food_query("1 tbsp butter")
+
+        # 717 × (14.2 / 100) ≈ 101.8 kcal
+        assert 85 <= result["calories"] <= 120, (
+            f"Expected 85–120 kcal for 1 tbsp butter (14.2 g), got {result['calories']}. "
+            "Likely returned per-100g (717 kcal) instead of tbsp-scaled value."
+        )
+        assert result.get("is_estimated") is False
+        assert result.get("serving_description") == "1 tbsp"
+
+    def test_2_tbsp_butter_doubles_1_tbsp(self):
+        """2 tbsp butter must return approximately double the 1-tbsp value."""
+        with patch("app.services.nutrition_service.httpx.get",
+                   return_value=_usda_response(
+                       "Butter, salted", "SR Legacy",
+                       calories=717.0, protein=0.9, carbs=0.1, fat=81.1
+                   )):
+            result_1 = route_food_query("1 tbsp butter")
+            result_2 = route_food_query("2 tbsp butter")
+
+        assert result_2["calories"] == pytest.approx(result_1["calories"] * 2, rel=0.02), (
+            f"2 tbsp butter ({result_2['calories']}) should be ~2× 1 tbsp ({result_1['calories']})"
+        )
+        assert 170 <= result_2["calories"] <= 240, (
+            f"Expected 170–240 kcal for 2 tbsp butter, got {result_2['calories']}"
+        )
+
+    # ── Sugar ─────────────────────────────────────────────────────────────────
+
+    def test_1_tsp_sugar_reasonable_calories(self):
+        """1 tsp sugar (4 g) must return ~12–20 kcal, not 387 kcal (per-100g)."""
+        with patch("app.services.nutrition_service.httpx.get",
+                   return_value=_usda_response(
+                       "Sugars, granulated", "SR Legacy",
+                       calories=387.0, protein=0.0, carbs=100.0, fat=0.0
+                   )):
+            result = route_food_query("1 tsp sugar")
+
+        # 387 × (4 / 100) ≈ 15.5 kcal
+        assert 12 <= result["calories"] <= 20, (
+            f"Expected 12–20 kcal for 1 tsp sugar (4 g), got {result['calories']}. "
+            "Likely returned per-100g (387 kcal) instead of tsp-scaled value."
+        )
+        assert result.get("is_estimated") is False
+        assert result.get("serving_description") == "1 tsp"
+
+    def test_1_tbsp_sugar_reasonable_calories(self):
+        """1 tbsp sugar (12 g) must return ~40–60 kcal."""
+        with patch("app.services.nutrition_service.httpx.get",
+                   return_value=_usda_response(
+                       "Sugars, granulated", "SR Legacy",
+                       calories=387.0, protein=0.0, carbs=100.0, fat=0.0
+                   )):
+            result = route_food_query("1 tbsp sugar")
+
+        # 387 × (12 / 100) ≈ 46.4 kcal
+        assert 40 <= result["calories"] <= 60, (
+            f"Expected 40–60 kcal for 1 tbsp sugar (12 g), got {result['calories']}"
+        )
+        assert result.get("is_estimated") is False
+
+    # ── Steak ─────────────────────────────────────────────────────────────────
+
+    def test_4_oz_steak_reasonable_calories(self):
+        """4 oz steak (113.4 g) must return ~250–350 kcal, not 0 kcal."""
+        with patch("app.services.nutrition_service.httpx.get",
+                   return_value=_usda_response(
+                       "Beef, steak, cooked, broiled", "SR Legacy",
+                       calories=271.0, protein=26.0, carbs=0.0, fat=18.0
+                   )):
+            result = route_food_query("4 oz steak")
+
+        # 271 × (4 × 28.3495 / 100) ≈ 271 × 1.134 ≈ 307 kcal
+        assert 250 <= result["calories"] <= 370, (
+            f"Expected 250–370 kcal for 4 oz steak, got {result['calories']}. "
+            "Likely oz was treated as item count (× 4 per-100g) or returned 0."
+        )
+        assert result.get("is_estimated") is False
+
+    def test_100g_steak_reasonable_calories(self):
+        """100g steak must return the USDA per-100g value directly."""
+        with patch("app.services.nutrition_service.httpx.get",
+                   return_value=_usda_response(
+                       "Beef, steak, cooked, broiled", "SR Legacy",
+                       calories=271.0, protein=26.0, carbs=0.0, fat=18.0
+                   )):
+            result = route_food_query("100g steak")
+
+        assert result["calories"] == pytest.approx(271.0, rel=0.02), (
+            f"100g steak should return USDA per-100g value ≈ 271 kcal, got {result['calories']}"
+        )
+        assert result.get("is_estimated") is False
+
+    def test_steak_profile_exists_and_has_correct_defaults(self):
+        """Steak profile must exist with default_grams=170 for a typical 6-oz serving."""
+        profile = _profile_for_query("steak")
+        assert profile is not None, "No profile for 'steak'"
+        assert profile.default_grams == pytest.approx(170.0)
+
+    def test_steak_profile_penalizes_relish(self):
+        """
+        'steak' query must not select 'Pickle relish, hot dog' over a real steak entry.
+        The steak profile's avoid_terms must penalise relish and hot dog.
+        """
+        with patch("app.services.nutrition_service.httpx.get",
+                   return_value=_usda_multi_response(
+                       ("Pickle relish, hot dog", "SR Legacy", 90.0, 0.5, 22.0, 0.2),
+                       ("Beef, steak, cooked, broiled", "SR Legacy", 271.0, 26.0, 0.0, 18.0),
+                   )):
+            result = route_food_query("steak")
+
+        assert "relish" not in (result.get("source_name") or "").lower(), (
+            f"Steak query matched relish source: {result.get('source_name')!r}"
+        )
+
+    # ── Coffee with milk ──────────────────────────────────────────────────────
+
+    def test_coffee_with_milk_not_over_estimated(self):
+        """
+        'coffee with milk' must return under 130 kcal.
+
+        Before Phase 9D the composite service added a full cup of milk
+        (244 g → ~150 kcal fallback) producing ~250 kcal — far above the
+        realistic ~25–60 kcal for black coffee + a splash of milk.
+
+        The fix uses two layers:
+          1. _KNOWN_WHOLE_FOODS prevents decomposition into [coffee, full-cup-milk].
+          2. _MEAL_CALORIE_FLOOR ("coffee with" ≥ 15 kcal) rejects plain-coffee
+             USDA results (~1–2 kcal/100g) and falls back to 50 kcal.
+        """
+        # Simulate USDA returning plain brewed coffee (would give ~2 kcal total)
+        with patch("app.services.nutrition_service.httpx.get",
+                   return_value=_usda_response(
+                       "Beverages, coffee, brewed, prepared with tap water",
+                       "Foundation", calories=1.0
+                   )):
+            result = route_food_query("coffee with milk")
+
+        assert result["calories"] < 130, (
+            f"coffee with milk returned {result['calories']} kcal — "
+            "over-estimation regression (full cup of milk composited)"
+        )
+        # Must still have non-zero calories (not black-coffee 0 kcal) —
+        # the meal-calorie floor should have rejected the 1-kcal USDA result
+        # and used the 50 kcal fallback.
+        assert result["calories"] > 5, (
+            f"coffee with milk returned {result['calories']} kcal — "
+            "floor rejected the low USDA result but fallback was not applied"
+        )
+
+    def test_coffee_with_milk_reasonable_range(self):
+        """'coffee with milk' realistic range: 20–100 kcal (fallback path)."""
+        with patch("app.services.nutrition_service.httpx.get",
+                   return_value=_usda_response(
+                       "Beverages, coffee, brewed, prepared with tap water",
+                       "Foundation", calories=1.0
+                   )):
+            result = route_food_query("coffee with milk")
+
+        assert 20 <= result["calories"] <= 100, (
+            f"Expected 20–100 kcal for coffee with milk, got {result['calories']}"
+        )
+
+    def test_coffee_with_1_cup_milk_explicit_quantity_decomposes(self):
+        """
+        'coffee with 1 cup milk' has an explicit cup quantity and must NOT
+        hit the 'coffee with milk' whole-food shortcut — the full query string
+        does not match the shortcut key.  It should decompose into 2 components.
+        """
+        with patch("app.services.nutrition_service.httpx.get",
+                   return_value=_usda_response("Coffee, brewed", "Foundation", 2.0)):
+            result = route_food_query("coffee with 1 cup milk")
+
+        # Must decompose into 2 components (coffee + 1 cup milk)
+        assert result.get("serving_description") == "2-component meal", (
+            f"'coffee with 1 cup milk' should decompose into 2 components; "
+            f"got serving={result.get('serving_description')!r}. "
+            "The whole-food shortcut ('coffee with milk') must not match this query."
+        )
+        assert result.get("source_type") == "composite_meal"
+
+
+# ============================================================
+# Phase 9E — Source selection cleanup
+# ============================================================
+
+class TestSourceSelectionCleanup:
+    """
+    Targeted fixes for two queries that were selecting the wrong USDA source
+    or routing to the wrong service.
+
+    All tests are offline; USDA is patched where relevant.
+    """
+
+    # ── costco hot dog ────────────────────────────────────────────────────────
+
+    def test_costco_routes_as_restaurant_not_generic(self):
+        """
+        'costco hot dog' must be classified as RESTAURANT_ITEM now that
+        'costco' is in _RESTAURANT_SIGNALS.  Before Phase 9E it routed as
+        GENERIC_FOOD → USDA → 'Pickle relish, hot dog' (91 kcal).
+        """
+        from app.services.query_classifier import classify, QueryClass
+        from app.services.query_parser import parse
+        parsed = parse("costco hot dog")
+        cls = classify(parsed)
+        assert cls == QueryClass.RESTAURANT_ITEM, (
+            f"'costco hot dog' classified as {cls.value}; expected RESTAURANT_ITEM. "
+            "'costco' must be in _RESTAURANT_SIGNALS."
+        )
+
+    def test_costco_hot_dog_realistic_calories(self):
+        """
+        'costco hot dog' (RESTAURANT_ITEM → rule-based fallback) must return
+        a realistic hot-dog estimate (target 280–550 kcal), not 91 kcal from
+        USDA 'Pickle relish, hot dog'.
+        """
+        result = route_food_query("costco hot dog")
+
+        assert 280 <= result["calories"] <= 550, (
+            f"Expected 280–550 kcal for costco hot dog, got {result['calories']}. "
+            "Previously returned 91 kcal (USDA 'Pickle relish, hot dog')."
+        )
+        assert result.get("is_estimated") is True
+        assert result.get("source_type") == "restaurant_guess"
+
+    def test_hot_dog_fallback_reasonable(self):
+        """'hot dog' rule-based fallback must return a realistic ballpark estimate."""
+        from app.services.nutrition_service import _get_fallback_nutrition
+        result = _get_fallback_nutrition("hot dog")
+        assert 280 <= result["calories"] <= 500, (
+            f"hot dog fallback returned {result['calories']} kcal; expected 280–500"
+        )
+
+    # ── turkey sandwich on rye ────────────────────────────────────────────────
+
+    def test_turkey_sandwich_on_rye_avoids_cracker_source(self):
+        """
+        'turkey sandwich on rye' must not select 'Crackers, rye, sandwich-type
+        with cheese filling' (817 kcal).  The profile's avoid_terms must
+        penalise 'crackers' so a real sandwich entry wins.
+        """
+        with patch("app.services.nutrition_service.httpx.get",
+                   return_value=_usda_multi_response(
+                       # Wrong — must be penalised by 'crackers' avoid_term
+                       ("Crackers, rye, sandwich-type with cheese filling",
+                        "SR Legacy", 480.0, 9.0, 56.0, 22.0),
+                       # Correct
+                       ("Sandwich, turkey, on rye bread", "Survey (FNDDS)",
+                        198.0, 18.0, 24.0, 4.5),
+                   )):
+            result = route_food_query("turkey sandwich on rye")
+
+        assert "cracker" not in (result.get("source_name") or "").lower(), (
+            f"turkey sandwich on rye matched a cracker source: {result.get('source_name')!r}"
+        )
+        assert 250 <= result["calories"] <= 520, (
+            f"Expected 250–520 kcal for turkey sandwich on rye, got {result['calories']}"
+        )
+        assert result.get("is_estimated") is False

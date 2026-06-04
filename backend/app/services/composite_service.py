@@ -58,6 +58,47 @@ from app.services.nutrition_service import get_nutrition
 
 
 # ---------------------------------------------------------------------------
+# Known whole-food phrases — skip decomposition
+# ---------------------------------------------------------------------------
+
+# Queries in this set are recognised single food items whose canonical name
+# happens to contain "and" or a base_modifier that would otherwise trigger
+# decomposition.  They are looked up as a whole food via get_nutrition rather
+# than being split into parts.
+#
+# Keys are lowercase-stripped full query strings.  When the composite router
+# calls decompose_composite for one of these queries, the fast-path fires
+# before _build_components so that no fragmentation occurs.
+#
+# Do NOT add queries here that genuinely describe two separate foods
+# (e.g. "eggs and toast" — that SHOULD decompose).  Only add phrases where
+# fragmentation produces a clearly wrong result.
+_KNOWN_WHOLE_FOODS: frozenset[str] = frozenset({
+    # Sandwiches (Phase 9B)
+    "peanut butter and jelly sandwich",
+    "pbj sandwich",
+    "peanut butter jelly sandwich",
+    "peanut butter sandwich",
+    "grilled cheese sandwich",
+    "turkey sandwich",
+    "turkey sandwich on wheat",
+    "turkey sandwich on rye",
+    # Meal bowls (Phase 9C)
+    "chicken and rice bowl",
+    "chicken rice bowl",
+    # Coffee add-ins (Phase 9D) — prevent decomposition from adding a full cup
+    # of milk (244 g → ~150 kcal) instead of a realistic 30 g splash.
+    "coffee with milk",
+    "coffee with cream",
+    # NOTE: "salad with chicken" is intentionally NOT in this set.
+    # Composite decomposition (salad ≈ 30 kcal + chicken ≈ 165 kcal ≈ 200 kcal)
+    # stays within the Phase 8D acceptance range (168–712) and avoids the risk
+    # of USDA matching a high-fat prepared chicken salad (≥250 kcal/100g) and
+    # over-scaling it against a full-meal default_grams.
+})
+
+
+# ---------------------------------------------------------------------------
 # Lookup tables
 # ---------------------------------------------------------------------------
 
@@ -226,6 +267,22 @@ def decompose_composite(parsed, original_query: str) -> dict:
     • If every component lookup raises an exception, the same fallback is used.
     • In both cases meta["resolved_count"] == 0 signals a full fallback.
     """
+    # ── Known whole-food fast-path ────────────────────────────────────────────
+    # Check before building components so that these phrases are never split.
+    normalized = original_query.lower().strip()
+    if normalized in _KNOWN_WHOLE_FOODS:
+        result = get_nutrition(normalized, prefer_generic=True)
+        return {
+            **result,
+            "source_type": "composite_meal",
+            "_decomposition_meta": {
+                "component_count": 1,
+                "resolved_count":  1,
+                "failed_count":    0,
+                "any_estimated":   result.get("is_estimated", True),
+            },
+        }
+
     components = _build_components(parsed)
 
     # ── Zero-component edge case ──────────────────────────────────────────────

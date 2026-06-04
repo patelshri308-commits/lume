@@ -82,6 +82,7 @@ _RESTAURANT_SIGNALS: frozenset[str] = frozenset({
     "raising canes",
     "zaxby",
     "bojangles",
+    "costco",
 })
 
 # Packaged / branded product name keywords.

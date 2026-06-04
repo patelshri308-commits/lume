@@ -256,6 +256,132 @@ _GENERIC_FOOD_PROFILES: dict[str, GenericFoodProfile] = {
         avoid_terms=("dry", "uncooked", "sauce", "gluten-free", "homemade"),
         unit_grams={"cup": 140, "cups": 140},
     ),
+    # ── Condiments / fats / sweeteners ───────────────────────────────────────
+    # unit_grams allows tbsp/tsp queries to scale correctly from per-100g USDA
+    # data instead of returning implausible per-100g unscaled values.
+    "butter": GenericFoodProfile(
+        search_query="butter",
+        default_grams=14,   # 1 tbsp default serving
+        prefer_terms=("butter",),
+        avoid_terms=("peanut", "almond", "cocoa", "apple", "nut"),
+        unit_grams={
+            "tbsp": 14.2, "tablespoon": 14.2, "tablespoons": 14.2,
+            "tsp": 4.7,   "teaspoon": 4.7,    "teaspoons": 4.7,
+        },
+    ),
+    "sugar": GenericFoodProfile(
+        search_query="sugar granulated",
+        default_grams=4,    # 1 tsp default serving
+        prefer_terms=("sugar", "granulated"),
+        avoid_terms=("brown", "powdered", "confectioners", "turbinado", "maple"),
+        unit_grams={
+            "tsp": 4.0,   "teaspoon": 4.0,    "teaspoons": 4.0,
+            "tbsp": 12.0, "tablespoon": 12.0, "tablespoons": 12.0,
+        },
+    ),
+    # ── Proteins — weight-based entries ──────────────────────────────────────
+    # oz is already handled universally in _grams_from_unit (28.3495 g/oz).
+    # A profile is needed so that the profile-scaling path is activated and
+    # the USDA search is steered toward a cooked steak entry, not relish.
+    "steak": GenericFoodProfile(
+        search_query="beef steak cooked",
+        default_grams=170,  # typical 6 oz steak
+        prefer_terms=("beef", "steak", "cooked"),
+        avoid_terms=("raw", "sauce", "relish", "seasoning", "frozen", "hot dog"),
+    ),
+    # ── Sandwiches ────────────────────────────────────────────────────────────
+    # default_grams are typical whole-sandwich weights from USDA FNDDS references.
+    # avoid_terms prevent the scorer from selecting snack/cookie items that share
+    # a keyword with the sandwich (e.g. "Cookies, peanut butter sandwich").
+    "peanut butter and jelly sandwich": GenericFoodProfile(
+        search_query="sandwich peanut butter jelly",
+        default_grams=167,
+        prefer_terms=("sandwich", "peanut", "butter", "jelly"),
+        avoid_terms=("cookie", "wafer", "crackers"),
+    ),
+    "peanut butter sandwich": GenericFoodProfile(
+        search_query="sandwich peanut butter",
+        default_grams=140,
+        prefer_terms=("sandwich", "peanut", "butter"),
+        avoid_terms=("cookie", "wafer", "crackers", "jelly", "jam"),
+    ),
+    "grilled cheese sandwich": GenericFoodProfile(
+        search_query="sandwich grilled cheese",
+        default_grams=125,
+        prefer_terms=("sandwich", "grilled", "cheese"),
+        avoid_terms=("soup", "salad", "pasta"),
+    ),
+    "turkey sandwich": GenericFoodProfile(
+        search_query="sandwich turkey",
+        default_grams=170,
+        prefer_terms=("sandwich", "turkey"),
+        avoid_terms=("soup", "salad", "wrap"),
+    ),
+    "turkey sandwich on wheat": GenericFoodProfile(
+        search_query="sandwich turkey wheat",
+        default_grams=170,
+        prefer_terms=("sandwich", "turkey", "wheat"),
+        avoid_terms=("soup", "salad"),
+    ),
+    "turkey sandwich on rye": GenericFoodProfile(
+        search_query="sandwich turkey rye",
+        default_grams=170,
+        prefer_terms=("sandwich", "turkey", "rye"),
+        avoid_terms=("soup", "salad", "crackers", "cracker"),
+    ),
+    # ── Meals / bowls ─────────────────────────────────────────────────────────
+    # default_grams represents a typical whole-meal serving.
+    # avoid_terms block frozen entrees and per-100g-only USDA sources that
+    # underreport calories when unscaled.
+    "chicken rice bowl": GenericFoodProfile(
+        search_query="bowl chicken rice cooked",
+        default_grams=400,
+        prefer_terms=("bowl", "chicken", "rice"),
+        avoid_terms=("frozen", "entree", "meal kit", "baby", "babyfood"),
+    ),
+    "chicken bowl": GenericFoodProfile(
+        search_query="bowl chicken cooked",
+        default_grams=350,
+        prefer_terms=("bowl", "chicken"),
+        avoid_terms=("frozen", "entree", "baby"),
+    ),
+    # "salad with chicken" — leafy salad with cooked chicken breast.
+    # This is the key for composite queries that have "with" but should not
+    # be decomposed (added to _KNOWN_WHOLE_FOODS in composite_service.py).
+    "salad with chicken": GenericFoodProfile(
+        search_query="salad chicken breast",
+        default_grams=300,
+        prefer_terms=("salad", "chicken"),
+        avoid_terms=("pasta", "noodle", "soup", "baby", "caeser"),
+    ),
+    # "chicken salad" — ambiguous: can be a leafy salad with chicken or
+    # a mayo-based chicken salad spread. USDA FNDDS "Salad, chicken" typically
+    # describes a mayo-based serving. default_grams covers a typical plate/wrap
+    # portion for either interpretation.
+    "chicken salad": GenericFoodProfile(
+        search_query="chicken salad",
+        default_grams=200,
+        prefer_terms=("chicken", "salad"),
+        avoid_terms=("noodle", "soup", "pasta", "baby"),
+    ),
+    # ── Smoothies / shakes ────────────────────────────────────────────────────
+    # NOTE: "banana smoothie" intentionally has NO profile.  The existing
+    # _MEAL_CALORIE_FLOOR for "smoothie" (150 kcal) rejects low-calorie USDA
+    # ingredient hits (e.g. plain banana at 85 kcal/100g) and falls back to
+    # the rule-based 300 kcal smoothie estimate, which is correct behaviour.
+    # Adding a profile bypasses that floor check and risks returning an
+    # under-scaled result when USDA picks the wrong entry.
+    #
+    # "protein shake" — ready-to-drink bottles are ~325–415g; per-100g RTD
+    # entries in USDA (50–80 kcal/100g) scale correctly with default_grams=330.
+    # avoid_terms blocks dry protein powder entries (~380 kcal/100g) that would
+    # produce grossly inflated totals when scaled to a full-serving weight.
+    "protein shake": GenericFoodProfile(
+        search_query="protein shake beverage",
+        default_grams=330,
+        prefer_terms=("protein", "shake", "beverage"),
+        avoid_terms=("powder", "dry", "mix", "unflavored whey", "isolate"),
+    ),
 }
 
 
@@ -292,6 +418,23 @@ _PROFILE_ALIASES: dict[str, str] = {
     "grilled chicken breast": "chicken breast",
     "grilled chicken":        "chicken breast",
     "baked chicken breast":   "chicken breast",
+    # ── PBJ short-form aliases ────────────────────────────────────────────────
+    "pbj sandwich":                 "peanut butter and jelly sandwich",
+    "peanut butter jelly sandwich": "peanut butter and jelly sandwich",
+    # ── Steak preparation variants ────────────────────────────────────────────
+    "beef steak":    "steak",
+    "sirloin steak": "steak",
+    "ribeye steak":  "steak",
+    "ribeye":        "steak",
+    "ny strip":      "steak",
+    "filet mignon":  "steak",
+    # ── Bowl / meal aliases ───────────────────────────────────────────────────
+    # "chicken and rice bowl" routes as COMPOSITE_MEAL (" and ") and is caught
+    # by _KNOWN_WHOLE_FOODS before decomposition; the alias ensures the profile
+    # is found by _profile_for_query when get_nutrition is called with the
+    # full phrase.
+    "chicken and rice bowl": "chicken rice bowl",
+    "chicken and rice":      "chicken rice bowl",
 }
 
 
@@ -456,6 +599,8 @@ def _get_fallback_nutrition(query: str) -> dict:  # always returns is_estimated:
         return {"calories": 500, "protein": 10, "carbs": 70, "fat": 20}
     if "smoothie" in q:
         return {"calories": 300, "protein": 5,  "carbs": 55, "fat": 5}
+    if "protein shake" in q or ("shake" in q and "protein" in q):
+        return {"calories": 200, "protein": 25, "carbs": 15, "fat": 6}
     if "latte" in q or "cappuccino" in q:
         return {"calories": 150, "protein": 8,  "carbs": 15, "fat": 6}
     if "protein bar" in q:
@@ -474,12 +619,19 @@ def _get_fallback_nutrition(query: str) -> dict:  # always returns is_estimated:
         return {"calories": 90,  "protein": 1,  "carbs": 23, "fat": 0}
 
     # ── American / fast food ──────────────────────────────────────────────────
+    if "hot dog" in q or "hotdog" in q:
+        # Costco hot dog + bun ≈ 370 kcal; generic ballpark hot dog ≈ 300 kcal.
+        # Costco-specific is caught first since "costco" is in _RESTAURANT_SIGNALS.
+        return {"calories": 370, "protein": 15, "carbs": 31, "fat": 21}
     if "burger" in q or "pizza" in q:
         return {"calories": 650, "protein": 30, "carbs": 55, "fat": 35}
     if "fries" in q or "fry" in q:
         return {"calories": 400, "protein": 5,  "carbs": 50, "fat": 18}
 
     # ── Mexican ───────────────────────────────────────────────────────────────
+    if "chipotle" in q:
+        # Chipotle-branded bowls/burritos — typical chicken bowl ≈ 680 kcal.
+        return {"calories": 680, "protein": 40, "carbs": 72, "fat": 24}
     if "burrito" in q:
         return {"calories": 700, "protein": 30, "carbs": 75, "fat": 25}
     if "taco" in q:
@@ -492,6 +644,12 @@ def _get_fallback_nutrition(query: str) -> dict:  # always returns is_estimated:
         return {"calories": 500, "protein": 25, "carbs": 60, "fat": 15}
     if "curry" in q:
         return {"calories": 450, "protein": 20, "carbs": 45, "fat": 20}
+
+    # ── Bowls ─────────────────────────────────────────────────────────────────
+    # Generic rice/protein bowls — more conservative than burrito to avoid
+    # over-estimating grain-and-protein dishes without sauce.
+    if "bowl" in q:
+        return {"calories": 580, "protein": 35, "carbs": 65, "fat": 18}
 
     # ── Sandwiches ────────────────────────────────────────────────────────────
     if "sandwich" in q or "wrap" in q or "sub" in q:
@@ -578,6 +736,8 @@ def _get_fallback_nutrition(query: str) -> dict:  # always returns is_estimated:
         return {"calories": 500, "protein": 10, "carbs": 70, "fat": 20}
     if "smoothie" in q:
         return {"calories": 300, "protein": 5,  "carbs": 55, "fat": 5}
+    if "protein shake" in q or ("shake" in q and "protein" in q):
+        return {"calories": 200, "protein": 25, "carbs": 15, "fat": 6}
     if "latte" in q or "cappuccino" in q:
         return {"calories": 150, "protein": 8,  "carbs": 15, "fat": 6}
     # Plain / black coffee — must come before the generic "coffee" branch so
@@ -590,6 +750,10 @@ def _get_fallback_nutrition(query: str) -> dict:  # always returns is_estimated:
         or q == "coffee"
     ):
         return {"calories": 0, "protein": 0, "carbs": 0, "fat": 0}
+    # Coffee with a milk/cream add-in (splash, not a full cup).
+    # Must precede the generic "coffee" rule so we don't return 0 kcal.
+    if "coffee" in q and any(add in q for add in ("milk", "cream", "creamer")):
+        return {"calories": 50, "protein": 2, "carbs": 5, "fat": 2}
     if "coffee" in q:
         return {"calories": 50,  "protein": 1,  "carbs": 8,  "fat": 2}
     if "orange juice" in q:
@@ -856,6 +1020,17 @@ def _fetch_nutrition(query: str, prefer_generic: bool = False) -> dict:
             "ramen":       300,
             "pasta":       250,
             "spaghetti":   250,
+            # Shake without profile: reject raw RTD per-100g (≈60 kcal) being
+            # returned as the whole serving.
+            "shake":       100,
+            # Bowl queries without profile: reject single-ingredient per-100g
+            # results (e.g. 126 kcal/100g frozen entree) as a whole meal.
+            "bowl":        200,
+            # Coffee with an add-in (milk, cream, etc.): USDA's diluted
+            # coffee-with-milk entries are 10–17 kcal/100g — too low to represent
+            # a realistic splash serving when returned unscaled.  Reject anything
+            # below 35 and fall back to the ~50 kcal rule-based splash estimate.
+            "coffee with": 35,
         }
         if profile is None:
             for keyword, floor in _MEAL_CALORIE_FLOOR.items():
