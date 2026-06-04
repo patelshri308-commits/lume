@@ -11,23 +11,28 @@ The audit checks:
 - Serving descriptions are understandable.
 - Quantity scaling works for simple queries.
 
-## Audit Script
+## Audit Scripts
 
-Run locally only when a live spot check is wanted:
-
-```bash
-cd backend
-python3 scripts/audit_generic_foods.py
-```
-
-For structured output:
+### Phase 8B regression audit (narrow, all-pass target)
 
 ```bash
-cd backend
-python3 scripts/audit_generic_foods.py --json
+cd backend && python3 scripts/audit_generic_foods.py
+cd backend && python3 scripts/audit_generic_foods.py --json
 ```
 
-The script calls USDA through the existing backend service. Do not treat one live run as a permanent truth source; use it as a quick signal for current behavior.
+29 cases across source-quality, quantity-scaling, and coverage benchmarks. All 29 expected to pass on every run.
+
+### Phase 8C diagnostic audit (broad, diagnosis-focused)
+
+```bash
+cd backend && python3 scripts/audit_phase8c.py
+cd backend && python3 scripts/audit_phase8c.py --verbose   # includes source_name per row
+cd backend && python3 scripts/audit_phase8c.py --json
+```
+
+25 cases across 5 food categories. Some failures are expected and intentional — this script identifies engine gaps, not regressions. See Phase 8C in the phase history below for the baseline and root-cause analysis.
+
+Both scripts call USDA through the existing backend service. Do not treat one live run as a permanent truth source; USDA result ordering can vary between runs for some queries.
 
 ### What the audit checks (Phase 5A harness)
 
@@ -44,9 +49,9 @@ Each `AuditCase` supports the following fields. Existing checks are unchanged; s
 
 Failure reasons are reported individually in the `reason` column so each distinct problem is visible.
 
-## Current Baseline (after Phase 7B fixes)
+## Current Baseline (after Phase 8B pilot)
 
-Live audit run date: `2026-06-03`
+Live audit run date: `2026-06-04`
 
 Summary: **29/29 passed** — 8 source-quality + 5 quantity-scaling + 16/16 coverage
 
@@ -94,11 +99,166 @@ Summary: **29/29 passed** — 8 source-quality + 5 quantity-scaling + 16/16 cove
 | `cheddar cheese` | PASS | 114.2 | `Cheese, cheddar` | |
 | `black beans` | PASS | 227.0 | `Beans, black, mature seeds, cooked, boiled, with salt` | |
 
-Regression tests: **60 passing** (1 new test added in Phase 7B).
+Regression tests: **64 passing** (4 new Phase 8B tests; 7 existing tests updated to reflect verified-food behavior).
 
 ---
 
 ## Phase History
+
+### Phase 9A (completed 2026-06-04)
+
+Added profile-coverage alias tables to fix plural-form and preparation-method mismatches identified in Phase 8D. No nutrition values were changed. No new APIs, routing systems, or database schemas were modified.
+
+**Files changed:**
+- `backend/app/services/nutrition_service.py` — added `_PROFILE_ALIASES` dict; updated `_profile_for_query` to resolve aliases after direct lookup fails.
+- `backend/app/services/verified_foods.py` — added `_VERIFIED_ALIASES` dict; updated `verified_entry_for_query` to resolve aliases.
+- `backend/tests/test_nutrition_unit.py` — added `TestProfileAliases` class (20 new tests).
+
+**Alias design:**
+
+Two separate alias tables with different scope:
+
+| Table | Location | Purpose |
+| --- | --- | --- |
+| `_PROFILE_ALIASES` | `nutrition_service.py` | Maps normalized query → canonical `_GENERIC_FOOD_PROFILES` key. Covers plural forms + prep-method variants. |
+| `_VERIFIED_ALIASES` | `verified_foods.py` | Maps normalized query → canonical `_VERIFIED_FOODS` key. Covers plural forms only (nutrition is truly identical to singular). |
+
+Prep-method variants (scrambled, fried, boiled, grilled) are in `_PROFILE_ALIASES` only — not in `_VERIFIED_ALIASES` — so the USDA search path still fires and can pick the most accurate cooked-form entry. Cooking-fat differences (butter for scrambled eggs, oil for grilled chicken) are not estimated in this phase.
+
+**Observed improvements over Phase 8D baseline:**
+
+| Query | Before | After |
+| --- | --- | --- |
+| `bananas` | 170 kcal (per-100g × 1, WARNING) | 100.3 kcal (118g verified, PASS) |
+| `2 bananas` | 170 kcal (2 × 100g) | 200.6 kcal (2 × 118g verified) |
+| `2 apples` | ~104 kcal (2 × 100g, WARNING) | ~189 kcal (2 × 182g profile) |
+| `scrambled eggs` | 149 kcal "per 100g" (WARNING) | 74.5 kcal / 50g serving (serving context clear) |
+| `grilled chicken breast` | 151 kcal "per 100g" (WARNING) | 165 kcal / 100g serving (serving context clear) |
+
+**Tests: 84/84 passing** (20 new Phase 9A tests). Phase 8B audit unchanged (29/29).
+
+---
+
+### Phase 8D (completed 2026-06-04)
+
+Added `backend/scripts/audit_phase8d.py` — a real-world query benchmark covering 46 realistic user-typed queries across 6 categories. No food-engine behavior was changed.
+
+**Script design:**
+- `Phase8DCase` dataclass with a tight PASS calorie range and an auto-computed WARNING band (~55%–165% of range endpoints).
+- Three-tier verdict: **PASS** (in range, no critical concerns) / **WARNING** (plausible but has a concern: wrong routing, per-100g returned for a serving query, unexpected fallback) / **FAIL** (clearly wrong calories, wrong-food source, or zero when >0 expected).
+- `_classify_root_cause()` maps each non-PASS result to one of: `source_selection`, `serving_size_scaling`, `quantity_parsing`, `modifier_handling`, `branded_food_routing`, `restaurant_food_routing`, `composite_interpretation`, `unknown`.
+- Auto-generated recommendations section driven by root-cause frequency counts.
+- `--verbose` shows source_name per row; `--json` emits machine-readable output.
+
+**Live audit result (2026-06-04): 25/46 PASS (54%), 16 WARNING, 5 FAIL**
+
+| Category | Score | Notes |
+| --- | --- | --- |
+| 1. Serving-size ambiguity | 7/7 (100%) | large/small/medium modifiers all handled correctly |
+| 2. Egg and protein variations | 6/11 (54%) | verified registry handles egg counts; prep-modifier variants (scrambled/fried/boiled/grilled) all WARNING |
+| 3. Sandwiches and modifiers | 3/6 (50%) | `peanut butter sandwich` FAIL (cookie source); PBJ composite WARN (865 kcal over-count) |
+| 4. Restaurant and branded foods | 3/8 (37%) | OFF search returns 0 results for all tested chains/brands; everything falls to rule-based fallback |
+| 5. Composite foods | 4/7 (57%) | `chicken rice bowl` FAIL (126 kcal per-100g, expected 318–985); `coffee with milk` calibration note below |
+| 6. Quantity and scaling tests | 2/7 (28%) | plural forms miss profile lookup; per-100g × count instead of profile.default_grams × count |
+
+**Key diagnostic findings:**
+
+| Finding | Affected queries | Root cause |
+| --- | --- | --- |
+| OFF restaurant/packaged search returning 0 results | mcdonalds cheeseburger, mcdonalds fries, chipotle chicken bowl, starbucks caramel frappuccino, hershey bar, oreo cookies | All 6 show `restaurant_guess` or `packaged_guess` — rule-based fallbacks only. Passes only because some fallback estimates happen to land in range. |
+| Prep-modifier variants have no profiles | scrambled eggs, fried eggs, boiled eggs, grilled chicken breast | Returns per-100g USDA data without a natural serving. Calories plausible (WARNING) but serving context missing. |
+| Plural forms miss profile/verified lookup | 2 bananas, 3 bananas, 2 apples | Profile keys are singular (`banana`, `apple`). Plural form uses per-100g × count (100g each) instead of profile.default_grams × count (118g/182g each). ~15–20% undercounting. |
+| PBJ composite over-fragments | peanut butter and jelly sandwich | `" and "` in core_food triggers COMPOSITE_MEAL; decomposed as `peanut butter` + `jelly sandwich` → 865 kcal (expected ~400–500). |
+| Meal-type USDA queries return per-100g unscaled | chicken rice bowl, protein shake | USDA returns a per-100g entry for a meal-type food with no profile → underestimates calories significantly (126 kcal for a rice bowl). |
+| `costco hot dog` wrong USDA source | costco hot dog | `costco` not in `_RESTAURANT_SIGNALS` → GENERIC_FOOD routing; USDA matches "Pickle relish, hot dog" → 91 kcal. |
+| `coffee with milk` composite calibration | coffee with milk | Returns 251 kcal (composite: coffee ≈ 0 + full cup of milk ≈ 150 + overhead). FAIL against benchmark range 18–128. Range was too narrow; however the composite service's default "1 cup of milk" interpretation for "with milk" may over-count for typical users who add a splash, not a cup. |
+
+**Fix targets for Phase 9 (ordered by user impact):**
+1. **OFF search coverage** — investigate why McDonald's, Chipotle, Hershey, Oreo queries return 0 results. May be a query construction issue in packaged/restaurant service.
+2. **Plural-form aliases** — add `"bananas"`, `"apples"`, `"chicken breasts"` as aliases in `_GENERIC_FOOD_PROFILES` pointing to the same profile as the singular form.
+3. **Prep-modifier profiles** — add profiles for `scrambled eggs`, `fried eggs`, `boiled eggs`, `grilled chicken breast` with appropriate `default_grams` (2-egg serving ≈ 120g, single chicken breast ≈ 150g).
+4. **Composite "with" serving sizes** — revisit how composite components are portioned; "with milk" should default to ~30g (tablespoon) not 244g (full cup) for a coffee add-in context.
+5. **Meal-type USDA queries** — add profiles for `chicken rice bowl`, `protein shake` with appropriate default servings; or add meal-calorie-floor checks to prevent per-100g returns for multi-ingredient meals.
+6. **`costco hot dog`** — either add `costco` to `_RESTAURANT_SIGNALS` or add a `hot dog` profile that avoids relish.
+
+---
+
+### Phase 8C (completed 2026-06-04)
+
+Added `backend/scripts/audit_phase8c.py` — a broader diagnostic benchmark covering 25 food queries across 5 categories. No food-engine behavior was changed.
+
+**Script design:**
+- `Phase8CCase` dataclass with per-macro tolerance ranges (cal/protein/carbs/fat min–max).
+- Evaluates actual vs. expected range for all four macros; overall PASS requires all four to pass.
+- `_diagnose()` identifies likely failure causes: rule-based-fallback, unit-not-scaled, calories-way-too-high/low, service-miss-fallback.
+- Failure details section lists which macros failed and why, with source type, serving description, and source name.
+- `--verbose` flag adds source name per row in the main table.
+- `--json` flag emits machine-readable output.
+
+**Live audit result (2026-06-04): 19/25 (76%)**
+
+| Category | Score | Notes |
+| --- | --- | --- |
+| Piece-based foods | 5/5 (100%) | All verified/profiled; scaling correct |
+| Cup-based foods | 5/5 (100%) | All profiles have `unit_grams["cup"]`; scaling correct |
+| Tablespoon/Teaspoon | 2/4 (50%) | olive oil + peanut butter pass; butter + sugar fail |
+| Gram/Ounce proteins | 4/5 (80%) | 100g and 4 oz chicken pass; 4 oz steak fails |
+| Mixed/simple foods | 3/6 (50%) | turkey sandwich, cheeseburger, chocolate donut pass |
+
+**Failure root-cause analysis:**
+
+| Query | Failure | Root cause |
+| --- | --- | --- |
+| `1 tbsp butter` | 717 kcal returned (expected 85–128) | No profile for `butter` → `_grams_from_unit` never called → per-100g USDA data returned unscaled |
+| `1 tsp sugar` | 385 kcal returned (expected 10–25) | No profile for `sugar` → same per-100g unscaled issue; USDA source correct ("Sugars, granulated") |
+| `4 oz steak` | 0 kcal returned (expected 195–350) | No profile for `steak` → `oz` quantity treated as item count; USDA steak search returns zero-calorie abbreviated result, triggers rule-based fallback at 0 |
+| `peanut butter sandwich` | Wrong source | USDA matched "Cookies, peanut butter sandwich, regular" (a cookie); macros reflect a cookie per 100g, not a sandwich |
+| `cheese pizza slice` | Wrong source | USDA matched "Cheese, provolone, sliced"; no pizza content |
+| `hot dog` | Wrong source + 91 kcal | USDA matched "Pickle relish, hot dog" (the condiment) instead of the sausage |
+
+**Note on USDA non-determinism:** `cheeseburger` returned 296 kcal on one run and 650 kcal on another due to USDA search result ordering variance. The 650 kcal run passes; 296 kcal fails. This is a known limitation of live USDA search.
+
+**Identified fix targets for Phase 9:**
+1. Add `GenericFoodProfile` entries for `butter` and `sugar` with `unit_grams` for tbsp/tsp → fixes 2 failures.
+2. Add profile for `steak` with oz-compatible `default_grams` → fixes 1 failure.
+3. Improve USDA query/scoring for `hot dog` and `cheese pizza slice` to avoid wrong-food source selection → fixes 2 failures.
+4. `peanut butter sandwich` needs composite decomposition or a specific profile.
+
+---
+
+### Phase 8B (completed 2026-06-03)
+
+Implemented the verified common-food architecture. A new `verified_foods.py` module provides an offline registry that bypasses live USDA search for a pilot set of 5 audited foods.
+
+**Architecture:**
+- `backend/app/services/verified_foods.py` — new module. `VerifiedFoodEntry` dataclass (per-100g nutrition + `default_grams` / `unit_grams` for scaling). `_VERIFIED_FOODS` dict keyed on `_normalize_query()` output. `verified_entry_for_query()` lookup helper.
+- `nutrition_service._fetch_nutrition()` — verified fast-path inserted before any USDA network call when `prefer_generic=True`. Returns per-100g nutrition instantly without HTTP.
+- `scripts/audit_generic_foods.py` — `_evaluate` updated to accept `"verified_generic"` as a valid subtype of `"generic"` in `expected_source_type` checks.
+
+**Verified foods added (pilot):**
+
+| Key | Source name | Cal/100g | Default serving |
+| --- | --- | ---: | --- |
+| `banana` | Bananas, overripe, raw | 85.0 | 118 g |
+| `egg` / `eggs` | Eggs, Grade A, Large, egg whole | 148.0 | 50 g |
+| `chicken breast` | Chicken, broilers or fryers, breast, meat only, cooked, roasted | 165.0 | 100 g |
+| `white rice` | Rice, white, cooked, as ingredient | 130.0 | 158 g |
+| `olive oil` | Oil, olive, salad or cooking | 884.0 | 13.5 g (1 tbsp) |
+
+**Metadata returned by verified entries:**
+- `source_type`: `"verified_generic"` (distinguishable from USDA-backed `"generic"`)
+- `is_estimated`: `False`
+- `confidence`: `1.0` at the service layer; normalised to `0.85` by the router (which overwrites confidence for all GENERIC_FOOD paths)
+
+**Behavior preserved:**
+- Verified entries coexist with `_GENERIC_FOOD_PROFILES` — profiles still handle all scaling (`default_grams`, `unit_grams`) via duck typing.
+- Non-verified foods follow the existing USDA search path unchanged.
+- Quantity and unit scaling are identical to the USDA path (same `grams/100` multiplier).
+- `1 tbsp olive oil` → 119.3 kcal ✓, `2 eggs` → 148.0 kcal ✓, `1 cup white rice` → 205.4 kcal ✓.
+
+**Tests:** 4 new Phase 8B regression tests + 7 existing tests updated to reflect verified-food behavior; **64 total passing**.
+
+**Live audit result: 29/29 passed.**
 
 ### Phase 7B (completed 2026-06-03)
 
@@ -214,8 +374,16 @@ Added the audit script (`scripts/audit_generic_foods.py`) and documented the ben
 
 ## Next Steps
 
-1. ~~Run a live audit to confirm Phase 3 fixes against real USDA data~~ — done in Phase 5A; 8/8 passing with source-name checks.
-2. Consider expanding the benchmark to cover remaining generic whole foods: apple, orange, broccoli, sweet potato, oatmeal, greek yogurt, peanut butter, black beans, etc.
-3. Propose focused behavior changes before implementing them.
-4. Add or update regression tests for any approved food-engine fixes.
-5. Only after local validation, discuss whether any Supabase migration or deployment change is needed.
+1. ~~Run a live audit to confirm Phase 3 fixes~~ — done in Phase 5A; 8/8 passing.
+2. ~~Expand benchmark to cover generic whole foods~~ — done in Phase 8C (25 foods, 5 categories).
+3. ~~Real-world query diagnosis~~ — done in Phase 8D (46 queries, 6 categories, root-cause classification).
+4. **Phase 9 fix targets** (combined from 8C + 8D root-cause analysis, ordered by user impact):
+   - **OFF search coverage** — investigate why McDonald's, Chipotle, Hershey, Oreo all return 0 results from Open Food Facts. All show `restaurant_guess`/`packaged_guess`; only rule-based fallbacks fire.
+   - ~~**Plural-form aliases**~~ — done in Phase 9A (`bananas`, `apples`, `oranges`, `chicken breasts` aliased in both `_PROFILE_ALIASES` and `_VERIFIED_ALIASES`).
+   - ~~**Prep-modifier aliases**~~ — done in Phase 9A (`scrambled/fried/boiled/poached eggs`, `grilled/baked chicken breast` aliased in `_PROFILE_ALIASES`).
+   - **Unit-missing profiles** — add `butter` (tbsp=14g, tsp=4.7g) and `sugar` (tsp=4g, tbsp=12g) profiles so tbsp/tsp queries scale correctly instead of returning per-100g.
+   - **Steak oz profile** — add `steak` profile with `default_grams=170` and `_grams_from_unit` oz support.
+   - **Composite "with" portioning** — "with milk" defaults to a full cup (244g); should use condiment-size (30g) for beverage add-ins.
+   - **`costco hot dog`** — add `costco` to `_RESTAURANT_SIGNALS` or add `hot dog` profile with avoid_terms for relish.
+5. Add regression tests for any Phase 9 fixes before merging.
+6. Only after local validation, discuss whether any Supabase migration or deployment change is needed.

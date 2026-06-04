@@ -28,7 +28,7 @@ from unittest.mock import MagicMock, patch
 import pytest
 
 from app.services.candidate_scorer import score_candidate
-from app.services.nutrition_service import _fetch_nutrition, get_nutrition
+from app.services.nutrition_service import _fetch_nutrition, _profile_for_query, get_nutrition
 from app.services.query_classifier import QueryClass, classify
 from app.services.query_parser import parse
 from app.services.query_router import route_food_query
@@ -343,11 +343,14 @@ class TestNutritionLogic:
 
     def test_quantity_two_scales_all_macros(self):
         """Ordering 2 of an item should double every macro."""
+        # Use salmon (non-verified, default_grams=100) so scale=1.0/2.0 and
+        # all values are exact doubles with no floating-point rounding artefacts.
         with patch("app.services.nutrition_service.httpx.get",
-                   return_value=_usda_response("Egg, whole", "Foundation", 70.0,
-                                               protein=6.0, carbs=0.6, fat=5.0)):
-            single = get_nutrition("egg", prefer_generic=True)
-            double = get_nutrition("egg", quantity=2.0, prefer_generic=True)
+                   return_value=_usda_response("Fish, salmon, chinook, cooked",
+                                               "SR Legacy", 200.0,
+                                               protein=20.0, carbs=2.0, fat=12.0)):
+            single = get_nutrition("salmon", prefer_generic=True)
+            double = get_nutrition("salmon", quantity=2.0, prefer_generic=True)
 
         for macro in ("calories", "protein", "carbs", "fat"):
             assert double[macro] == pytest.approx(single[macro] * 2, rel=0.01), (
@@ -424,29 +427,26 @@ class TestNutritionLogic:
         assert result["is_estimated"] is False
         assert result["calories"] == pytest.approx(579.0 * 0.28, rel=0.01)
 
-    def test_eggs_profile_penalizes_fried_egg(self):
-        """Plain eggs should prefer plain/raw/boiled generic egg data over fried egg."""
-        with patch("app.services.nutrition_service.httpx.get",
-                   return_value=_usda_multi_response(
-                       ("Egg, whole, cooked, fried", "Survey (FNDDS)", 196.0, 13.6, 0.8, 14.8),
-                       ("Egg, whole, raw, fresh", "SR Legacy", 143.0, 12.6, 0.7, 9.5),
-                   )):
+    def test_eggs_verified_source_overrides_usda_pool(self):
+        """Eggs are in the verified registry — USDA is never called regardless of the pool."""
+        with patch("app.services.nutrition_service.httpx.get") as mock_http:
             result = route_food_query("2 eggs")
+        mock_http.assert_not_called()
+        assert result["source_name"] == "Eggs, Grade A, Large, egg whole"
+        assert result["calories"] == pytest.approx(148.0)
 
-        assert result["source_name"] == "Egg, whole, raw, fresh"
-        assert result["calories"] == pytest.approx(143.0)
-
-    def test_zero_nutrient_oil_candidate_is_rejected(self):
-        """A zero-filled branded oil candidate should not beat usable olive oil data."""
+    def test_zero_nutrient_candidate_is_rejected(self):
+        """A zero-filled branded candidate must not beat a valid SR Legacy entry."""
+        # Salmon is non-verified so the USDA path is exercised here.
         with patch("app.services.nutrition_service.httpx.get",
                    return_value=_usda_multi_response(
-                       ("OLIVE OIL", "Branded", 0.0, 0.0, 0.0, 0.0),
-                       ("Olive oil", "Survey (FNDDS)", 900.0, 0.0, 0.0, 100.0),
+                       ("SALMON", "Branded", 0.0, 0.0, 0.0, 0.0),
+                       ("Fish, salmon, chinook, cooked, dry heat", "SR Legacy", 231.0, 25.7, 0.0, 13.4),
                    )):
-            result = route_food_query("1 tbsp olive oil")
+            result = route_food_query("salmon")
 
-        assert result["source_name"] == "Olive oil"
-        assert result["calories"] == pytest.approx(121.5, rel=0.01)
+        assert result["source_name"] == "Fish, salmon, chinook, cooked, dry heat"
+        assert result["calories"] == pytest.approx(231.0)
 
     # ── Phase 3: generic food source selection ────────────────────────────────
 
@@ -464,19 +464,13 @@ class TestNutritionLogic:
             "penalised by the 'gluten-free' avoid_term so plain pasta wins."
         )
 
-    def test_white_rice_profile_penalizes_glutinous_rice(self):
-        """Plain white rice should prefer regular white rice over glutinous rice."""
-        with patch("app.services.nutrition_service.httpx.get",
-                   return_value=_usda_multi_response(
-                       ("Rice, white, glutinous, unenriched, cooked", "SR Legacy", 97.0, 2.0, 21.1, 0.2),
-                       ("Rice, white, long-grain, regular, cooked, enriched, with salt", "SR Legacy", 130.0, 2.7, 28.2, 0.3),
-                   )):
+    def test_white_rice_verified_bypasses_usda(self):
+        """White rice is in the verified registry — USDA is never called."""
+        with patch("app.services.nutrition_service.httpx.get") as mock_http:
             result = route_food_query("white rice")
-
-        assert result["source_name"] == "Rice, white, long-grain, regular, cooked, enriched, with salt", (
-            f"source_name={result['source_name']!r}; glutinous rice should be penalised "
-            "by the 'glutinous' avoid_term so plain long-grain white rice wins."
-        )
+        mock_http.assert_not_called()
+        assert result["source_name"] == "Rice, white, cooked, as ingredient"
+        assert result["calories"] == pytest.approx(205.4, rel=0.01)
 
     def test_olive_oil_profile_penalizes_mixed_oil_blend(self):
         """Olive oil query should prefer pure olive oil over mixed-oil blends."""
@@ -595,6 +589,47 @@ class TestNutritionLogic:
             "so plain cooked broccoli wins over broccoli raab."
         )
 
+    # ── Phase 8B: verified-foods pilot ───────────────────────────────────────
+
+    def test_verified_banana_does_not_call_usda(self):
+        """Verified banana must return pinned nutrition without any USDA network call."""
+        with patch("app.services.nutrition_service.httpx.get") as mock_http:
+            result = get_nutrition("banana", prefer_generic=True)
+        mock_http.assert_not_called()
+        assert result["is_estimated"] is False
+        assert result.get("source_type") == "verified_generic"
+        assert result["source_name"] == "Bananas, overripe, raw"
+
+    def test_verified_olive_oil_scales_correctly_for_1_tbsp(self):
+        """1 tbsp olive oil (13.5 g) must return ~119.3 kcal from the verified entry."""
+        with patch("app.services.nutrition_service.httpx.get") as mock_http:
+            result = get_nutrition("olive oil", quantity=1.0, unit="tbsp", prefer_generic=True)
+        mock_http.assert_not_called()
+        assert abs(result["calories"] - 119.3) < 0.5, (
+            f"Expected ~119.3 kcal for 1 tbsp olive oil, got {result['calories']}"
+        )
+        assert result.get("source_type") == "verified_generic"
+
+    def test_verified_eggs_scale_correctly_for_2_eggs(self):
+        """2 eggs (2 × 50 g = 100 g total) must return ~148.0 kcal from the verified entry."""
+        with patch("app.services.nutrition_service.httpx.get") as mock_http:
+            result = get_nutrition("eggs", quantity=2.0, prefer_generic=True)
+        mock_http.assert_not_called()
+        assert abs(result["calories"] - 148.0) < 0.5, (
+            f"Expected ~148.0 kcal for 2 eggs, got {result['calories']}"
+        )
+        assert result.get("source_type") == "verified_generic"
+
+    def test_non_verified_food_still_calls_usda(self):
+        """Foods absent from the verified registry must still use the USDA search path."""
+        with patch("app.services.nutrition_service.httpx.get",
+                   return_value=_usda_response(
+                       "Broccoli, cooked, boiled, drained", "SR Legacy", 35.0, 2.4, 7.2, 0.4
+                   )) as mock_http:
+            result = get_nutrition("broccoli", prefer_generic=True)
+        mock_http.assert_called_once()
+        assert result.get("source_type") != "verified_generic"
+
     # ── Meal calorie floor ────────────────────────────────────────────────────
 
     def test_banana_smoothie_floor_rejects_plain_banana(self):
@@ -708,7 +743,7 @@ class TestNutritionLogic:
 
         mock_pkg.assert_not_called()
         mock_rst.assert_not_called()
-        assert result["source_type"] in ("generic", "usda", ""), (
+        assert result["source_type"] in ("generic", "usda", "", "verified_generic"), (
             f"source_type={result['source_type']!r}; should not be packaged or restaurant"
         )
         assert result["confidence"] >= 0.80
@@ -852,11 +887,12 @@ class TestGenericFoodDataTypeFilter:
         def capture_get(url, *, params=None, timeout=None, **kw):
             captured_params.append(dict(params or {}))
             return _usda_response(
-                "Chicken, broilers or fryers, breast", "Foundation", 165.0
+                "Broccoli, cooked, boiled, drained", "SR Legacy", 35.0
             )
 
+        # Use broccoli (non-verified) so the USDA HTTP call actually fires.
         with patch("app.services.nutrition_service.httpx.get", side_effect=capture_get):
-            _fetch_nutrition("chicken breast", prefer_generic=True)
+            _fetch_nutrition("broccoli", prefer_generic=True)
 
         assert captured_params, "httpx.get was never called"
         sent = captured_params[0]
@@ -905,8 +941,8 @@ class TestGenericFoodDataTypeFilter:
         bad_resp.status_code = 400
 
         good_resp = _usda_response(
-            "Chicken, broilers or fryers, breast, meat only, cooked, roasted",
-            "Foundation", 165.0, protein=31.0, carbs=0.0, fat=3.6
+            "Broccoli, cooked, boiled, drained",
+            "SR Legacy", 35.0, protein=2.4, carbs=7.2, fat=0.4
         )
 
         captured_params: list[dict] = []
@@ -915,14 +951,15 @@ class TestGenericFoodDataTypeFilter:
             captured_params.append(dict(params or {}))
             return bad_resp if len(captured_params) == 1 else good_resp
 
+        # Use broccoli (non-verified) so both USDA calls actually fire.
         with patch("app.services.nutrition_service.httpx.get", side_effect=capture_get):
-            result = _fetch_nutrition("chicken breast", prefer_generic=True)
+            result = _fetch_nutrition("broccoli", prefer_generic=True)
 
         assert len(captured_params) == 2
         assert "dataType" in captured_params[0]
         assert "dataType" not in captured_params[1]
         assert result["is_estimated"] is False
-        assert result["calories"] == pytest.approx(165.0)
+        assert result["calories"] == pytest.approx(35.0)
 
     def test_branded_only_pool_triggers_fallback_without_filter(self):
         """
@@ -1004,3 +1041,198 @@ class TestGenericFoodDataTypeFilter:
         )
         assert result["is_estimated"] is False
         assert result["calories"] == pytest.approx(165.0)
+
+
+# ============================================================
+# Phase 9A — Profile coverage and alias resolution
+# ============================================================
+
+class TestProfileAliases:
+    """
+    Verifies that _PROFILE_ALIASES and _VERIFIED_ALIASES resolve plural forms
+    and preparation-method variants to the correct base profile / verified entry.
+
+    All tests are offline-only: USDA is patched wherever it would be called.
+    """
+
+    # ── Pure unit tests: _profile_for_query alias lookup ────────────────────
+
+    def test_profile_alias_bananas_resolves_to_banana_profile(self):
+        """_profile_for_query('bananas') must return the banana profile."""
+        banana_profile  = _profile_for_query("banana")
+        bananas_profile = _profile_for_query("bananas")
+        assert bananas_profile is not None
+        assert bananas_profile is banana_profile, (
+            "'bananas' did not alias to the 'banana' GenericFoodProfile"
+        )
+
+    def test_profile_alias_apples_resolves_to_apple_profile(self):
+        apple_profile  = _profile_for_query("apple")
+        apples_profile = _profile_for_query("apples")
+        assert apples_profile is not None
+        assert apples_profile is apple_profile
+
+    def test_profile_alias_oranges_resolves_to_orange_profile(self):
+        orange_profile  = _profile_for_query("orange")
+        oranges_profile = _profile_for_query("oranges")
+        assert oranges_profile is not None
+        assert oranges_profile is orange_profile
+
+    def test_profile_alias_chicken_breasts_plural(self):
+        singular = _profile_for_query("chicken breast")
+        plural   = _profile_for_query("chicken breasts")
+        assert plural is not None
+        assert plural is singular
+
+    def test_profile_alias_scrambled_eggs_resolves_to_egg_profile(self):
+        egg_profile = _profile_for_query("egg")
+        assert _profile_for_query("scrambled eggs") is egg_profile
+        assert _profile_for_query("scrambled egg")  is egg_profile
+
+    def test_profile_alias_fried_eggs_resolves_to_egg_profile(self):
+        egg_profile = _profile_for_query("egg")
+        assert _profile_for_query("fried eggs") is egg_profile
+        assert _profile_for_query("fried egg")  is egg_profile
+
+    def test_profile_alias_boiled_eggs_resolves_to_egg_profile(self):
+        egg_profile = _profile_for_query("egg")
+        assert _profile_for_query("boiled eggs") is egg_profile
+        assert _profile_for_query("boiled egg")  is egg_profile
+
+    def test_profile_alias_poached_eggs_resolves_to_egg_profile(self):
+        egg_profile = _profile_for_query("egg")
+        assert _profile_for_query("poached eggs") is egg_profile
+        assert _profile_for_query("poached egg")  is egg_profile
+
+    def test_profile_alias_grilled_chicken_breast(self):
+        cb_profile = _profile_for_query("chicken breast")
+        assert _profile_for_query("grilled chicken breast") is cb_profile
+        assert _profile_for_query("grilled chicken")        is cb_profile
+
+    def test_profile_alias_baked_chicken_breast(self):
+        cb_profile = _profile_for_query("chicken breast")
+        assert _profile_for_query("baked chicken breast") is cb_profile
+
+    # ── Regression: direct keys still resolve without aliases ────────────────
+
+    def test_banana_direct_profile_unaffected(self):
+        """Adding aliases must not break direct 'banana' profile lookup."""
+        profile = _profile_for_query("banana")
+        assert profile is not None
+        assert profile.default_grams == 118
+
+    def test_egg_direct_profile_unaffected(self):
+        profile = _profile_for_query("egg")
+        assert profile is not None
+        assert profile.default_grams == 50
+
+    def test_eggs_direct_profile_unaffected(self):
+        """'eggs' is a direct key (not an alias) — must still resolve."""
+        profile = _profile_for_query("eggs")
+        assert profile is not None
+        assert profile.default_grams == 50
+
+    # ── Integration: verified fast-path respects plural aliases ─────────────
+
+    def test_bananas_plural_hits_verified_banana_entry_no_usda(self):
+        """'bananas' must resolve to the verified banana entry (no USDA call)."""
+        with patch("app.services.nutrition_service.httpx.get") as mock_http:
+            result = get_nutrition("bananas", prefer_generic=True)
+        mock_http.assert_not_called()
+        assert result.get("source_type") == "verified_generic"
+        assert result.get("source_name") == "Bananas, overripe, raw"
+
+    def test_bananas_plural_scales_by_banana_default_grams(self):
+        """Single 'bananas' (qty=1) must scale by 118 g → ~100.3 kcal."""
+        with patch("app.services.nutrition_service.httpx.get"):
+            result = get_nutrition("bananas", prefer_generic=True)
+        assert abs(result["calories"] - 100.3) < 1.0, (
+            f"Expected ~100.3 kcal for 1 banana (118g), got {result['calories']}"
+        )
+
+    def test_2_bananas_plural_scales_correctly(self):
+        """2 bananas (2 × 118 g = 236 g) must return ~200.6 kcal from verified entry."""
+        with patch("app.services.nutrition_service.httpx.get") as mock_http:
+            result = get_nutrition("bananas", quantity=2.0, prefer_generic=True)
+        mock_http.assert_not_called()
+        assert abs(result["calories"] - 200.6) < 2.0, (
+            f"Expected ~200.6 kcal for 2 bananas (236g), got {result['calories']}"
+        )
+
+    # ── Integration: prep-modifier aliases use profile scaling (not per-100g) ─
+
+    def test_scrambled_eggs_profile_controls_serving_not_per_100g(self):
+        """
+        'scrambled eggs' with the egg alias must return a gram-based serving
+        description rather than raw 'per 100g'.  The egg profile default of
+        50 g (1 egg) should be applied.
+        """
+        with patch("app.services.nutrition_service.httpx.get",
+                   return_value=_usda_response(
+                       "Egg, whole, cooked, scrambled", "Foundation",
+                       calories=148.0, protein=10.0, carbs=1.4, fat=11.0
+                   )):
+            result = get_nutrition("scrambled eggs", prefer_generic=True)
+
+        assert result.get("serving_description") != "per 100g", (
+            "scrambled eggs must not return bare per-100g data; "
+            "egg profile should apply default_grams=50"
+        )
+        assert result.get("is_estimated") is False
+        assert abs(result["calories"] - 74.0) < 2.0, (
+            f"Expected ~74.0 kcal for 1-egg serving (50g × 148/100), "
+            f"got {result['calories']}"
+        )
+
+    def test_fried_eggs_profile_controls_serving(self):
+        """'fried eggs' alias must apply the egg profile (50 g default)."""
+        with patch("app.services.nutrition_service.httpx.get",
+                   return_value=_usda_response(
+                       "Egg, whole, cooked, fried", "Foundation",
+                       calories=196.0, protein=13.6, carbs=0.8, fat=14.8
+                   )):
+            result = get_nutrition("fried eggs", prefer_generic=True)
+
+        assert result.get("serving_description") != "per 100g"
+        assert result.get("is_estimated") is False
+        # 196 kcal/100g × 50g = 98 kcal
+        assert abs(result["calories"] - 98.0) < 2.0, (
+            f"Expected ~98.0 kcal for 1 fried egg (50g), got {result['calories']}"
+        )
+
+    def test_boiled_eggs_profile_controls_serving(self):
+        """'boiled eggs' alias must apply the egg profile (50 g default)."""
+        with patch("app.services.nutrition_service.httpx.get",
+                   return_value=_usda_response(
+                       "Egg, whole, cooked, hard-boiled", "Foundation",
+                       calories=155.0, protein=12.6, carbs=1.1, fat=10.6
+                   )):
+            result = get_nutrition("boiled eggs", prefer_generic=True)
+
+        assert result.get("serving_description") != "per 100g"
+        assert result.get("is_estimated") is False
+        # 155 kcal/100g × 50g = 77.5 kcal
+        assert abs(result["calories"] - 77.5) < 2.0, (
+            f"Expected ~77.5 kcal for 1 boiled egg (50g), got {result['calories']}"
+        )
+
+    def test_grilled_chicken_breast_profile_controls_serving(self):
+        """
+        'grilled chicken breast' must use the chicken breast profile
+        (100 g default) instead of returning per-100g without a serving context.
+        """
+        with patch("app.services.nutrition_service.httpx.get",
+                   return_value=_usda_response(
+                       "Chicken, broilers or fryers, breast, meat only, cooked, roasted",
+                       "Foundation",
+                       calories=165.0, protein=31.0, carbs=0.0, fat=3.6
+                   )):
+            result = get_nutrition("grilled chicken breast", prefer_generic=True)
+
+        assert result.get("serving_description") != "per 100g", (
+            "grilled chicken breast should use profile-based serving, not per 100g"
+        )
+        assert result.get("is_estimated") is False
+        assert abs(result["calories"] - 165.0) < 2.0, (
+            f"Expected ~165.0 kcal (100g default), got {result['calories']}"
+        )

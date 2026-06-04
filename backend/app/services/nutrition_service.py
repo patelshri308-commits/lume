@@ -2,6 +2,7 @@ import os
 from dataclasses import dataclass, field
 import httpx
 from app.services.debug_logger import log_usda_candidates, log_rejection
+from app.services.verified_foods import verified_entry_for_query as _verified_entry_for_query
 
 # ---------------------------------------------------------------------------
 # USDA FoodData Central API
@@ -259,6 +260,42 @@ _GENERIC_FOOD_PROFILES: dict[str, GenericFoodProfile] = {
 
 
 # ---------------------------------------------------------------------------
+# Profile alias table
+# ---------------------------------------------------------------------------
+
+# Maps normalized query strings to canonical _GENERIC_FOOD_PROFILES keys.
+# Keys must already be in _normalize_query() form (lowercase, size-stripped).
+# Only add aliases here — never duplicate a full profile entry.
+#
+# Two categories:
+#   1. Plural forms  — same food, just plural ("bananas" → "banana").
+#   2. Prep-method variants — cooking style does not change the base
+#      profile used for USDA scoring and gram-scaling.  Added-fat differences
+#      (butter in scrambled eggs, oil for grilled chicken) are not estimated
+#      yet; the base whole-food values are used as an approximation.
+_PROFILE_ALIASES: dict[str, str] = {
+    # ── Plural forms ─────────────────────────────────────────────────────────
+    "bananas":         "banana",
+    "apples":          "apple",
+    "oranges":         "orange",
+    "chicken breasts": "chicken breast",
+    # ── Egg preparation variants ─────────────────────────────────────────────
+    "scrambled egg":   "egg",
+    "scrambled eggs":  "egg",
+    "fried egg":       "egg",
+    "fried eggs":      "egg",
+    "boiled egg":      "egg",
+    "boiled eggs":     "egg",
+    "poached egg":     "egg",
+    "poached eggs":    "egg",
+    # ── Chicken breast preparation variants ──────────────────────────────────
+    "grilled chicken breast": "chicken breast",
+    "grilled chicken":        "chicken breast",
+    "baked chicken breast":   "chicken breast",
+}
+
+
+# ---------------------------------------------------------------------------
 # Internal helpers
 # ---------------------------------------------------------------------------
 
@@ -344,9 +381,19 @@ def _score_food(food: dict, query: str, profile: GenericFoodProfile | None = Non
 
 
 def _profile_for_query(query: str) -> GenericFoodProfile | None:
-    """Return a canonical generic-food profile for an already-core food query."""
+    """Return a canonical generic-food profile for an already-core food query.
+
+    Checks _PROFILE_ALIASES when no direct match exists so that plural forms
+    and preparation-method variants resolve to the appropriate base profile
+    without duplicating profile entries.
+    """
     q = _normalize_query(query)
-    return _GENERIC_FOOD_PROFILES.get(q)
+    profile = _GENERIC_FOOD_PROFILES.get(q)
+    if profile is None:
+        canonical = _PROFILE_ALIASES.get(q)
+        if canonical is not None:
+            profile = _GENERIC_FOOD_PROFILES.get(canonical)
+    return profile
 
 
 def _grams_from_unit(unit: str, quantity: float, profile: GenericFoodProfile) -> float | None:
@@ -698,6 +745,25 @@ def _fetch_nutrition(query: str, prefer_generic: bool = False) -> dict:
     Leave False (default) for fallback paths from branded/restaurant routing
     where the caller explicitly wants any available USDA data as a last resort.
     """
+    # ── Verified-foods fast path ──────────────────────────────────────────────
+    # For GENERIC_FOOD queries (prefer_generic=True) check the offline verified
+    # registry before making any USDA network call.  Verified entries return
+    # pinned per-100g nutrition instantly; the rest of this function is skipped.
+    if prefer_generic:
+        _verified = _verified_entry_for_query(_normalize_query(query))
+        if _verified is not None:
+            return {
+                "calories":            _verified.calories_per_100g,
+                "protein":             _verified.protein_per_100g,
+                "carbs":               _verified.carbs_per_100g,
+                "fat":                 _verified.fat_per_100g,
+                "is_estimated":        False,
+                "source_name":         _verified.source_name,
+                "source_type":         _verified.source_type,
+                "confidence":          _verified.confidence,
+                "serving_description": "per 100g",
+            }
+
     profile = _profile_for_query(query) if prefer_generic else None
     query = profile.search_query if profile is not None else _normalize_query(query)
 

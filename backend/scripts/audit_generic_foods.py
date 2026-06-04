@@ -211,7 +211,14 @@ def _evaluate(case: AuditCase, result: dict[str, Any]) -> tuple[str, str]:
     elif not case.min_calories <= float(calories) <= case.max_calories:
         failures.append(f"calories outside {case.min_calories:g}-{case.max_calories:g}")
 
-    if result.get("source_type") != case.expected_source_type:
+    actual_source_type = result.get("source_type")
+    # "verified_generic" is a subtype of "generic" — accept both when "generic" is expected.
+    generic_family = {"generic", "verified_generic"}
+    source_type_ok = (
+        actual_source_type == case.expected_source_type
+        or (case.expected_source_type == "generic" and actual_source_type in generic_family)
+    )
+    if not source_type_ok:
         failures.append(f"source_type != {case.expected_source_type}")
 
     if case.require_source_backed and result.get("is_estimated") is True:
