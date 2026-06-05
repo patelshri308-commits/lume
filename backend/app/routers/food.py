@@ -1,9 +1,10 @@
 import re
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel
-from typing import List
+from typing import List, Optional
 from app.services.query_router import route_food_query
 from app.services.barcode_service import lookup_barcode, BarcodeNotFoundError, BarcodeProviderError
+from app.services.multi_parser import split_to_lines
 
 MAX_MULTI_LINES = 15
 
@@ -23,7 +24,12 @@ class BarcodeRequest(BaseModel):
 
 
 class ParseMultiRequest(BaseModel):
-    lines: List[str]
+    # text: raw multi-format input — preferred; split_to_lines() handles all
+    #       separator styles (newline, comma, semicolon, "and").
+    # lines: pre-split list — kept for backwards compatibility with existing
+    #        callers and tests.  Mutually exclusive with text; text wins.
+    text:  Optional[str]       = None
+    lines: Optional[List[str]] = None
 
 
 @router.post("/food/search")
@@ -61,17 +67,27 @@ def scan_barcode(body: BarcodeRequest):
 @router.post("/food/parse-multi")
 def parse_multi(body: ParseMultiRequest):
     """
-    Parse multiple food lines in one request.  Mirrors /food/search but accepts
-    a list of lines and returns a result for each non-blank line.
+    Parse multiple food items in one request.  Mirrors /food/search but accepts
+    free-form meal text or a pre-split list of food strings.
 
-    - Blank / whitespace-only lines are silently skipped (counted in `skipped`).
-    - More than MAX_MULTI_LINES non-blank lines → HTTP 400.
-    - Each line is sent through route_food_query independently.
-    - A line that raises is returned as parse_error=True with zeroed macros.
+    Accepted input shapes (mutually exclusive; text takes priority):
+      text  — raw meal string.  split_to_lines() handles newlines, commas,
+               semicolons, and simple "and" lists automatically.
+      lines — pre-split list (legacy; kept for backwards compatibility).
+
+    - More than MAX_MULTI_LINES resolved items → HTTP 400.
+    - Each item is sent through route_food_query independently.
+    - An item that raises is returned as parse_error=True with zeroed macros.
     - No auth required; no DB writes.
     """
-    non_blank = [line for line in body.lines if line.strip()]
-    skipped   = len(body.lines) - len(non_blank)
+    if body.text is not None:
+        non_blank = split_to_lines(body.text)
+        skipped   = 0
+    elif body.lines is not None:
+        non_blank = [line for line in body.lines if line.strip()]
+        skipped   = len(body.lines) - len(non_blank)
+    else:
+        raise HTTPException(status_code=422, detail="Provide either 'text' or 'lines'.")
 
     if len(non_blank) > MAX_MULTI_LINES:
         raise HTTPException(

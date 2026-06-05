@@ -355,6 +355,7 @@ function AppInner() {
   const [homeWaterOz,    setHomeWaterOz]    = useState<number>(0);
   const [homeWaterGoalOz,setHomeWaterGoalOz]= useState<number>(64);
   const [isWeightOpen,   setIsWeightOpen]   = useState(false);
+  const [isMultiLogOpen, setIsMultiLogOpen] = useState(false);
   const [homeWeightKg,   setHomeWeightKg]   = useState<number | null>(null);
   const [setupFields,    setSetupFields]    = useState<SetupFields>({
     display_name:   "",
@@ -1134,6 +1135,20 @@ function AppInner() {
     return <WeightScreen onBack={() => setIsWeightOpen(false)} />;
   }
 
+  // ── Multi-food log screen ─────────────────────────────────────────────────
+  if (isMultiLogOpen) {
+    return (
+      <MultiLogScreen
+        selectedDate={selectedDate}
+        onBack={() => setIsMultiLogOpen(false)}
+        onDone={() => {
+          setIsMultiLogOpen(false);
+          Promise.all([loadSummary(), loadLogs(), loadWeekly(), loadTodayCalories()]);
+        }}
+      />
+    );
+  }
+
   // ── Tracker screen (logged in) ──────────────────────────────────────────────
   // profile is guaranteed non-null here (the setup gate above would have caught it).
   const calorieGoal = profile ? computeCalorieTarget(profile) : CALORIE_GOAL;
@@ -1488,6 +1503,13 @@ function AppInner() {
           Without this correction the bar overshoots upward by ~34pt on Face ID devices. */}
       <View style={[styles.bottomBar, { bottom: keyboardHeight > 0 ? keyboardHeight - insets.bottom : 0, paddingBottom: keyboardHeight > 0 ? 8 : (insets.bottom || 8) }]}>
         <View style={[styles.inputRow, isSearchFocused && styles.inputRowFocused]}>
+          <TouchableOpacity
+            style={styles.multiLogButton}
+            onPress={() => setIsMultiLogOpen(true)}
+            activeOpacity={0.7}
+          >
+            <Ionicons name="list-outline" size={22} color="rgba(26,26,20,0.5)" />
+          </TouchableOpacity>
           <TextInput
             placeholder="e.g. banana, grilled chicken..."
             placeholderTextColor="#aaa"
@@ -3493,6 +3515,11 @@ const styles = StyleSheet.create({
     color: "#555",
   },
 
+  multiLogButton: {
+    marginRight: 6,
+    justifyContent: "center",
+    padding: 2,
+  },
   scanButton: {
     marginLeft: 8,
     justifyContent: "center",
@@ -5729,5 +5756,431 @@ const weightStyles = StyleSheet.create({
     color: "#1A1A14",
     textAlign: "center",
     paddingVertical: 8,
+  },
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
+// MultiLogScreen
+// ─────────────────────────────────────────────────────────────────────────────
+
+type ParsedItem = {
+  original_line:       string;
+  name:                string;
+  calories:            number;
+  protein:             number;
+  carbs:               number;
+  fat:                 number;
+  source_type:         string | null;
+  confidence:          number | null;
+  is_estimated:        boolean;
+  serving_description: string | null;
+  parse_error:         boolean;
+  error_message:       string | null;
+};
+
+function MultiLogScreen({
+  selectedDate,
+  onBack,
+  onDone,
+}: {
+  selectedDate: string;
+  onBack: () => void;
+  onDone: () => void;
+}) {
+  const [phase,       setPhase]       = useState<"idle" | "parsing" | "reviewing" | "logging">("idle");
+  const [rawInput,    setRawInput]    = useState("");
+  const [items,       setItems]       = useState<ParsedItem[]>([]);
+  const [parseError,  setParseError]  = useState("");
+  const [logProgress, setLogProgress] = useState(0);
+  const [logTotal,    setLogTotal]    = useState(0);
+  const [logFailed,   setLogFailed]   = useState<string[]>([]);
+
+  const validItems = items.filter(item => !item.parse_error);
+
+  const totals = validItems.reduce(
+    (acc, item) => ({
+      calories: acc.calories + item.calories,
+      protein:  acc.protein  + item.protein,
+      carbs:    acc.carbs    + item.carbs,
+      fat:      acc.fat      + item.fat,
+    }),
+    { calories: 0, protein: 0, carbs: 0, fat: 0 },
+  );
+
+  const handleParse = async () => {
+    const trimmed = rawInput.trim();
+    if (!trimmed) return;
+    setPhase("parsing");
+    setParseError("");
+    try {
+      const res = await axios.post<{ items: ParsedItem[]; skipped: number }>(
+        `${API_URL}/food/parse-multi`,
+        { text: trimmed },
+      );
+      setItems(res.data.items);
+      setPhase("reviewing");
+    } catch (err: any) {
+      setParseError(err?.response?.data?.detail ?? "Failed to parse. Please try again.");
+      setPhase("idle");
+    }
+  };
+
+  const removeItem = (index: number) => {
+    setItems(prev => prev.filter((_, i) => i !== index));
+  };
+
+  const handleLog = async () => {
+    if (validItems.length === 0) return;
+    setPhase("logging");
+    setLogProgress(0);
+    setLogTotal(validItems.length);
+    setLogFailed([]);
+
+    const { data: { session } } = await supabase.auth.getSession();
+    const headers = session?.access_token
+      ? { Authorization: `Bearer ${session.access_token}` }
+      : {};
+
+    const failed: string[] = [];
+    for (let i = 0; i < validItems.length; i++) {
+      const item = validItems[i];
+      try {
+        await axios.post(
+          `${API_URL}/logs`,
+          {
+            name:                item.name,
+            calories:            item.calories,
+            protein:             item.protein,
+            carbs:               item.carbs,
+            fat:                 item.fat,
+            log_date:            selectedDate,
+            source_type:         item.source_type,
+            confidence:          item.confidence,
+            is_estimated:        item.is_estimated,
+            serving_description: item.serving_description,
+          },
+          { headers },
+        );
+        setLogProgress(i + 1);
+      } catch {
+        failed.push(item.name);
+      }
+    }
+
+    setLogFailed(failed);
+    if (failed.length < validItems.length) {
+      Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
+      onDone();
+    }
+  };
+
+  const handleBack = () => {
+    if (phase === "logging") return;
+    if (phase === "reviewing") {
+      setItems([]);
+      setPhase("idle");
+    } else {
+      onBack();
+    }
+  };
+
+  const inReview = phase === "reviewing" || phase === "logging";
+
+  return (
+    <LinearGradient
+      colors={["#FFFEF8", "#FFF8D4", "#FDF3B0"]}
+      locations={[0, 0.5, 1]}
+      start={{ x: 0.15, y: 0 }}
+      end={{ x: 0.85, y: 1 }}
+      style={waterStyles.gradientRoot}
+    >
+      <SafeAreaView style={waterStyles.safeTransparent}>
+        <ScrollView
+          style={setupStyles.scroll}
+          contentContainerStyle={setupStyles.container}
+          keyboardShouldPersistTaps="handled"
+        >
+          {/* Back */}
+          <TouchableOpacity
+            onPress={handleBack}
+            style={[setupStyles.acctBackButton, phase === "logging" && mlStyles.backDisabled]}
+            activeOpacity={phase === "logging" ? 1 : 0.7}
+          >
+            <Ionicons name="arrow-back" size={18} color="#555" />
+            <Text style={setupStyles.acctBackText}>
+              {phase === "reviewing" ? "Edit input" : "Back"}
+            </Text>
+          </TouchableOpacity>
+
+          <Text style={setupStyles.headline}>
+            {inReview ? "Review items" : "Log a meal"}
+          </Text>
+
+          {/* ── Idle / Parsing ──────────────────────────────────────────── */}
+          {!inReview && (
+            <>
+              <Text style={weightStyles.subhead}>
+                Paste your foods — one item per line.
+              </Text>
+
+              <View style={mlStyles.inputCard}>
+                <TextInput
+                  style={mlStyles.multilineInput}
+                  value={rawInput}
+                  onChangeText={setRawInput}
+                  placeholder={"e.g.\n2 eggs\n1 cup oatmeal\nbanana"}
+                  placeholderTextColor="rgba(26,26,20,0.3)"
+                  multiline
+                  numberOfLines={6}
+                  autoCapitalize="none"
+                  editable={phase === "idle"}
+                  textAlignVertical="top"
+                />
+              </View>
+
+              {parseError !== "" && (
+                <Text style={mlStyles.parseErrorText}>{parseError}</Text>
+              )}
+
+              <TouchableOpacity
+                style={[
+                  mlStyles.actionBtn,
+                  (phase === "parsing" || !rawInput.trim()) && mlStyles.actionBtnDisabled,
+                ]}
+                onPress={handleParse}
+                disabled={phase === "parsing" || !rawInput.trim()}
+                activeOpacity={0.8}
+              >
+                <Text style={mlStyles.actionBtnText}>
+                  {phase === "parsing" ? "Parsing…" : "Parse foods"}
+                </Text>
+              </TouchableOpacity>
+            </>
+          )}
+
+          {/* ── Reviewing / Logging ─────────────────────────────────────── */}
+          {inReview && (
+            <>
+              {items.map((item, index) => (
+                <View
+                  key={index}
+                  style={item.parse_error ? mlStyles.errorItemCard : mlStyles.itemCard}
+                >
+                  <View style={mlStyles.itemHeaderRow}>
+                    <Text
+                      style={item.parse_error ? mlStyles.itemNameError : mlStyles.itemName}
+                      numberOfLines={2}
+                    >
+                      {item.name}
+                    </Text>
+                    {!item.parse_error && (
+                      <TouchableOpacity
+                        onPress={() => removeItem(index)}
+                        style={mlStyles.removeBtn}
+                        activeOpacity={0.7}
+                        disabled={phase === "logging"}
+                      >
+                        <Ionicons name="close" size={18} color="rgba(26,26,20,0.45)" />
+                      </TouchableOpacity>
+                    )}
+                  </View>
+
+                  {item.parse_error ? (
+                    <Text style={mlStyles.itemErrorMsg} numberOfLines={2}>
+                      Could not parse this item
+                    </Text>
+                  ) : (
+                    <Text style={mlStyles.itemMacros}>
+                      {Math.round(item.calories)} cal · {item.protein.toFixed(1)}g P ·{" "}
+                      {item.carbs.toFixed(1)}g C · {item.fat.toFixed(1)}g F
+                    </Text>
+                  )}
+                </View>
+              ))}
+
+              {/* Totals */}
+              {validItems.length > 0 && (
+                <View style={mlStyles.totalsCard}>
+                  <Text style={mlStyles.totalsLabel}>
+                    {validItems.length} item{validItems.length !== 1 ? "s" : ""}
+                  </Text>
+                  <Text style={mlStyles.totalsMacros}>
+                    {Math.round(totals.calories)} cal · {totals.protein.toFixed(1)}g P ·{" "}
+                    {totals.carbs.toFixed(1)}g C · {totals.fat.toFixed(1)}g F
+                  </Text>
+                </View>
+              )}
+
+              {/* Log button / progress */}
+              {phase === "logging" ? (
+                <Text style={mlStyles.logProgressText}>
+                  Logging {logProgress} of {logTotal}…
+                </Text>
+              ) : (
+                <TouchableOpacity
+                  style={[
+                    mlStyles.actionBtn,
+                    validItems.length === 0 && mlStyles.actionBtnDisabled,
+                  ]}
+                  onPress={handleLog}
+                  disabled={validItems.length === 0}
+                  activeOpacity={0.8}
+                >
+                  <Text style={mlStyles.actionBtnText}>
+                    {validItems.length === 0
+                      ? "No items to log"
+                      : `Log ${validItems.length} item${validItems.length !== 1 ? "s" : ""}`}
+                  </Text>
+                </TouchableOpacity>
+              )}
+
+              {logFailed.length > 0 && (
+                <Text style={mlStyles.parseErrorText}>
+                  Failed to log: {logFailed.join(", ")}
+                </Text>
+              )}
+            </>
+          )}
+        </ScrollView>
+      </SafeAreaView>
+    </LinearGradient>
+  );
+}
+
+const mlStyles = StyleSheet.create({
+  backDisabled: {
+    opacity: 0.35,
+  },
+  inputCard: {
+    backgroundColor: "#fff",
+    borderRadius: 20,
+    padding: 20,
+    shadowColor: "#000",
+    shadowOpacity: 0.05,
+    shadowRadius: 12,
+    shadowOffset: { width: 0, height: 3 },
+    elevation: 2,
+    marginBottom: 16,
+  },
+  multilineInput: {
+    fontFamily: "Inter-Variable",
+    fontSize: 15,
+    color: "#1A1A14",
+    minHeight: 140,
+    lineHeight: 22,
+  },
+  parseErrorText: {
+    fontFamily: "Inter-Variable",
+    fontSize: 12,
+    color: "#c62828",
+    marginBottom: 10,
+    lineHeight: 17,
+  },
+  actionBtn: {
+    backgroundColor: "#1A1A14",
+    borderRadius: 12,
+    paddingVertical: 14,
+    alignItems: "center",
+    shadowColor: "#000",
+    shadowOpacity: 0.12,
+    shadowRadius: 8,
+    shadowOffset: { width: 0, height: 4 },
+    elevation: 3,
+    marginBottom: 16,
+  },
+  actionBtnDisabled: {
+    opacity: 0.4,
+  },
+  actionBtnText: {
+    fontFamily: "Chillax-SemiBold",
+    fontSize: 16,
+    color: "#F8E94A",
+    letterSpacing: -0.2,
+  },
+  itemCard: {
+    backgroundColor: "#fff",
+    borderRadius: 16,
+    padding: 16,
+    marginBottom: 10,
+    shadowColor: "#000",
+    shadowOpacity: 0.04,
+    shadowRadius: 8,
+    shadowOffset: { width: 0, height: 2 },
+    elevation: 1,
+  },
+  errorItemCard: {
+    backgroundColor: "#fff5f5",
+    borderRadius: 16,
+    padding: 16,
+    marginBottom: 10,
+    borderWidth: 1,
+    borderColor: "rgba(198,40,40,0.15)",
+  },
+  itemHeaderRow: {
+    flexDirection: "row",
+    justifyContent: "space-between",
+    alignItems: "flex-start",
+    marginBottom: 6,
+  },
+  itemName: {
+    fontFamily: "Chillax-Medium",
+    fontSize: 14,
+    color: "#1A1A14",
+    flex: 1,
+    marginRight: 8,
+    letterSpacing: -0.2,
+  },
+  itemNameError: {
+    fontFamily: "Chillax-Medium",
+    fontSize: 14,
+    color: "#c62828",
+    flex: 1,
+    letterSpacing: -0.2,
+  },
+  removeBtn: {
+    padding: 2,
+  },
+  itemMacros: {
+    fontFamily: "Inter-Variable",
+    fontSize: 12,
+    color: "rgba(26,26,20,0.5)",
+    lineHeight: 17,
+  },
+  itemErrorMsg: {
+    fontFamily: "Inter-Variable",
+    fontSize: 12,
+    color: "#c62828",
+    lineHeight: 17,
+  },
+  totalsCard: {
+    backgroundColor: "rgba(248,233,74,0.18)",
+    borderRadius: 14,
+    paddingVertical: 14,
+    paddingHorizontal: 18,
+    marginBottom: 16,
+    flexDirection: "row",
+    justifyContent: "space-between",
+    alignItems: "center",
+  },
+  totalsLabel: {
+    fontFamily: "Chillax-SemiBold",
+    fontSize: 13,
+    color: "#1A1A14",
+    letterSpacing: -0.2,
+  },
+  totalsMacros: {
+    fontFamily: "Inter-Variable",
+    fontSize: 12,
+    color: "rgba(26,26,20,0.6)",
+    flexShrink: 1,
+    textAlign: "right",
+    marginLeft: 8,
+  },
+  logProgressText: {
+    fontFamily: "Inter-Variable",
+    fontSize: 14,
+    color: "rgba(26,26,20,0.55)",
+    textAlign: "center",
+    paddingVertical: 16,
   },
 });
