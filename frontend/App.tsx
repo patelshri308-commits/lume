@@ -1254,6 +1254,47 @@ function AppInner() {
           {!summaryLoading && summary && (
             <TotalsRadialRings summary={summary} selectedDate={selectedDate} goal={calorieGoal} />
           )}
+
+          {/* Water + Weight compact strip */}
+          <View style={styles.dailyStatStrip}>
+            <TouchableOpacity style={styles.dailyStatHalf} onPress={() => setIsWaterOpen(true)} activeOpacity={0.8}>
+              <Ionicons name="water-outline" size={16} color="#1A1A14" />
+              <View style={styles.dailyStatContent}>
+                <View style={styles.dailyStatTopRow}>
+                  <Text style={styles.dailyStatLabel}>Water</Text>
+                  <Text style={styles.dailyStatPct}>
+                    {Math.min(100, Math.round((homeWaterOz / Math.max(homeWaterGoalOz, 1)) * 100))}%
+                  </Text>
+                </View>
+                <Text style={styles.dailyStatValue}>
+                  {homeWaterOz}{" "}
+                  <Text style={styles.dailyStatUnit}>/ {homeWaterGoalOz} oz</Text>
+                </Text>
+                <View style={styles.dailyStatBar}>
+                  <View style={[
+                    styles.dailyStatBarFill,
+                    homeWaterOz >= homeWaterGoalOz && styles.dailyStatBarFillMet,
+                    { width: `${Math.min(100, Math.round((homeWaterOz / Math.max(homeWaterGoalOz, 1)) * 100))}%` as any },
+                  ]} />
+                </View>
+              </View>
+            </TouchableOpacity>
+            <View style={styles.dailyStatSep} />
+            <TouchableOpacity style={styles.dailyStatHalf} onPress={() => setIsWeightOpen(true)} activeOpacity={0.8}>
+              <Ionicons name="trending-up-outline" size={16} color="#1A1A14" />
+              <View style={styles.dailyStatContent}>
+                <Text style={styles.dailyStatLabel}>Weight</Text>
+                {homeWeightKg != null ? (
+                  <Text style={styles.dailyStatValue}>
+                    {homeWeightKg}{" "}
+                    <Text style={styles.dailyStatUnit}>kg</Text>
+                  </Text>
+                ) : (
+                  <Text style={styles.dailyStatEmpty}>Tap to log</Text>
+                )}
+              </View>
+            </TouchableOpacity>
+          </View>
         </View>
 
         {/* Logged Foods */}
@@ -1419,36 +1460,6 @@ function AppInner() {
           {weeklyData.length > 0 && <WeeklyGlowLine data={weeklyData} goal={calorieGoal} />}
         </View>
 
-        {/* Water + Weight Widgets */}
-        <View style={styles.section}>
-          <View style={styles.widgetRow}>
-            <TouchableOpacity
-              style={styles.waterWidgetTap}
-              onPress={() => setIsWaterOpen(true)}
-              activeOpacity={0.85}
-            >
-              <View style={styles.waterWidgetCard}>
-                <Ionicons name="water-outline" size={26} color="#1A1A14" />
-                <Text style={styles.waterWidgetLabel}>Water</Text>
-                <Text style={styles.waterWidgetProgress}>{homeWaterOz} / {homeWaterGoalOz} oz</Text>
-              </View>
-            </TouchableOpacity>
-
-            <TouchableOpacity
-              style={styles.waterWidgetTap}
-              onPress={() => setIsWeightOpen(true)}
-              activeOpacity={0.85}
-            >
-              <View style={styles.waterWidgetCard}>
-                <Ionicons name="trending-up-outline" size={26} color="#1A1A14" />
-                <Text style={styles.waterWidgetLabel}>Weight</Text>
-                <Text style={styles.waterWidgetProgress}>
-                  {homeWeightKg != null ? `${homeWeightKg} kg` : "—"}
-                </Text>
-              </View>
-            </TouchableOpacity>
-          </View>
-        </View>
 
       </ScrollView>
 
@@ -4075,6 +4086,80 @@ const styles = StyleSheet.create({
     fontFamily: "Inter-Variable",
     fontSize: 11,
     color: "rgba(26,26,20,0.55)",
+  },
+
+  // ── Daily stat strip (water + weight, below the rings card) ──────────────
+  dailyStatStrip: {
+    flexDirection: "row",
+    marginTop: 12,
+    borderRadius: 20,
+    borderWidth: 1.5,
+    borderColor: "#F5D834",
+    overflow: "hidden",
+  },
+  dailyStatHalf: {
+    flex: 1,
+    flexDirection: "row",
+    alignItems: "center",
+    padding: 16,
+    gap: 10,
+  },
+  dailyStatSep: {
+    width: 1.5,
+    backgroundColor: "#F5D834",
+  },
+  dailyStatContent: {
+    flex: 1,
+    gap: 2,
+  },
+  dailyStatTopRow: {
+    flexDirection: "row",
+    justifyContent: "space-between",
+    alignItems: "center",
+  },
+  dailyStatLabel: {
+    fontFamily: "Chillax-Medium",
+    fontSize: 12,
+    color: "#1A1A14",
+    letterSpacing: 0.3,
+  },
+  dailyStatPct: {
+    fontFamily: "Inter-Variable",
+    fontSize: 11,
+    color: "rgba(26,26,20,0.45)",
+  },
+  dailyStatValue: {
+    fontFamily: "Chillax-SemiBold",
+    fontSize: 16,
+    color: "#1A1A14",
+    letterSpacing: -0.3,
+  },
+  dailyStatUnit: {
+    fontFamily: "Inter-Variable",
+    fontSize: 12,
+    color: "rgba(26,26,20,0.5)",
+    fontWeight: "400",
+  },
+  dailyStatEmpty: {
+    fontFamily: "Inter-Variable",
+    fontSize: 13,
+    color: "rgba(26,26,20,0.38)",
+    fontStyle: "italic",
+  },
+  dailyStatBar: {
+    height: 4,
+    borderRadius: 2,
+    backgroundColor: "rgba(26,26,20,0.08)",
+    overflow: "hidden",
+    marginTop: 5,
+  },
+  dailyStatBarFill: {
+    height: 4,
+    borderRadius: 2,
+    backgroundColor: "#C48A1A",
+  },
+  dailyStatBarFillMet: {
+    backgroundColor: "#2e7d32",
   },
 
   // Profile loading screen (shown while GET /profile is in-flight)
