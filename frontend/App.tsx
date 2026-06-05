@@ -2008,9 +2008,10 @@ function isValidWaterSetup(s: unknown): s is WaterSetup {
   return false;
 }
 
-const BOTTLE_SIZES_OZ      = [12, 16, 20, 24, 32, 40, 64];
-const DAILY_GOAL_OPTIONS_OZ = [32, 48, 64, 80, 96, 128];
-const QUICK_ADD_OZ          = [8, 12, 16, 24];
+const BOTTLE_SIZES_OZ         = [12, 16, 20, 24, 32, 40, 64];
+const DAILY_GOAL_OPTIONS_OZ   = [32, 48, 64, 80, 96, 128];
+const QUICK_ADD_OZ            = [8, 12, 16, 24];
+const HIGH_WATER_THRESHOLD_OZ = 160; // conservative universal ceiling; no body-size data yet
 
 /**
  * Compute the hydration streak from a list of daily log rows.
@@ -2529,6 +2530,16 @@ function WaterIntakeScreen({ onBack }: { onBack: () => void }) {
                     )}
                   </View>
                 </>
+              )}
+
+              {/* High-intake caution — shown when today's total is unusually large */}
+              {(usesBottle === "yes" ? totalOz : directOz) >= HIGH_WATER_THRESHOLD_OZ && (
+                <View style={waterStyles.highWaterWarning}>
+                  <Ionicons name="warning-outline" size={15} color="#7a4a00" />
+                  <Text style={waterStyles.highWaterWarningText}>
+                    Very high water intake today. Consider slowing down and drinking according to thirst.
+                  </Text>
+                </View>
               )}
             </>
 
@@ -4423,6 +4434,24 @@ const waterStyles = StyleSheet.create({
     fontFamily: "Inter-Variable",
     fontSize: 12,
     color: "rgba(26,26,20,0.35)",
+  },
+
+  highWaterWarning: {
+    flexDirection: "row",
+    alignItems: "flex-start",
+    gap: 6,
+    marginTop: 14,
+    backgroundColor: "#fff8e1",
+    borderRadius: 8,
+    paddingVertical: 9,
+    paddingHorizontal: 11,
+  },
+  highWaterWarningText: {
+    fontFamily: "Inter-Variable",
+    fontSize: 12,
+    color: "#7a4a00",
+    flex: 1,
+    lineHeight: 17,
   },
 
   // Save button — shown at the bottom of setup/edit mode
