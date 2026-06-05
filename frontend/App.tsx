@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useRef } from "react";
-import { Keyboard, KeyboardAvoidingView, Platform, Modal, Linking } from "react-native";
+import { Keyboard, KeyboardAvoidingView, Platform, Modal, Linking, InputAccessoryView } from "react-native";
 import { CameraView, useCameraPermissions } from "expo-camera";
 const barcodIcon = require("./assets/barcode.png");
 import { useFonts } from "expo-font";
@@ -4680,6 +4680,22 @@ function formatWeightDate(dateStr: string): string {
   return d.toLocaleDateString("en-US", { month: "short", day: "numeric" });
 }
 
+type WeightPrediction = {
+  latest_weight_kg:        number | null;
+  weight_log_date:         string | null;
+  bmr:                     number | null;
+  tdee:                    number | null;
+  avg_daily_calories:      number | null;
+  days_logged:             number;
+  days_in_window:          number;
+  daily_balance:           number | null;
+  weekly_change_kg:        number | null;
+  projected_change_30d_kg: number | null;
+  projected_weight_30d_kg: number | null;
+  confidence:              "high" | "medium" | "low";
+  confidence_note:         string;
+};
+
 // kg ↔ display-unit helpers — weight_logs always stores kg.
 const kgToDisplay = (kg: number, u: "kg" | "lb"): number =>
   u === "lb" ? Math.round(kg * 2.20462 * 10) / 10 : Math.round(kg * 10) / 10;
@@ -4693,9 +4709,11 @@ function WeightScreen({ onBack }: { onBack: () => void }) {
   const [input,   setInput]   = useState("");
   const [todayKg, setTodayKg] = useState<number | null>(null); // canonical kg
   const [history, setHistory] = useState<WeightLogEntry[]>([]);
-  const [saving,  setSaving]  = useState(false);
-  const [loaded,  setLoaded]  = useState(false);
-  const [message, setMessage] = useState("");
+  const [saving,     setSaving]     = useState(false);
+  const [loaded,     setLoaded]     = useState(false);
+  const [message,    setMessage]    = useState("");
+  const [prediction, setPrediction] = useState<WeightPrediction | null>(null);
+  const [predLoading,setPredLoading]= useState(false);
 
   const parsedDisplay = parseFloat(input);
   const parsedKg      = !isNaN(parsedDisplay) ? displayToKg(parsedDisplay, unit) : NaN;
@@ -4730,12 +4748,29 @@ function WeightScreen({ onBack }: { onBack: () => void }) {
     }
   };
 
+  const fetchPrediction = async () => {
+    setPredLoading(true);
+    try {
+      const { data: { session } } = await supabase.auth.getSession();
+      if (!session?.access_token) return;
+      const res = await axios.get<WeightPrediction>(`${API_URL}/prediction/weight`, {
+        headers: { Authorization: `Bearer ${session.access_token}` },
+      });
+      setPrediction(res.data);
+    } catch {
+      // silently ignore — card stays hidden
+    } finally {
+      setPredLoading(false);
+    }
+  };
+
   useEffect(() => {
     (async () => {
       const { data: { user } } = await supabase.auth.getUser();
       if (!user) { setLoaded(true); return; }
       setUserId(user.id);
-      await loadData(user.id, "kg");
+      // Run weight-log load and prediction fetch in parallel.
+      await Promise.all([loadData(user.id, "kg"), fetchPrediction()]);
     })();
   }, []);
 
@@ -4765,7 +4800,7 @@ function WeightScreen({ onBack }: { onBack: () => void }) {
 
       if (error) throw error;
       setTodayKg(Math.round(parsedKg * 100) / 100);
-      await loadData(userId, unit);
+      await Promise.all([loadData(userId, unit), fetchPrediction()]);
     } catch {
       setMessage("Failed to save. Please try again.");
     } finally {
@@ -4843,9 +4878,14 @@ function WeightScreen({ onBack }: { onBack: () => void }) {
                   keyboardType="decimal-pad"
                   returnKeyType="done"
                   maxLength={7}
+                  inputAccessoryViewID="weight-input-accessory"
                 />
                 <Text style={weightStyles.unitLabel}>{unit}</Text>
               </View>
+              {/* Empty accessory view suppresses the iOS keyboard toolbar Done button */}
+              {Platform.OS === "ios" && (
+                <InputAccessoryView nativeID="weight-input-accessory" />
+              )}
 
               {message !== "" && (
                 <Text style={weightStyles.errorText}>{message}</Text>
@@ -4899,6 +4939,98 @@ function WeightScreen({ onBack }: { onBack: () => void }) {
               No entries yet. Log your weight above to get started.
             </Text>
           )}
+
+          {/* ── What to expect (prediction) ────────────────────────────── */}
+          {predLoading && (
+            <View style={weightStyles.predCard}>
+              <Text style={weightStyles.predLoading}>Loading prediction…</Text>
+            </View>
+          )}
+
+          {!predLoading && prediction && (() => {
+            const isLow = prediction.confidence === "low";
+            const badgeStyle = prediction.confidence === "high"
+              ? weightStyles.badgeHigh
+              : prediction.confidence === "medium"
+                ? weightStyles.badgeMedium
+                : weightStyles.badgeLow;
+            const badgeTextStyle = prediction.confidence === "high"
+              ? weightStyles.badgeTextHigh
+              : prediction.confidence === "medium"
+                ? weightStyles.badgeTextMedium
+                : weightStyles.badgeTextLow;
+
+            const fmtKcal = (v: number | null) =>
+              v != null ? `${Math.round(v)} kcal/day` : "—";
+
+            const fmtWeekly = (v: number | null) => {
+              if (v === null) return "—";
+              const display = kgToDisplay(Math.abs(v), unit);
+              const sign    = v > 0 ? "+" : v < 0 ? "−" : "";
+              return `${sign}${display} ${unit}/week`;
+            };
+
+            const weeklyColor = prediction.weekly_change_kg === null
+              ? weightStyles.predValueNeutral
+              : prediction.weekly_change_kg < 0
+                ? weightStyles.predValueLoss
+                : prediction.weekly_change_kg > 0
+                  ? weightStyles.predValueGain
+                  : weightStyles.predValueNeutral;
+
+            return (
+              <View style={[weightStyles.predCard, isLow && weightStyles.predCardMuted]}>
+                <View style={weightStyles.cardHeader}>
+                  <Ionicons name="analytics-outline" size={17} color="#C48A1A" />
+                  <Text style={weightStyles.cardHeading}>What to expect</Text>
+                </View>
+
+                {/* Intake vs TDEE */}
+                <View style={weightStyles.predRow}>
+                  <Text style={weightStyles.predLabel}>Avg intake</Text>
+                  <Text style={weightStyles.predValue}>{fmtKcal(prediction.avg_daily_calories)}</Text>
+                </View>
+                <View style={weightStyles.predRow}>
+                  <Text style={weightStyles.predLabel}>Est. TDEE</Text>
+                  <Text style={weightStyles.predValue}>
+                    {prediction.tdee != null ? `~${Math.round(prediction.tdee)} kcal/day` : "—"}
+                  </Text>
+                </View>
+
+                <View style={weightStyles.predDivider} />
+
+                {/* Weekly rate */}
+                <View style={weightStyles.predRow}>
+                  <Text style={weightStyles.predLabel}>At this rate</Text>
+                  <Text style={[weightStyles.predValue, weeklyColor]}>
+                    {fmtWeekly(prediction.weekly_change_kg)}
+                  </Text>
+                </View>
+
+                {/* 30-day projection */}
+                <View style={weightStyles.predRow}>
+                  <Text style={weightStyles.predLabel}>In 30 days</Text>
+                  <Text style={weightStyles.predValue}>
+                    {prediction.projected_weight_30d_kg != null
+                      ? `~${kgToDisplay(prediction.projected_weight_30d_kg, unit)} ${unit}`
+                      : "—"}
+                  </Text>
+                </View>
+
+                <View style={weightStyles.predDivider} />
+
+                {/* Confidence */}
+                <View style={weightStyles.predConfRow}>
+                  <View style={[weightStyles.confBadge, badgeStyle]}>
+                    <Text style={[weightStyles.confBadgeText, badgeTextStyle]}>
+                      {prediction.confidence} confidence
+                    </Text>
+                  </View>
+                </View>
+                <Text style={weightStyles.predNote}>{prediction.confidence_note}</Text>
+              </View>
+            );
+          })()}
         </ScrollView>
       </SafeAreaView>
     </LinearGradient>
@@ -5062,5 +5194,87 @@ const weightStyles = StyleSheet.create({
     textAlign: "center",
     marginTop: 24,
     lineHeight: 19,
+  },
+
+  // ── Prediction card ────────────────────────────────────────────────────────
+  predCard: {
+    borderRadius: 20,
+    padding: 24,
+    backgroundColor: "#fff",
+    shadowColor: "#000",
+    shadowOpacity: 0.05,
+    shadowRadius: 12,
+    shadowOffset: { width: 0, height: 3 },
+    elevation: 2,
+    marginTop: 16,
+  },
+  predCardMuted: {
+    opacity: 0.72,
+  },
+  predLoading: {
+    fontFamily: "Inter-Variable",
+    fontSize: 13,
+    color: "rgba(26,26,20,0.4)",
+    textAlign: "center",
+    paddingVertical: 12,
+  },
+  predRow: {
+    flexDirection: "row",
+    justifyContent: "space-between",
+    alignItems: "center",
+    paddingVertical: 8,
+  },
+  predLabel: {
+    fontFamily: "Inter-Variable",
+    fontSize: 13,
+    color: "rgba(26,26,20,0.55)",
+  },
+  predValue: {
+    fontFamily: "Chillax-Medium",
+    fontSize: 14,
+    color: "#1A1A14",
+    letterSpacing: -0.1,
+  },
+  predValueLoss: {
+    color: "#2e7d32",
+  },
+  predValueGain: {
+    color: "#C48A1A",
+  },
+  predValueNeutral: {
+    color: "#1A1A14",
+  },
+  predDivider: {
+    height: 1,
+    backgroundColor: "rgba(26,26,20,0.07)",
+    marginVertical: 6,
+  },
+  predConfRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    paddingVertical: 8,
+  },
+  confBadge: {
+    borderRadius: 20,
+    paddingHorizontal: 10,
+    paddingVertical: 4,
+  },
+  confBadgeText: {
+    fontFamily: "Inter-Variable",
+    fontSize: 11,
+    letterSpacing: 0.2,
+  },
+  badgeHigh:     { backgroundColor: "#e8f5e9" },
+  badgeMedium:   { backgroundColor: "#fff8e1" },
+  badgeLow:      { backgroundColor: "#fce4ec" },
+  badgeTextHigh: { color: "#2e7d32" },
+  badgeTextMedium: { color: "#7a4a00" },
+  badgeTextLow:  { color: "#b71c1c" },
+  predNote: {
+    fontFamily: "Inter-Variable",
+    fontSize: 11,
+    color: "rgba(26,26,20,0.4)",
+    lineHeight: 16,
+    marginTop: 4,
   },
 });

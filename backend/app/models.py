@@ -1,5 +1,5 @@
 import datetime
-from sqlalchemy import Boolean, Column, Integer, Float, Numeric, String, Date, DateTime
+from sqlalchemy import Boolean, Column, Integer, Float, Numeric, String, Date, DateTime, text
 from app.database import Base
 
 
@@ -39,6 +39,20 @@ class FoodLog(Base):
     base_protein  = Column(Float, nullable=True)
     base_carbs    = Column(Float, nullable=True)
     base_fat      = Column(Float, nullable=True)
+
+
+class WeightLog(Base):
+    """One row per user per calendar day — mirrors the Supabase weight_logs table."""
+    __tablename__ = "weight_logs"
+    # Table was created via Supabase migration; create_all skips it (IF NOT EXISTS).
+    # id is uuid in Postgres; String works for read-only ORM queries.
+    id         = Column(String,              primary_key=True)
+    user_id    = Column(String,              nullable=False, index=True)
+    log_date   = Column(Date,               nullable=False)
+    weight_kg  = Column(Numeric,            nullable=False)
+    note       = Column(String,             nullable=True)
+    created_at = Column(DateTime(timezone=True), nullable=False)
+    updated_at = Column(DateTime(timezone=True), nullable=False)
 
 
 class UserProfile(Base):
