@@ -5228,9 +5228,25 @@ function WeightScreen({ onBack }: { onBack: () => void }) {
           {/* ── Goal weight ────────────────────────────────────────────── */}
           {loaded && (
             <View style={weightStyles.card}>
-              <View style={weightStyles.cardHeader}>
-                <Ionicons name="flag-outline" size={19} color="#C48A1A" />
-                <Text style={weightStyles.cardHeading}>Goal weight</Text>
+              <View style={weightStyles.cardHeaderRow}>
+                <View style={weightStyles.cardHeader}>
+                  <Ionicons name="flag-outline" size={19} color="#C48A1A" />
+                  <Text style={weightStyles.cardHeading}>Goal weight</Text>
+                </View>
+                <View style={weightStyles.unitToggle}>
+                  {(["kg", "lb"] as const).map(u => (
+                    <TouchableOpacity
+                      key={u}
+                      style={[weightStyles.unitSegment, unit === u && weightStyles.unitSegmentActive]}
+                      onPress={() => switchUnit(u)}
+                      activeOpacity={0.75}
+                    >
+                      <Text style={[weightStyles.unitSegmentText, unit === u && weightStyles.unitSegmentTextActive]}>
+                        {u}
+                      </Text>
+                    </TouchableOpacity>
+                  ))}
+                </View>
               </View>
 
               {goalKg != null && (
