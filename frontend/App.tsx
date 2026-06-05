@@ -5787,23 +5787,52 @@ function MultiLogScreen({
   onBack: () => void;
   onDone: () => void;
 }) {
-  const [phase,       setPhase]       = useState<"idle" | "parsing" | "reviewing" | "logging">("idle");
-  const [rawInput,    setRawInput]    = useState("");
-  const [items,       setItems]       = useState<ParsedItem[]>([]);
-  const [parseError,  setParseError]  = useState("");
-  const [logProgress, setLogProgress] = useState(0);
-  const [logTotal,    setLogTotal]    = useState(0);
-  const [logFailed,   setLogFailed]   = useState<string[]>([]);
+  const [phase,          setPhase]          = useState<"idle" | "parsing" | "reviewing" | "logging">("idle");
+  const [rawInput,       setRawInput]       = useState("");
+  const [items,          setItems]          = useState<ParsedItem[]>([]);
+  const [removedIndices, setRemovedIndices] = useState<Set<number>>(new Set());
+  const [multipliers,    setMultipliers]    = useState<Record<number, string>>({});
+  const [parseError,     setParseError]     = useState("");
+  const [logProgress,    setLogProgress]    = useState(0);
+  const [logTotal,       setLogTotal]       = useState(0);
+  const [logFailed,      setLogFailed]      = useState<string[]>([]);
 
-  const validItems = items.filter(item => !item.parse_error);
+  // Strict qty parser: normalises comma-decimals, rejects partial parses,
+  // zero, and negatives.  Returns null for anything that should not be logged.
+  const parseQty = (raw: string): number | null => {
+    const s = (raw ?? "").trim();
+    if (!s) return null;
+    const normalized = s.replace(",", ".");
+    if (!/^\d+(\.\d+)?$/.test(normalized)) return null;
+    const v = parseFloat(normalized);
+    return isFinite(v) && v > 0 ? v : null;
+  };
 
-  const totals = validItems.reduce(
-    (acc, item) => ({
-      calories: acc.calories + item.calories,
-      protein:  acc.protein  + item.protein,
-      carbs:    acc.carbs    + item.carbs,
-      fat:      acc.fat      + item.fat,
-    }),
+  const getMultiplier = (i: number): number =>
+    parseQty(multipliers[i] ?? "1") ?? 1;
+
+  const isQtyValid = (i: number): boolean =>
+    parseQty(multipliers[i] ?? "1") !== null;
+
+  const validCount = items.filter(
+    (item, i) => !item.parse_error && !removedIndices.has(i),
+  ).length;
+
+  const hasInvalidQty = items.some(
+    (item, i) => !item.parse_error && !removedIndices.has(i) && !isQtyValid(i),
+  );
+
+  const totals = items.reduce(
+    (acc, item, i) => {
+      if (item.parse_error || removedIndices.has(i)) return acc;
+      const m = getMultiplier(i);
+      return {
+        calories: acc.calories + item.calories * m,
+        protein:  acc.protein  + item.protein  * m,
+        carbs:    acc.carbs    + item.carbs    * m,
+        fat:      acc.fat      + item.fat      * m,
+      };
+    },
     { calories: 0, protein: 0, carbs: 0, fat: 0 },
   );
 
@@ -5818,6 +5847,8 @@ function MultiLogScreen({
         { text: trimmed },
       );
       setItems(res.data.items);
+      setRemovedIndices(new Set());
+      setMultipliers({});
       setPhase("reviewing");
     } catch (err: any) {
       setParseError(err?.response?.data?.detail ?? "Failed to parse. Please try again.");
@@ -5826,14 +5857,19 @@ function MultiLogScreen({
   };
 
   const removeItem = (index: number) => {
-    setItems(prev => prev.filter((_, i) => i !== index));
+    setRemovedIndices(prev => new Set([...prev, index]));
   };
 
   const handleLog = async () => {
-    if (validItems.length === 0) return;
+    // Build ordered list of items to log, preserving original indices for multiplier lookup.
+    const toLog = items
+      .map((item, i) => ({ item, i }))
+      .filter(({ item, i }) => !item.parse_error && !removedIndices.has(i));
+
+    if (toLog.length === 0) return;
     setPhase("logging");
     setLogProgress(0);
-    setLogTotal(validItems.length);
+    setLogTotal(toLog.length);
     setLogFailed([]);
 
     const { data: { session } } = await supabase.auth.getSession();
@@ -5842,33 +5878,40 @@ function MultiLogScreen({
       : {};
 
     const failed: string[] = [];
-    for (let i = 0; i < validItems.length; i++) {
-      const item = validItems[i];
+    for (let idx = 0; idx < toLog.length; idx++) {
+      const { item, i } = toLog[idx];
+      const m = getMultiplier(i);
       try {
         await axios.post(
           `${API_URL}/logs`,
           {
             name:                item.name,
-            calories:            item.calories,
-            protein:             item.protein,
-            carbs:               item.carbs,
-            fat:                 item.fat,
+            calories:            Math.round(item.calories * m * 10) / 10,
+            protein:             Math.round(item.protein  * m * 10) / 10,
+            carbs:               Math.round(item.carbs    * m * 10) / 10,
+            fat:                 Math.round(item.fat      * m * 10) / 10,
             log_date:            selectedDate,
             source_type:         item.source_type,
             confidence:          item.confidence,
             is_estimated:        item.is_estimated,
             serving_description: item.serving_description,
+            serving_quantity:    m,
+            serving_unit:        "serving",
+            base_calories:       item.calories,
+            base_protein:        item.protein,
+            base_carbs:          item.carbs,
+            base_fat:            item.fat,
           },
           { headers },
         );
-        setLogProgress(i + 1);
+        setLogProgress(idx + 1);
       } catch {
         failed.push(item.name);
       }
     }
 
     setLogFailed(failed);
-    if (failed.length < validItems.length) {
+    if (failed.length < toLog.length) {
       Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
       onDone();
     }
@@ -5878,6 +5921,8 @@ function MultiLogScreen({
     if (phase === "logging") return;
     if (phase === "reviewing") {
       setItems([]);
+      setRemovedIndices(new Set());
+      setMultipliers({});
       setPhase("idle");
     } else {
       onBack();
@@ -5961,48 +6006,79 @@ function MultiLogScreen({
           {/* ── Reviewing / Logging ─────────────────────────────────────── */}
           {inReview && (
             <>
-              {items.map((item, index) => (
-                <View
-                  key={index}
-                  style={item.parse_error ? mlStyles.errorItemCard : mlStyles.itemCard}
-                >
-                  <View style={mlStyles.itemHeaderRow}>
-                    <Text
-                      style={item.parse_error ? mlStyles.itemNameError : mlStyles.itemName}
-                      numberOfLines={2}
-                    >
-                      {item.name}
-                    </Text>
-                    {!item.parse_error && (
-                      <TouchableOpacity
-                        onPress={() => removeItem(index)}
-                        style={mlStyles.removeBtn}
-                        activeOpacity={0.7}
-                        disabled={phase === "logging"}
+              {items.map((item, index) => {
+                if (removedIndices.has(index)) return null;
+                const m = getMultiplier(index);
+                return (
+                  <View
+                    key={index}
+                    style={item.parse_error ? mlStyles.errorItemCard : mlStyles.itemCard}
+                  >
+                    <View style={mlStyles.itemHeaderRow}>
+                      <Text
+                        style={item.parse_error ? mlStyles.itemNameError : mlStyles.itemName}
+                        numberOfLines={2}
                       >
-                        <Ionicons name="close" size={18} color="rgba(26,26,20,0.45)" />
-                      </TouchableOpacity>
+                        {item.name}
+                      </Text>
+                      {!item.parse_error && (
+                        <TouchableOpacity
+                          onPress={() => removeItem(index)}
+                          style={mlStyles.removeBtn}
+                          activeOpacity={0.7}
+                          disabled={phase === "logging"}
+                        >
+                          <Ionicons name="close" size={18} color="rgba(26,26,20,0.45)" />
+                        </TouchableOpacity>
+                      )}
+                    </View>
+
+                    {item.parse_error ? (
+                      <Text style={mlStyles.itemErrorMsg} numberOfLines={2}>
+                        Could not parse this item
+                      </Text>
+                    ) : (
+                      <>
+                        <Text style={mlStyles.itemMacros}>
+                          {Math.round(item.calories * m)} cal ·{" "}
+                          {(item.protein * m).toFixed(1)}g P ·{" "}
+                          {(item.carbs * m).toFixed(1)}g C ·{" "}
+                          {(item.fat * m).toFixed(1)}g F
+                        </Text>
+                        <View style={mlStyles.multRow}>
+                          <Text style={mlStyles.multLabel}>qty</Text>
+                          <TextInput
+                            style={[
+                              mlStyles.multInput,
+                              !isQtyValid(index) && mlStyles.multInputError,
+                            ]}
+                            value={multipliers[index] ?? "1"}
+                            onChangeText={t =>
+                              setMultipliers(prev => ({ ...prev, [index]: t }))
+                            }
+                            keyboardType="decimal-pad"
+                            returnKeyType="done"
+                            maxLength={5}
+                            selectTextOnFocus
+                            editable={phase !== "logging"}
+                          />
+                        </View>
+                        {!isQtyValid(index) && (
+                          <Text style={mlStyles.qtyWarning}>
+                            Enter a positive number (e.g. 0.5, 1, 2)
+                          </Text>
+                        )}
+                      </>
                     )}
                   </View>
-
-                  {item.parse_error ? (
-                    <Text style={mlStyles.itemErrorMsg} numberOfLines={2}>
-                      Could not parse this item
-                    </Text>
-                  ) : (
-                    <Text style={mlStyles.itemMacros}>
-                      {Math.round(item.calories)} cal · {item.protein.toFixed(1)}g P ·{" "}
-                      {item.carbs.toFixed(1)}g C · {item.fat.toFixed(1)}g F
-                    </Text>
-                  )}
-                </View>
-              ))}
+                );
+              })}
 
               {/* Totals */}
-              {validItems.length > 0 && (
+              {validCount > 0 && (
                 <View style={mlStyles.totalsCard}>
                   <Text style={mlStyles.totalsLabel}>
-                    {validItems.length} item{validItems.length !== 1 ? "s" : ""}
+                    {validCount} item{validCount !== 1 ? "s" : ""}
                   </Text>
                   <Text style={mlStyles.totalsMacros}>
                     {Math.round(totals.calories)} cal · {totals.protein.toFixed(1)}g P ·{" "}
@@ -6020,16 +6096,18 @@ function MultiLogScreen({
                 <TouchableOpacity
                   style={[
                     mlStyles.actionBtn,
-                    validItems.length === 0 && mlStyles.actionBtnDisabled,
+                    (validCount === 0 || hasInvalidQty) && mlStyles.actionBtnDisabled,
                   ]}
                   onPress={handleLog}
-                  disabled={validItems.length === 0}
+                  disabled={validCount === 0 || hasInvalidQty}
                   activeOpacity={0.8}
                 >
                   <Text style={mlStyles.actionBtnText}>
-                    {validItems.length === 0
+                    {validCount === 0
                       ? "No items to log"
-                      : `Log ${validItems.length} item${validItems.length !== 1 ? "s" : ""}`}
+                      : hasInvalidQty
+                      ? "Fix qty to log"
+                      : `Log ${validCount} item${validCount !== 1 ? "s" : ""}`}
                   </Text>
                 </TouchableOpacity>
               )}
@@ -6182,5 +6260,42 @@ const mlStyles = StyleSheet.create({
     color: "rgba(26,26,20,0.55)",
     textAlign: "center",
     paddingVertical: 16,
+  },
+  multRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "flex-end",
+    marginTop: 8,
+    gap: 6,
+  },
+  multLabel: {
+    fontFamily: "Inter-Variable",
+    fontSize: 11,
+    color: "rgba(26,26,20,0.4)",
+    letterSpacing: 0.2,
+  },
+  multInput: {
+    width: 56,
+    borderWidth: 1,
+    borderColor: "rgba(26,26,20,0.15)",
+    borderRadius: 8,
+    paddingHorizontal: 8,
+    paddingVertical: 4,
+    fontFamily: "Inter-Variable",
+    fontSize: 13,
+    color: "#1A1A14",
+    textAlign: "right",
+    backgroundColor: "#FAFAF7",
+  },
+  multInputError: {
+    borderColor: "#D9534F",
+    backgroundColor: "#FFF5F5",
+  },
+  qtyWarning: {
+    fontFamily: "Inter-Variable",
+    fontSize: 11,
+    color: "#D9534F",
+    textAlign: "right",
+    marginTop: 3,
   },
 });
