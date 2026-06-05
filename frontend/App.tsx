@@ -350,6 +350,10 @@ function AppInner() {
   const [profileMessage, setProfileMessage] = useState("");
   const [isAccountOpen,  setIsAccountOpen]  = useState(false);
   const [isWaterOpen,    setIsWaterOpen]    = useState(false);
+  const [homeWaterOz,    setHomeWaterOz]    = useState<number>(0);
+  const [homeWaterGoalOz,setHomeWaterGoalOz]= useState<number>(64);
+  const [isWeightOpen,   setIsWeightOpen]   = useState(false);
+  const [homeWeightKg,   setHomeWeightKg]   = useState<number | null>(null);
   const [setupFields,    setSetupFields]    = useState<SetupFields>({
     display_name:   "",
     sex:            "",
@@ -359,6 +363,52 @@ function AppInner() {
     goal_type:      "maintain",
     activity_level: "moderate",
   });
+
+  // Fetch the water summary shown on the homepage widget (goal + today's total).
+  // Intentionally separate from WaterIntakeScreen's own fetch so the homepage
+  // stays current without mounting the full water screen.
+  const fetchHomeWaterSummary = async () => {
+    try {
+      const { data: { user } } = await supabase.auth.getUser();
+      if (!user) return;
+
+      const [{ data: prefs }, { data: log }] = await Promise.all([
+        supabase
+          .from("hydration_preferences")
+          .select("daily_goal_oz")
+          .eq("user_id", user.id)
+          .single(),
+        supabase
+          .from("hydration_daily_logs")
+          .select("total_oz")
+          .eq("user_id", user.id)
+          .eq("log_date", localToday())
+          .single(),
+      ]);
+
+      if (prefs?.daily_goal_oz != null) setHomeWaterGoalOz(prefs.daily_goal_oz);
+      setHomeWaterOz(log?.total_oz ?? 0);
+    } catch {
+      // silently ignore — widget keeps last known values
+    }
+  };
+
+  const fetchHomeWeightSummary = async () => {
+    try {
+      const { data: { user } } = await supabase.auth.getUser();
+      if (!user) return;
+      const { data } = await supabase
+        .from("weight_logs")
+        .select("weight_kg")
+        .eq("user_id", user.id)
+        .order("log_date", { ascending: false })
+        .limit(1)
+        .single();
+      setHomeWeightKg(data?.weight_kg ?? null);
+    } catch {
+      // silently ignore — widget keeps last known value
+    }
+  };
 
   // Solar Bloom breathing glow — loops indefinitely from mount.
   useEffect(() => {
@@ -775,9 +825,14 @@ function AppInner() {
       setProfile(null);
       setProfileFetched(false);
       setProfileMessage("");
+      setHomeWaterOz(0);
+      setHomeWaterGoalOz(64);
+      setHomeWeightKg(null);
     } else {
       loadWeekly();
       loadTodayCalories();
+      fetchHomeWaterSummary();
+      fetchHomeWeightSummary();
     }
   }, [session]); // eslint-disable-line react-hooks/exhaustive-deps
 
@@ -814,6 +869,16 @@ function AppInner() {
       }
     })();
   }, [session]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  // Refresh the homepage water widget whenever the water screen is dismissed.
+  useEffect(() => {
+    if (!isWaterOpen && session?.access_token) fetchHomeWaterSummary();
+  }, [isWaterOpen]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  // Refresh the homepage weight widget whenever the weight screen is dismissed.
+  useEffect(() => {
+    if (!isWeightOpen && session?.access_token) fetchHomeWeightSummary();
+  }, [isWeightOpen]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // When a barcode is scanned, look it up and immediately auto-log it —
   // same pattern as searchAndLog so there is one consistent logging path.
@@ -1060,6 +1125,11 @@ function AppInner() {
   // ── Water Intake screen ──────────────────────────────────────────────────────
   if (isWaterOpen) {
     return <WaterIntakeScreen onBack={() => setIsWaterOpen(false)} />;
+  }
+
+  // ── Weight screen ────────────────────────────────────────────────────────────
+  if (isWeightOpen) {
+    return <WeightScreen onBack={() => setIsWeightOpen(false)} />;
   }
 
   // ── Tracker screen (logged in) ──────────────────────────────────────────────
@@ -1349,7 +1419,7 @@ function AppInner() {
           {weeklyData.length > 0 && <WeeklyGlowLine data={weeklyData} goal={calorieGoal} />}
         </View>
 
-        {/* Water Intake Widget */}
+        {/* Water + Weight Widgets */}
         <View style={styles.section}>
           <View style={styles.widgetRow}>
             <TouchableOpacity
@@ -1360,7 +1430,21 @@ function AppInner() {
               <View style={styles.waterWidgetCard}>
                 <Ionicons name="water-outline" size={26} color="#1A1A14" />
                 <Text style={styles.waterWidgetLabel}>Water</Text>
-                <Text style={styles.waterWidgetProgress}>0 / 64 oz</Text>
+                <Text style={styles.waterWidgetProgress}>{homeWaterOz} / {homeWaterGoalOz} oz</Text>
+              </View>
+            </TouchableOpacity>
+
+            <TouchableOpacity
+              style={styles.waterWidgetTap}
+              onPress={() => setIsWeightOpen(true)}
+              activeOpacity={0.85}
+            >
+              <View style={styles.waterWidgetCard}>
+                <Ionicons name="trending-up-outline" size={26} color="#1A1A14" />
+                <Text style={styles.waterWidgetLabel}>Weight</Text>
+                <Text style={styles.waterWidgetProgress}>
+                  {homeWeightKg != null ? `${homeWeightKg} kg` : "—"}
+                </Text>
               </View>
             </TouchableOpacity>
           </View>
@@ -3967,9 +4051,10 @@ const styles = StyleSheet.create({
   widgetRow: {
     flexDirection: "row",
     marginTop: 14,
+    gap: 12,
   },
   waterWidgetTap: {
-    width: "48%",  // ~half the card area, leaving right side for future widgets
+    flex: 1,
   },
   waterWidgetCard: {
     borderRadius: 24,
@@ -4570,5 +4655,412 @@ const waterStyles = StyleSheet.create({
     fontSize: 13,
     color: "rgba(26,26,20,0.45)",
     lineHeight: 18,
+  },
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
+// WeightScreen
+// ─────────────────────────────────────────────────────────────────────────────
+
+type WeightLogEntry = {
+  log_date: string;
+  weight_kg: number;
+};
+
+function formatWeightDate(dateStr: string): string {
+  const today     = localToday();
+  const yesterday = (() => {
+    const d = parseDateStringToLocalDate(today);
+    d.setDate(d.getDate() - 1);
+    return formatDateToLocalYYYYMMDD(d);
+  })();
+  if (dateStr === today)     return "Today";
+  if (dateStr === yesterday) return "Yesterday";
+  const d = parseDateStringToLocalDate(dateStr);
+  return d.toLocaleDateString("en-US", { month: "short", day: "numeric" });
+}
+
+// kg ↔ display-unit helpers — weight_logs always stores kg.
+const kgToDisplay = (kg: number, u: "kg" | "lb"): number =>
+  u === "lb" ? Math.round(kg * 2.20462 * 10) / 10 : Math.round(kg * 10) / 10;
+
+const displayToKg = (val: number, u: "kg" | "lb"): number =>
+  u === "lb" ? val / 2.20462 : val;
+
+function WeightScreen({ onBack }: { onBack: () => void }) {
+  const [userId,  setUserId]  = useState<string | null>(null);
+  const [unit,    setUnit]    = useState<"kg" | "lb">("kg");
+  const [input,   setInput]   = useState("");
+  const [todayKg, setTodayKg] = useState<number | null>(null); // canonical kg
+  const [history, setHistory] = useState<WeightLogEntry[]>([]);
+  const [saving,  setSaving]  = useState(false);
+  const [loaded,  setLoaded]  = useState(false);
+  const [message, setMessage] = useState("");
+
+  const parsedDisplay = parseFloat(input);
+  const parsedKg      = !isNaN(parsedDisplay) ? displayToKg(parsedDisplay, unit) : NaN;
+  const inputValid    = !isNaN(parsedKg) && parsedKg >= 20 && parsedKg <= 500;
+
+  // loadData accepts the active unit so input is set in the right unit after
+  // load or save, without relying on stale closure state.
+  const loadData = async (uid: string, activeUnit: "kg" | "lb") => {
+    try {
+      const { data: rows } = await supabase
+        .from("weight_logs")
+        .select("log_date, weight_kg")
+        .eq("user_id", uid)
+        .order("log_date", { ascending: false })
+        .limit(7);
+
+      const entries: WeightLogEntry[] = (rows ?? []).map(r => ({
+        log_date:  r.log_date,
+        weight_kg: Number(r.weight_kg),
+      }));
+      setHistory(entries);
+
+      const todayEntry = entries.find(e => e.log_date === localToday());
+      if (todayEntry) {
+        setTodayKg(todayEntry.weight_kg);
+        setInput(String(kgToDisplay(todayEntry.weight_kg, activeUnit)));
+      }
+    } catch {
+      // silently ignore
+    } finally {
+      setLoaded(true);
+    }
+  };
+
+  useEffect(() => {
+    (async () => {
+      const { data: { user } } = await supabase.auth.getUser();
+      if (!user) { setLoaded(true); return; }
+      setUserId(user.id);
+      await loadData(user.id, "kg");
+    })();
+  }, []);
+
+  // When the unit toggle is tapped, convert the current input value in-place.
+  const switchUnit = (newUnit: "kg" | "lb") => {
+    if (newUnit === unit) return;
+    const parsed = parseFloat(input);
+    if (!isNaN(parsed) && parsed > 0) {
+      const asKg      = displayToKg(parsed, unit);
+      const converted = kgToDisplay(asKg, newUnit);
+      setInput(String(converted));
+    }
+    setUnit(newUnit);
+  };
+
+  const saveWeight = async () => {
+    if (!userId || !inputValid) return;
+    setSaving(true);
+    setMessage("");
+    try {
+      const { error } = await supabase.from("weight_logs").upsert({
+        user_id:    userId,
+        log_date:   localToday(),
+        weight_kg:  Math.round(parsedKg * 100) / 100, // 2 d.p., stored as kg
+        updated_at: new Date().toISOString(),
+      }, { onConflict: "user_id,log_date" });
+
+      if (error) throw error;
+      setTodayKg(Math.round(parsedKg * 100) / 100);
+      await loadData(userId, unit);
+    } catch {
+      setMessage("Failed to save. Please try again.");
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  return (
+    <LinearGradient
+      colors={["#FFFEF8", "#FFF8D4", "#FDF3B0"]}
+      locations={[0, 0.5, 1]}
+      start={{ x: 0.15, y: 0 }}
+      end={{ x: 0.85, y: 1 }}
+      style={waterStyles.gradientRoot}
+    >
+      <SafeAreaView style={waterStyles.safeTransparent}>
+        <ScrollView
+          style={setupStyles.scroll}
+          contentContainerStyle={setupStyles.container}
+          keyboardShouldPersistTaps="handled"
+        >
+          {/* Back */}
+          <TouchableOpacity
+            onPress={onBack}
+            style={setupStyles.acctBackButton}
+            activeOpacity={0.7}
+          >
+            <Ionicons name="arrow-back" size={18} color="#555" />
+            <Text style={setupStyles.acctBackText}>Back</Text>
+          </TouchableOpacity>
+
+          <Text style={setupStyles.headline}>Weight</Text>
+          <Text style={weightStyles.subhead}>Log your weight to track progress over time.</Text>
+
+          {/* ── Log today's weight ─────────────────────────────────────── */}
+          {loaded && (
+            <View style={weightStyles.card}>
+              <View style={weightStyles.cardHeaderRow}>
+                <View style={weightStyles.cardHeader}>
+                  <Ionicons name="trending-up-outline" size={19} color="#C48A1A" />
+                  <Text style={weightStyles.cardHeading}>
+                    {todayKg != null ? "Today's weight" : "Log today's weight"}
+                  </Text>
+                </View>
+                {/* Unit segmented control */}
+                <View style={weightStyles.unitToggle}>
+                  {(["kg", "lb"] as const).map(u => (
+                    <TouchableOpacity
+                      key={u}
+                      style={[weightStyles.unitSegment, unit === u && weightStyles.unitSegmentActive]}
+                      onPress={() => switchUnit(u)}
+                      activeOpacity={0.75}
+                    >
+                      <Text style={[weightStyles.unitSegmentText, unit === u && weightStyles.unitSegmentTextActive]}>
+                        {u}
+                      </Text>
+                    </TouchableOpacity>
+                  ))}
+                </View>
+              </View>
+
+              {todayKg != null && (
+                <Text style={weightStyles.savedDisplay}>
+                  {kgToDisplay(todayKg, unit)} {unit}
+                </Text>
+              )}
+
+              <View style={weightStyles.inputRow}>
+                <TextInput
+                  style={weightStyles.weightInput}
+                  value={input}
+                  onChangeText={t => { setInput(t); setMessage(""); }}
+                  placeholder={unit === "kg" ? "e.g. 72.5" : "e.g. 160"}
+                  placeholderTextColor="rgba(26,26,20,0.3)"
+                  keyboardType="decimal-pad"
+                  returnKeyType="done"
+                  maxLength={7}
+                />
+                <Text style={weightStyles.unitLabel}>{unit}</Text>
+              </View>
+
+              {message !== "" && (
+                <Text style={weightStyles.errorText}>{message}</Text>
+              )}
+
+              <TouchableOpacity
+                style={[
+                  weightStyles.saveBtn,
+                  (!inputValid || saving) && weightStyles.saveBtnDisabled,
+                ]}
+                onPress={saveWeight}
+                disabled={!inputValid || saving}
+                activeOpacity={0.8}
+              >
+                <Text style={weightStyles.saveBtnText}>
+                  {saving ? "Saving…" : todayKg != null ? "Update" : "Save"}
+                </Text>
+              </TouchableOpacity>
+            </View>
+          )}
+
+          {/* ── Recent entries ─────────────────────────────────────────── */}
+          {loaded && history.length > 0 && (
+            <View style={weightStyles.historyCard}>
+              <View style={weightStyles.cardHeader}>
+                <Ionicons name="time-outline" size={17} color="#C48A1A" />
+                <Text style={weightStyles.cardHeading}>Recent entries</Text>
+              </View>
+
+              {history.map((entry, i) => (
+                <View
+                  key={entry.log_date}
+                  style={[
+                    weightStyles.historyRow,
+                    i < history.length - 1 && weightStyles.historyRowBorder,
+                  ]}
+                >
+                  <Text style={weightStyles.historyDate}>
+                    {formatWeightDate(entry.log_date)}
+                  </Text>
+                  <Text style={weightStyles.historyKg}>
+                    {kgToDisplay(entry.weight_kg, unit)} {unit}
+                  </Text>
+                </View>
+              ))}
+            </View>
+          )}
+
+          {loaded && history.length === 0 && (
+            <Text style={weightStyles.emptyText}>
+              No entries yet. Log your weight above to get started.
+            </Text>
+          )}
+        </ScrollView>
+      </SafeAreaView>
+    </LinearGradient>
+  );
+}
+
+// weightStyles — scoped to WeightScreen only.
+const weightStyles = StyleSheet.create({
+  subhead: {
+    fontFamily: "Inter-Variable",
+    fontSize: 14,
+    color: "rgba(26,26,20,0.5)",
+    marginTop: 4,
+    marginBottom: 20,
+  },
+  card: {
+    borderRadius: 20,
+    padding: 24,
+    backgroundColor: "#fff",
+    shadowColor: "#000",
+    shadowOpacity: 0.05,
+    shadowRadius: 12,
+    shadowOffset: { width: 0, height: 3 },
+    elevation: 2,
+    marginBottom: 16,
+  },
+  // Header row: title on the left, unit toggle on the right
+  cardHeaderRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "space-between",
+    marginBottom: 16,
+  },
+  unitToggle: {
+    flexDirection: "row",
+    backgroundColor: "rgba(26,26,20,0.06)",
+    borderRadius: 8,
+    padding: 2,
+  },
+  unitSegment: {
+    paddingHorizontal: 10,
+    paddingVertical: 5,
+    borderRadius: 6,
+  },
+  unitSegmentActive: {
+    backgroundColor: "#1A1A14",
+  },
+  unitSegmentText: {
+    fontFamily: "Inter-Variable",
+    fontSize: 12,
+    color: "rgba(26,26,20,0.45)",
+  },
+  unitSegmentTextActive: {
+    color: "#F8E94A",
+    fontFamily: "Chillax-Medium",
+  },
+  historyCard: {
+    borderRadius: 20,
+    padding: 24,
+    backgroundColor: "#fff",
+    shadowColor: "#000",
+    shadowOpacity: 0.05,
+    shadowRadius: 12,
+    shadowOffset: { width: 0, height: 3 },
+    elevation: 2,
+  },
+  cardHeader: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 8,
+    marginBottom: 16,
+  },
+  cardHeading: {
+    fontFamily: "Chillax-SemiBold",
+    fontSize: 16,
+    color: "#1A1A14",
+    letterSpacing: -0.3,
+  },
+  savedDisplay: {
+    fontFamily: "Chillax-Bold",
+    fontSize: 32,
+    color: "#1A1A14",
+    letterSpacing: -1,
+    marginBottom: 16,
+  },
+  inputRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 10,
+    marginBottom: 16,
+  },
+  weightInput: {
+    flex: 1,
+    backgroundColor: "#FAFAF7",
+    borderWidth: 1.5,
+    borderColor: "#e5e5e0",
+    borderRadius: 12,
+    paddingHorizontal: 16,
+    paddingVertical: 13,
+    fontSize: 18,
+    fontFamily: "Inter-Variable",
+    color: "#1A1A14",
+  },
+  unitLabel: {
+    fontFamily: "Inter-Variable",
+    fontSize: 15,
+    color: "rgba(26,26,20,0.45)",
+    width: 24,
+  },
+  errorText: {
+    fontFamily: "Inter-Variable",
+    fontSize: 12,
+    color: "#c62828",
+    marginBottom: 10,
+  },
+  saveBtn: {
+    backgroundColor: "#1A1A14",
+    borderRadius: 12,
+    paddingVertical: 14,
+    alignItems: "center",
+    shadowColor: "#000",
+    shadowOpacity: 0.12,
+    shadowRadius: 8,
+    shadowOffset: { width: 0, height: 4 },
+    elevation: 3,
+  },
+  saveBtnDisabled: {
+    opacity: 0.4,
+  },
+  saveBtnText: {
+    fontFamily: "Chillax-SemiBold",
+    fontSize: 16,
+    color: "#F8E94A",
+    letterSpacing: -0.2,
+  },
+  historyRow: {
+    flexDirection: "row",
+    justifyContent: "space-between",
+    alignItems: "center",
+    paddingVertical: 12,
+  },
+  historyRowBorder: {
+    borderBottomWidth: 1,
+    borderBottomColor: "rgba(26,26,20,0.07)",
+  },
+  historyDate: {
+    fontFamily: "Inter-Variable",
+    fontSize: 14,
+    color: "rgba(26,26,20,0.6)",
+  },
+  historyKg: {
+    fontFamily: "Chillax-Medium",
+    fontSize: 15,
+    color: "#1A1A14",
+    letterSpacing: -0.2,
+  },
+  emptyText: {
+    fontFamily: "Inter-Variable",
+    fontSize: 13,
+    color: "rgba(26,26,20,0.4)",
+    textAlign: "center",
+    marginTop: 24,
+    lineHeight: 19,
   },
 });
