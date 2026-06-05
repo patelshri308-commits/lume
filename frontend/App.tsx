@@ -2051,6 +2051,7 @@ type WeekBarDatum = {
   dateStr:  string;   // YYYY-MM-DD
   dayLabel: string;   // single letter: M T W T F S S
   totalOz:  number;
+  goalOz:   number;   // that day's goal — used for per-day bar scaling
   goalMet:  boolean;
   hasData:  boolean;  // false → missing row (render muted bar)
 };
@@ -2059,8 +2060,6 @@ type WeekBarDatum = {
  * Build the 7-day chart dataset, always covering exactly the last 7 calendar
  * days (today through 6 days ago).  Database rows are merged by date; any day
  * without a row gets totalOz = 0 / goalMet = false / hasData = false.
- * Bar heights are relative to the maximum totalOz across the window so the
- * tallest bar always fills the track — caller can multiply by chart height.
  */
 function buildWeekChartData(
   rows: { log_date: string; total_oz: number; goal_oz_snapshot: number }[]
@@ -2080,6 +2079,7 @@ function buildWeekChartData(
       dateStr,
       dayLabel: DAY_LETTERS[cursor.getDay()],
       totalOz:  row ? (row.total_oz ?? 0) : 0,
+      goalOz:   row ? (row.goal_oz_snapshot ?? 64) : 64,
       goalMet:  row ? (row.total_oz ?? 0) >= (row.goal_oz_snapshot ?? 1) : false,
       hasData:  !!row,
     });
@@ -2679,7 +2679,6 @@ function WaterIntakeScreen({ onBack }: { onBack: () => void }) {
         {setupLoaded && showTracking && (() => {
           const CHART_HEIGHT = 88; // px — height of the bar track
           const hasAnyData   = weekData.some(d => d.hasData);
-          const maxOz        = Math.max(...weekData.map(d => d.totalOz), 1);
 
           return (
             <View style={waterStyles.weekCard}>
@@ -2695,7 +2694,7 @@ function WaterIntakeScreen({ onBack }: { onBack: () => void }) {
                 {(weekData.length === 7 ? weekData : Array(7).fill(null)).map((d: WeekBarDatum | null, i) => {
                   const isToday  = d?.dateStr === localToday();
                   const fillH    = d && d.totalOz > 0
-                    ? Math.max(4, Math.round((d.totalOz / maxOz) * CHART_HEIGHT))
+                    ? Math.min(CHART_HEIGHT, Math.max(4, Math.round((d.totalOz / Math.max(d.goalOz, 1)) * CHART_HEIGHT)))
                     : 4; // minimum nub so the bar slot is never invisible
 
                   const barColor = !d || !d.hasData
