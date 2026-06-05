@@ -51,6 +51,11 @@ def get_weight_prediction(
         weight_log_date = None          # profile snapshot; staleness unknown
     else:
         # Nothing to predict from — return a minimal low-confidence response.
+        goal_weight_kg_val = (
+            float(profile.goal_weight_kg)
+            if profile and profile.goal_weight_kg is not None
+            else None
+        )
         return {
             "latest_weight_kg":        None,
             "weight_log_date":         None,
@@ -65,6 +70,11 @@ def get_weight_prediction(
             "projected_weight_30d_kg": None,
             "confidence":              "low",
             "confidence_note":         "No weight data found — log your weight to get started",
+            "goal_weight_kg":          goal_weight_kg_val,
+            "kg_to_goal":              None,
+            "goal_direction":          None,
+            "estimated_weeks_to_goal": None,
+            "projected_goal_date":     None,
         }
 
     # ── 3. Daily calorie totals for the lookback window ───────────────────────
@@ -86,11 +96,12 @@ def get_weight_prediction(
     return prediction_service.compute_weight_prediction(
         weight_kg      = weight_kg,
         weight_log_date= weight_log_date,
-        height_cm      = float(profile.height_cm)  if profile and profile.height_cm  else None,
-        age            = profile.age                if profile                         else None,
-        sex            = profile.sex                if profile                         else None,
-        activity_level = profile.activity_level     if profile                         else "moderate",
+        height_cm      = float(profile.height_cm)      if profile and profile.height_cm      else None,
+        age            = profile.age                    if profile                             else None,
+        sex            = profile.sex                    if profile                             else None,
+        activity_level = profile.activity_level         if profile                             else "moderate",
         daily_calories = daily_calories,
         days_in_window = prediction_service.WINDOW_DAYS,
         today          = today,
+        goal_weight_kg = float(profile.goal_weight_kg) if profile and profile.goal_weight_kg else None,
     )

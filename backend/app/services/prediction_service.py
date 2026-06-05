@@ -7,6 +7,7 @@ The router is responsible for fetching data and calling compute_weight_predictio
 from __future__ import annotations
 
 import statistics
+import datetime
 from datetime import date
 from typing import Optional
 
@@ -181,6 +182,40 @@ def compute_weight_prediction(
         calorie_std=calorie_std,
     )
 
+    # ── Goal progress ─────────────────────────────────────────────────────────
+    goal_weight_kg_out:      Optional[float] = None
+    kg_to_goal:              Optional[float] = None
+    goal_direction:          Optional[str]   = None
+    estimated_weeks_to_goal: Optional[float] = None
+    projected_goal_date:     Optional[str]   = None
+
+    if goal_weight_kg is not None:
+        goal_weight_kg_out = round(goal_weight_kg, 2)
+        kg_to_goal = round(weight_kg - goal_weight_kg, 2)
+
+        if abs(kg_to_goal) <= GOAL_REACHED_KG:
+            goal_direction = "maintain"
+        elif kg_to_goal > 0:
+            goal_direction = "lose"
+        else:
+            goal_direction = "gain"
+
+        if (
+            goal_direction in ("lose", "gain")
+            and weekly_change_kg is not None
+            and weekly_change_kg != 0
+        ):
+            trending = (
+                (goal_direction == "lose" and weekly_change_kg < 0)
+                or (goal_direction == "gain" and weekly_change_kg > 0)
+            )
+            if trending:
+                weeks = abs(kg_to_goal) / abs(weekly_change_kg)
+                estimated_weeks_to_goal = round(weeks, 1)
+                projected_goal_date = (
+                    today + datetime.timedelta(days=round(weeks * 7))
+                ).isoformat()
+
     return {
         "latest_weight_kg":        round(weight_kg, 2),
         "weight_log_date":         weight_log_date.isoformat() if weight_log_date else None,
@@ -195,4 +230,9 @@ def compute_weight_prediction(
         "projected_weight_30d_kg": projected_weight_30d_kg,
         "confidence":              confidence,
         "confidence_note":         confidence_note,
+        "goal_weight_kg":          goal_weight_kg_out,
+        "kg_to_goal":              kg_to_goal,
+        "goal_direction":          goal_direction,
+        "estimated_weeks_to_goal": estimated_weeks_to_goal,
+        "projected_goal_date":     projected_goal_date,
     }

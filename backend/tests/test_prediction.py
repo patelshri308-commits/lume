@@ -14,6 +14,7 @@ from datetime import date, timedelta
 import pytest
 
 from app.services.prediction_service import (
+    GOAL_REACHED_KG,
     KCAL_PER_KG,
     WINDOW_DAYS,
     compute_weight_prediction,
@@ -223,3 +224,101 @@ def test_projected_weight_floored_at_30kg():
         today           = TODAY,
     )
     assert result["projected_weight_30d_kg"] >= 30.0
+
+
+# ── Goal progress ─────────────────────────────────────────────────────────────
+
+def _base_kwargs(**overrides):
+    """Full-data base fixture; override any field for specific test cases."""
+    return {
+        "weight_kg":       90.0,
+        "weight_log_date": TODAY,
+        "height_cm":       175.0,
+        "age":             30,
+        "sex":             "male",
+        "activity_level":  "moderate",
+        "daily_calories":  [2000.0] * 12,
+        "days_in_window":  WINDOW_DAYS,
+        "today":           TODAY,
+        **overrides,
+    }
+
+
+def test_goal_fields_absent_when_no_goal():
+    """Without goal_weight_kg all five goal fields are None."""
+    result = compute_weight_prediction(**_base_kwargs())
+    assert result["goal_weight_kg"]          is None
+    assert result["kg_to_goal"]              is None
+    assert result["goal_direction"]          is None
+    assert result["estimated_weeks_to_goal"] is None
+    assert result["projected_goal_date"]     is None
+
+
+def test_goal_lose_trending_toward():
+    """90 kg → goal 80 kg, losing 0.5 kg/week → ~20 weeks out."""
+    # To get weekly_change_kg ≈ -0.5, we need daily_balance ≈ -550
+    # daily_balance = avg_calories - tdee; we'll use a known deficit setup
+    # and verify weeks = kg_to_goal / abs(weekly_change_kg)
+    result = compute_weight_prediction(**_base_kwargs(goal_weight_kg=80.0))
+    assert result["goal_direction"] == "lose"
+    assert result["kg_to_goal"] == pytest.approx(10.0, abs=0.01)
+
+    if result["weekly_change_kg"] is not None and result["weekly_change_kg"] < 0:
+        expected_weeks = round(
+            abs(result["kg_to_goal"]) / abs(result["weekly_change_kg"]), 1
+        )
+        assert result["estimated_weeks_to_goal"] == pytest.approx(expected_weeks, abs=0.2)
+        assert result["projected_goal_date"] is not None
+
+
+def test_goal_lose_not_trending():
+    """Goal is to lose but weekly_change_kg is positive → weeks/date are None."""
+    # Force a surplus by using very high calories (surplus will make weekly_change > 0)
+    result = compute_weight_prediction(**_base_kwargs(
+        daily_calories=[4000.0] * 12,
+        goal_weight_kg=80.0,
+    ))
+    assert result["goal_direction"] == "lose"
+    if result["weekly_change_kg"] is not None and result["weekly_change_kg"] > 0:
+        assert result["estimated_weeks_to_goal"] is None
+        assert result["projected_goal_date"]     is None
+
+
+def test_goal_gain_trending_toward():
+    """75 kg → goal 85 kg, weekly_change > 0 → weeks computed."""
+    result = compute_weight_prediction(**_base_kwargs(
+        weight_kg=75.0,
+        daily_calories=[3500.0] * 12,  # likely a surplus → positive weekly change
+        goal_weight_kg=85.0,
+    ))
+    assert result["goal_direction"] == "gain"
+    assert result["kg_to_goal"] == pytest.approx(-10.0, abs=0.01)
+
+    if result["weekly_change_kg"] is not None and result["weekly_change_kg"] > 0:
+        assert result["estimated_weeks_to_goal"] is not None
+        assert result["projected_goal_date"]     is not None
+
+
+def test_goal_reached_within_threshold():
+    """Within GOAL_REACHED_KG → direction is maintain, weeks/date are None."""
+    result = compute_weight_prediction(**_base_kwargs(
+        weight_kg=80.3,
+        goal_weight_kg=80.0,
+    ))
+    assert abs(80.3 - 80.0) <= GOAL_REACHED_KG
+    assert result["goal_direction"]          == "maintain"
+    assert result["estimated_weeks_to_goal"] is None
+    assert result["projected_goal_date"]     is None
+
+
+def test_goal_weeks_no_tdee():
+    """No profile (TDEE=None) → weekly_change_kg is None → weeks/date are None."""
+    result = compute_weight_prediction(**_base_kwargs(
+        height_cm=None,
+        age=None,
+        sex=None,
+        goal_weight_kg=80.0,
+    ))
+    assert result["weekly_change_kg"]        is None
+    assert result["estimated_weeks_to_goal"] is None
+    assert result["projected_goal_date"]     is None

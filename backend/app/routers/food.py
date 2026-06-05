@@ -1,8 +1,11 @@
 import re
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel
+from typing import List
 from app.services.query_router import route_food_query
 from app.services.barcode_service import lookup_barcode, BarcodeNotFoundError, BarcodeProviderError
+
+MAX_MULTI_LINES = 15
 
 # Standard barcode formats (EAN-8, EAN-13, UPC-A/E) are 6–14 digits.
 # QR codes and other non-numeric codes are rejected at this layer.
@@ -17,6 +20,10 @@ class FoodSearchRequest(BaseModel):
 
 class BarcodeRequest(BaseModel):
     barcode: str
+
+
+class ParseMultiRequest(BaseModel):
+    lines: List[str]
 
 
 @router.post("/food/search")

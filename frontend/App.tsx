@@ -4929,6 +4929,11 @@ type WeightPrediction = {
   projected_weight_30d_kg: number | null;
   confidence:              "high" | "medium" | "low";
   confidence_note:         string;
+  goal_weight_kg:          number | null;
+  kg_to_goal:              number | null;
+  goal_direction:          "lose" | "gain" | "maintain" | null;
+  estimated_weeks_to_goal: number | null;
+  projected_goal_date:     string | null;
 };
 
 // kg ↔ display-unit helpers — weight_logs always stores kg.
@@ -5368,6 +5373,73 @@ function WeightScreen({ onBack }: { onBack: () => void }) {
                   </Text>
                 </View>
 
+                {/* ── Goal progress ──────────────────────────────── */}
+                {prediction.goal_weight_kg != null && (() => {
+                  const gw        = prediction.goal_weight_kg!;
+                  const remaining = prediction.kg_to_goal != null ? Math.abs(prediction.kg_to_goal) : null;
+                  const reached   = prediction.goal_direction === "maintain";
+                  const trending  = prediction.estimated_weeks_to_goal != null;
+                  const notMoving = !reached && !trending && prediction.goal_direction != null;
+
+                  const fmtGoalDate = (iso: string): string => {
+                    const d = new Date(iso + "T00:00:00");
+                    return d.toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric" });
+                  };
+
+                  return (
+                    <>
+                      <View style={weightStyles.predDivider} />
+
+                      {reached ? (
+                        <Text style={weightStyles.predGoalReached}>Goal reached 🎉</Text>
+                      ) : (
+                        <>
+                          <View style={weightStyles.predRow}>
+                            <Text style={weightStyles.predLabel}>Goal weight</Text>
+                            <Text style={weightStyles.predValue}>
+                              {kgToDisplay(gw, unit)} {unit}
+                            </Text>
+                          </View>
+
+                          {remaining != null && (
+                            <View style={weightStyles.predRow}>
+                              <Text style={weightStyles.predLabel}>Remaining</Text>
+                              <Text style={weightStyles.predValue}>
+                                {kgToDisplay(remaining, unit)} {unit}
+                              </Text>
+                            </View>
+                          )}
+
+                          {trending && (
+                            <>
+                              <View style={weightStyles.predRow}>
+                                <Text style={weightStyles.predLabel}>Est. weeks</Text>
+                                <Text style={weightStyles.predValue}>
+                                  {prediction.estimated_weeks_to_goal} wks
+                                </Text>
+                              </View>
+                              {prediction.projected_goal_date != null && (
+                                <View style={weightStyles.predRow}>
+                                  <Text style={weightStyles.predLabel}>Goal date</Text>
+                                  <Text style={weightStyles.predValue}>
+                                    {fmtGoalDate(prediction.projected_goal_date)}
+                                  </Text>
+                                </View>
+                              )}
+                            </>
+                          )}
+
+                          {notMoving && (
+                            <Text style={weightStyles.predNote}>
+                              At your current pace, you are not trending toward your goal yet.
+                            </Text>
+                          )}
+                        </>
+                      )}
+                    </>
+                  );
+                })()}
+
                 <View style={weightStyles.predDivider} />
 
                 {/* Confidence */}
@@ -5650,5 +5722,12 @@ const weightStyles = StyleSheet.create({
     color: "rgba(26,26,20,0.4)",
     lineHeight: 16,
     marginTop: 4,
+  },
+  predGoalReached: {
+    fontFamily: "Chillax-SemiBold",
+    fontSize: 15,
+    color: "#1A1A14",
+    textAlign: "center",
+    paddingVertical: 8,
   },
 });
