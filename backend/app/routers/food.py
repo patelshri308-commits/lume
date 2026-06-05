@@ -56,3 +56,61 @@ def scan_barcode(body: BarcodeRequest):
             status_code=502,
             detail="Barcode lookup service is temporarily unavailable. Please try again.",
         )
+
+
+@router.post("/food/parse-multi")
+def parse_multi(body: ParseMultiRequest):
+    """
+    Parse multiple food lines in one request.  Mirrors /food/search but accepts
+    a list of lines and returns a result for each non-blank line.
+
+    - Blank / whitespace-only lines are silently skipped (counted in `skipped`).
+    - More than MAX_MULTI_LINES non-blank lines → HTTP 400.
+    - Each line is sent through route_food_query independently.
+    - A line that raises is returned as parse_error=True with zeroed macros.
+    - No auth required; no DB writes.
+    """
+    non_blank = [line for line in body.lines if line.strip()]
+    skipped   = len(body.lines) - len(non_blank)
+
+    if len(non_blank) > MAX_MULTI_LINES:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Too many items. Maximum {MAX_MULTI_LINES} non-blank lines per request.",
+        )
+
+    items = []
+    for line in non_blank:
+        try:
+            result = route_food_query(line.strip())
+            items.append({
+                "original_line":     line,
+                "name":              result.get("name", line),
+                "calories":          result.get("calories", 0.0),
+                "protein":           result.get("protein", 0.0),
+                "carbs":             result.get("carbs", 0.0),
+                "fat":               result.get("fat", 0.0),
+                "source_type":       result.get("source_type"),
+                "confidence":        result.get("confidence"),
+                "is_estimated":      result.get("is_estimated", True),
+                "serving_description": result.get("serving_description"),
+                "parse_error":       False,
+                "error_message":     None,
+            })
+        except Exception as exc:
+            items.append({
+                "original_line":     line,
+                "name":              line.strip(),
+                "calories":          0.0,
+                "protein":           0.0,
+                "carbs":             0.0,
+                "fat":               0.0,
+                "source_type":       None,
+                "confidence":        None,
+                "is_estimated":      True,
+                "serving_description": None,
+                "parse_error":       True,
+                "error_message":     str(exc),
+            })
+
+    return {"items": items, "skipped": skipped}
