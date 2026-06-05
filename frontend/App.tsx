@@ -70,6 +70,7 @@ type UserProfile = {
   age:                  number | null;
   height_cm:            number | null;
   weight_kg:            number | null;
+  goal_weight_kg:       number | null;
   goal_type:            string;
   activity_level:       string;
   onboarding_completed: boolean;
@@ -4948,10 +4949,18 @@ function WeightScreen({ onBack }: { onBack: () => void }) {
   const [message,    setMessage]    = useState("");
   const [prediction, setPrediction] = useState<WeightPrediction | null>(null);
   const [predLoading,setPredLoading]= useState(false);
+  const [goalKg,      setGoalKg]      = useState<number | null>(null);
+  const [goalInput,   setGoalInput]   = useState("");
+  const [goalSaving,  setGoalSaving]  = useState(false);
+  const [goalMessage, setGoalMessage] = useState("");
 
   const parsedDisplay = parseFloat(input);
   const parsedKg      = !isNaN(parsedDisplay) ? displayToKg(parsedDisplay, unit) : NaN;
   const inputValid    = !isNaN(parsedKg) && parsedKg >= 20 && parsedKg <= 500;
+
+  const parsedGoalDisplay = parseFloat(goalInput);
+  const parsedGoalKg      = !isNaN(parsedGoalDisplay) ? displayToKg(parsedGoalDisplay, unit) : NaN;
+  const goalInputValid    = !isNaN(parsedGoalKg) && parsedGoalKg >= 20 && parsedGoalKg <= 500;
 
   // loadData accepts the active unit so input is set in the right unit after
   // load or save, without relying on stale closure state.
@@ -4982,6 +4991,43 @@ function WeightScreen({ onBack }: { onBack: () => void }) {
     }
   };
 
+  const loadGoalWeight = async (activeUnit: "kg" | "lb") => {
+    try {
+      const { data: { session } } = await supabase.auth.getSession();
+      if (!session?.access_token) return;
+      const res = await axios.get<{ profile: { goal_weight_kg: number | null } | null }>(
+        `${API_URL}/profile`,
+        { headers: { Authorization: `Bearer ${session.access_token}` } },
+      );
+      const gw = res.data.profile?.goal_weight_kg ?? null;
+      setGoalKg(gw != null ? Number(gw) : null);
+      if (gw != null) setGoalInput(String(kgToDisplay(Number(gw), activeUnit)));
+    } catch {
+      // silently ignore
+    }
+  };
+
+  const saveGoalWeight = async () => {
+    if (!goalInputValid) return;
+    setGoalSaving(true);
+    setGoalMessage("");
+    try {
+      const { data: { session } } = await supabase.auth.getSession();
+      if (!session?.access_token) return;
+      const rounded = Math.round(parsedGoalKg * 10) / 10;
+      await axios.put(
+        `${API_URL}/profile`,
+        { goal_weight_kg: rounded },
+        { headers: { Authorization: `Bearer ${session.access_token}` } },
+      );
+      setGoalKg(rounded);
+    } catch {
+      setGoalMessage("Failed to save. Please try again.");
+    } finally {
+      setGoalSaving(false);
+    }
+  };
+
   const fetchPrediction = async () => {
     setPredLoading(true);
     try {
@@ -5003,12 +5049,12 @@ function WeightScreen({ onBack }: { onBack: () => void }) {
       const { data: { user } } = await supabase.auth.getUser();
       if (!user) { setLoaded(true); return; }
       setUserId(user.id);
-      // Run weight-log load and prediction fetch in parallel.
-      await Promise.all([loadData(user.id, "kg"), fetchPrediction()]);
+      // Run weight-log load, goal weight load, and prediction fetch in parallel.
+      await Promise.all([loadData(user.id, "kg"), loadGoalWeight("kg"), fetchPrediction()]);
     })();
   }, []);
 
-  // When the unit toggle is tapped, convert the current input value in-place.
+  // When the unit toggle is tapped, convert current weight input and goal input in-place.
   const switchUnit = (newUnit: "kg" | "lb") => {
     if (newUnit === unit) return;
     const parsed = parseFloat(input);
@@ -5016,6 +5062,12 @@ function WeightScreen({ onBack }: { onBack: () => void }) {
       const asKg      = displayToKg(parsed, unit);
       const converted = kgToDisplay(asKg, newUnit);
       setInput(String(converted));
+    }
+    const parsedGoal = parseFloat(goalInput);
+    if (!isNaN(parsedGoal) && parsedGoal > 0) {
+      const asKg      = displayToKg(parsedGoal, unit);
+      const converted = kgToDisplay(asKg, newUnit);
+      setGoalInput(String(converted));
     }
     setUnit(newUnit);
   };
@@ -5136,6 +5188,60 @@ function WeightScreen({ onBack }: { onBack: () => void }) {
               >
                 <Text style={weightStyles.saveBtnText}>
                   {saving ? "Saving…" : todayKg != null ? "Update" : "Save"}
+                </Text>
+              </TouchableOpacity>
+            </View>
+          )}
+
+          {/* ── Goal weight ────────────────────────────────────────────── */}
+          {loaded && (
+            <View style={weightStyles.card}>
+              <View style={weightStyles.cardHeader}>
+                <Ionicons name="flag-outline" size={19} color="#C48A1A" />
+                <Text style={weightStyles.cardHeading}>Goal weight</Text>
+              </View>
+
+              {goalKg != null && (
+                <Text style={weightStyles.savedDisplay}>
+                  {kgToDisplay(goalKg, unit)} {unit}
+                </Text>
+              )}
+
+              <View style={weightStyles.inputRow}>
+                <TextInput
+                  style={weightStyles.weightInput}
+                  value={goalInput}
+                  onChangeText={t => { setGoalInput(t); setGoalMessage(""); }}
+                  placeholder={goalKg == null
+                    ? (unit === "kg" ? "Set a goal weight" : "Set a goal weight")
+                    : (unit === "kg" ? "e.g. 68" : "e.g. 150")}
+                  placeholderTextColor="rgba(26,26,20,0.3)"
+                  keyboardType="decimal-pad"
+                  returnKeyType="done"
+                  maxLength={7}
+                  inputAccessoryViewID="goal-weight-input-accessory"
+                />
+                <Text style={weightStyles.unitLabel}>{unit}</Text>
+              </View>
+              {Platform.OS === "ios" && (
+                <InputAccessoryView nativeID="goal-weight-input-accessory" />
+              )}
+
+              {goalMessage !== "" && (
+                <Text style={weightStyles.errorText}>{goalMessage}</Text>
+              )}
+
+              <TouchableOpacity
+                style={[
+                  weightStyles.saveBtn,
+                  (!goalInputValid || goalSaving) && weightStyles.saveBtnDisabled,
+                ]}
+                onPress={saveGoalWeight}
+                disabled={!goalInputValid || goalSaving}
+                activeOpacity={0.8}
+              >
+                <Text style={weightStyles.saveBtnText}>
+                  {goalSaving ? "Saving…" : goalKg != null ? "Update goal" : "Set goal"}
                 </Text>
               </TouchableOpacity>
             </View>

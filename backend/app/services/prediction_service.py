@@ -22,6 +22,7 @@ ACTIVITY_MULTIPLIERS: dict[str, float] = {
 
 KCAL_PER_KG = 7700          # 3500 kcal ≈ 1 lb; 1 lb = 0.4536 kg → ~7700 kcal/kg
 WINDOW_DAYS = 14
+GOAL_REACHED_KG = 0.5       # within this distance of goal → consider goal reached
 MIN_DAYS_MEDIUM   = 5       # < 5 logged days → low confidence
 MIN_DAYS_HIGH     = 10      # < 10 logged days → medium confidence
 MAX_STALENESS_LOW = 14      # > 14 days since last weight log → low confidence
@@ -120,6 +121,7 @@ def compute_weight_prediction(
     daily_calories: list[float],
     days_in_window: int,
     today: date,
+    goal_weight_kg: Optional[float] = None,
 ) -> dict:
     """
     Compute a V1 physics-based weight prediction for one user.
