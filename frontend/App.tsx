@@ -20,10 +20,11 @@ import {
   ScrollView,
   TouchableOpacity,
   Pressable,
+  useWindowDimensions,
 } from "react-native";
 import { SafeAreaProvider, SafeAreaView, useSafeAreaInsets } from "react-native-safe-area-context";
 import { LinearGradient } from "expo-linear-gradient";
-import Svg, { Circle, G, Defs, LinearGradient as SvgLinearGradient, Stop, Line as SvgLine, Path as SvgPath } from "react-native-svg";
+import Svg, { Circle, G, Defs, LinearGradient as SvgLinearGradient, Stop, Line as SvgLine, Path as SvgPath, Text as SvgText } from "react-native-svg";
 import axios from "axios";
 import { Session } from "@supabase/supabase-js";
 import { supabase } from "./lib/supabase";
@@ -4765,6 +4766,154 @@ function formatWeightDate(dateStr: string): string {
   return d.toLocaleDateString("en-US", { month: "short", day: "numeric" });
 }
 
+function WeightTrendChart({ entries, unit }: { entries: WeightLogEntry[]; unit: "kg" | "lb" }) {
+  const { width: windowWidth } = useWindowDimensions();
+
+  if (entries.length === 0) {
+    return (
+      <View style={weightStyles.trendEmptyBox}>
+        <Text style={weightStyles.trendEmptyText}>Log a few weights to see your trend</Text>
+      </View>
+    );
+  }
+
+  if (entries.length === 1) {
+    return (
+      <View style={weightStyles.trendEmptyBox}>
+        <Text style={weightStyles.trendEmptyText}>Add another entry to see your trend</Text>
+      </View>
+    );
+  }
+
+  // Chart dimensions — card has 24px padding each side; container has 24px each side
+  const CHART_W = windowWidth - 96;
+  const CHART_H = 130;
+  const PAD_L   = 40;
+  const PAD_R   = 8;
+  const PAD_T   = 14;
+  const PAD_B   = 26;
+  const plotW   = CHART_W - PAD_L - PAD_R;
+  const plotH   = CHART_H - PAD_T - PAD_B;
+
+  // Ascending (oldest left, newest right)
+  const asc    = [...entries].reverse();
+  const values = asc.map(e => kgToDisplay(e.weight_kg, unit));
+  const minVal = Math.min(...values);
+  const maxVal = Math.max(...values);
+  const spread = maxVal - minVal;
+
+  // Y padding so dots don't touch the top/bottom edges
+  const yPad = spread > 0 ? spread * 0.25 : 1;
+  const yMin  = minVal - yPad;
+  const yMax  = maxVal + yPad;
+  const yRange = yMax - yMin;
+
+  const toX = (i: number) =>
+    PAD_L + (asc.length === 1 ? plotW / 2 : (i / (asc.length - 1)) * plotW);
+  const toY = (v: number) => PAD_T + (1 - (v - yMin) / yRange) * plotH;
+
+  // SVG line path
+  const linePath = asc
+    .map((_, i) => `${i === 0 ? "M" : "L"} ${toX(i).toFixed(1)},${toY(values[i]).toFixed(1)}`)
+    .join(" ");
+
+  // Area fill path (closes down to the baseline)
+  const baseline = PAD_T + plotH;
+  const areaPath =
+    linePath +
+    ` L ${toX(asc.length - 1).toFixed(1)},${baseline}` +
+    ` L ${toX(0).toFixed(1)},${baseline} Z`;
+
+  // Show at most 3 X-axis labels (first, middle, last)
+  const xLabelIdx = new Set([0, Math.floor((asc.length - 1) / 2), asc.length - 1]);
+
+  const fmtAxisDate = (dateStr: string) => {
+    const d = parseDateStringToLocalDate(dateStr);
+    return d.toLocaleDateString("en-US", { month: "short", day: "numeric" });
+  };
+
+  const yLabelDecimals = spread < 2 ? 1 : 0;
+
+  return (
+    <Svg width={CHART_W} height={CHART_H}>
+      <Defs>
+        <SvgLinearGradient id="wTrendFill" x1="0" y1="0" x2="0" y2="1">
+          <Stop offset="0%" stopColor="#C48A1A" stopOpacity={0.15} />
+          <Stop offset="100%" stopColor="#C48A1A" stopOpacity={0} />
+        </SvgLinearGradient>
+      </Defs>
+
+      {/* Area fill */}
+      <SvgPath d={areaPath} fill="url(#wTrendFill)" />
+
+      {/* Trend line */}
+      <SvgPath
+        d={linePath}
+        fill="none"
+        stroke="#C48A1A"
+        strokeWidth={2}
+        strokeLinejoin="round"
+        strokeLinecap="round"
+      />
+
+      {/* Data points — latest dot is filled, others are hollow */}
+      {asc.map((e, i) => {
+        const isLatest = i === asc.length - 1;
+        return (
+          <Circle
+            key={e.log_date}
+            cx={toX(i)}
+            cy={toY(values[i])}
+            r={isLatest ? 4.5 : 3}
+            fill={isLatest ? "#C48A1A" : "#fff"}
+            stroke="#C48A1A"
+            strokeWidth={isLatest ? 0 : 1.5}
+          />
+        );
+      })}
+
+      {/* Y-axis labels (min and max) */}
+      <SvgText
+        x={PAD_L - 4}
+        y={PAD_T + 4}
+        textAnchor="end"
+        fontSize={10}
+        fontFamily="Inter"
+        fill="rgba(26,26,20,0.4)"
+      >
+        {maxVal.toFixed(yLabelDecimals)}
+      </SvgText>
+      <SvgText
+        x={PAD_L - 4}
+        y={PAD_T + plotH}
+        textAnchor="end"
+        fontSize={10}
+        fontFamily="Inter"
+        fill="rgba(26,26,20,0.4)"
+      >
+        {minVal.toFixed(yLabelDecimals)}
+      </SvgText>
+
+      {/* X-axis labels */}
+      {asc.map((e, i) =>
+        xLabelIdx.has(i) ? (
+          <SvgText
+            key={e.log_date}
+            x={toX(i)}
+            y={CHART_H - 4}
+            textAnchor={i === 0 ? "start" : i === asc.length - 1 ? "end" : "middle"}
+            fontSize={10}
+            fontFamily="Inter"
+            fill="rgba(26,26,20,0.4)"
+          >
+            {fmtAxisDate(e.log_date)}
+          </SvgText>
+        ) : null
+      )}
+    </Svg>
+  );
+}
+
 type WeightPrediction = {
   latest_weight_kg:        number | null;
   weight_log_date:         string | null;
@@ -4813,7 +4962,7 @@ function WeightScreen({ onBack }: { onBack: () => void }) {
         .select("log_date, weight_kg")
         .eq("user_id", uid)
         .order("log_date", { ascending: false })
-        .limit(7);
+        .limit(14);
 
       const entries: WeightLogEntry[] = (rows ?? []).map(r => ({
         log_date:  r.log_date,
@@ -5023,6 +5172,17 @@ function WeightScreen({ onBack }: { onBack: () => void }) {
             <Text style={weightStyles.emptyText}>
               No entries yet. Log your weight above to get started.
             </Text>
+          )}
+
+          {/* ── Trend chart ────────────────────────────────────────────── */}
+          {loaded && (
+            <View style={weightStyles.trendCard}>
+              <View style={weightStyles.cardHeader}>
+                <Ionicons name="pulse-outline" size={17} color="#C48A1A" />
+                <Text style={weightStyles.cardHeading}>Trend</Text>
+              </View>
+              <WeightTrendChart entries={history} unit={unit} />
+            </View>
           )}
 
           {/* ── What to expect (prediction) ────────────────────────────── */}
@@ -5279,6 +5439,29 @@ const weightStyles = StyleSheet.create({
     textAlign: "center",
     marginTop: 24,
     lineHeight: 19,
+  },
+
+  // ── Trend chart card ──────────────────────────────────────────────────────
+  trendCard: {
+    borderRadius: 20,
+    padding: 24,
+    backgroundColor: "#fff",
+    shadowColor: "#000",
+    shadowOpacity: 0.05,
+    shadowRadius: 12,
+    shadowOffset: { width: 0, height: 3 },
+    elevation: 2,
+    marginTop: 16,
+  },
+  trendEmptyBox: {
+    paddingVertical: 18,
+    alignItems: "center",
+  },
+  trendEmptyText: {
+    fontFamily: "Inter-Variable",
+    fontSize: 13,
+    color: "rgba(26,26,20,0.4)",
+    textAlign: "center",
   },
 
   // ── Prediction card ────────────────────────────────────────────────────────

@@ -66,6 +66,7 @@ class UserProfile(Base):
     age                  = Column(Integer,              nullable=True)
     height_cm            = Column(Numeric,              nullable=True)
     weight_kg            = Column(Numeric,              nullable=True)
+    goal_weight_kg       = Column(Numeric,              nullable=True)
     goal_type            = Column(String,               nullable=False, default="maintain")
     activity_level       = Column(String,               nullable=False, default="moderate")
     onboarding_completed = Column(Boolean,              nullable=False, default=False)

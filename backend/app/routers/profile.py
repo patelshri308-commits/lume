@@ -26,6 +26,7 @@ class UpsertProfile(BaseModel):
     age:                  Optional[int]   = None
     height_cm:            Optional[float] = None
     weight_kg:            Optional[float] = None
+    goal_weight_kg:       Optional[float] = None
     goal_type:            Optional[str]   = None   # 'lose' | 'maintain' | 'gain'
     activity_level:       Optional[str]   = None   # 'sedentary'|'light'|'moderate'|'active'|'very_active'
     onboarding_completed: Optional[bool]  = None
