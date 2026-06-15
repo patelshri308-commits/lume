@@ -1,5 +1,6 @@
 import React, { useState, useEffect, useRef } from "react";
 import { Keyboard, KeyboardAvoidingView, Platform, Modal, Linking, InputAccessoryView } from "react-native";
+import HomepageHero from "./components/HomepageHero";
 import { CameraView, useCameraPermissions } from "expo-camera";
 const barcodIcon = require("./assets/barcode.png");
 import { useFonts } from "expo-font";
@@ -993,7 +994,7 @@ function AppInner() {
       );
     }
 
-    // ── Mode: forgot password (enter email to receive reset link) ──
+    // ── Mode: forgot password ──
     if (authMode === "forgot") {
       return (
         <AuthShell glowOuter={glowOuter} glowMid={glowMid} glowCore={glowCore} glowShimmer={glowShimmer}>
@@ -1026,59 +1027,11 @@ function AppInner() {
       );
     }
 
-    // ── Mode: login (default) ──
+    // ── Mode: login (default) — HomepageHero with Three.js background ──
     return (
-      <AuthShell glowOuter={glowOuter} glowMid={glowMid} glowCore={glowCore} glowShimmer={glowShimmer}>
-        <View style={styles.authContainer}>
-          <View style={styles.authLogoArea}>
-            <Text style={styles.authWordmark}>Lume</Text>
-            <Text style={styles.authTagline}>Illuminate what you eat.</Text>
-          </View>
-          <View style={styles.authForm}>
-            <TextInput
-              style={styles.authInput}
-              placeholder="Email"
-              placeholderTextColor="rgba(26,26,20,0.4)"
-              value={authEmail}
-              onChangeText={setAuthEmail}
-              autoCapitalize="none"
-              keyboardType="email-address"
-            />
-            <TextInput
-              style={styles.authInput}
-              placeholder="Password"
-              placeholderTextColor="rgba(26,26,20,0.4)"
-              value={authPassword}
-              onChangeText={setAuthPassword}
-              secureTextEntry
-            />
-
-            <TouchableOpacity style={styles.authSignInButton} onPress={logIn} activeOpacity={0.85}>
-              <Text style={styles.authSignInText}>Log In</Text>
-            </TouchableOpacity>
-
-            {/* Forgot password link */}
-            <TouchableOpacity
-              style={styles.authBackLink}
-              onPress={() => { setAuthMode("forgot"); setResetEmail(authEmail); setAuthMessage(""); }}
-            >
-              <Text style={styles.authForgotText}>Forgot password?</Text>
-            </TouchableOpacity>
-
-            <View style={styles.authDivider}>
-              <View style={styles.authDividerLine} />
-              <Text style={styles.authDividerText}>or</Text>
-              <View style={styles.authDividerLine} />
-            </View>
-
-            <TouchableOpacity style={styles.authSignUpButton} onPress={signUp} activeOpacity={0.85}>
-              <Text style={styles.authSignUpText}>Create account</Text>
-            </TouchableOpacity>
-
-            {authMessage ? <Text style={styles.authMessage}>{authMessage}</Text> : null}
-          </View>
-        </View>
-      </AuthShell>
+      <HomepageHero
+        onForgotPassword={() => { setAuthMode("forgot"); setResetEmail(""); setAuthMessage(""); }}
+      />
     );
   }
 
@@ -1642,9 +1595,6 @@ function AuthShell({ glowOuter, glowMid, glowCore, glowShimmer, children }: Auth
       }]} />
       <View style={styles.authGroundWash} pointerEvents="none" />
       <View style={styles.authHorizon} pointerEvents="none" />
-      {/* KeyboardAvoidingView pushes the form up when the soft keyboard appears.
-          "padding" adds bottom padding equal to the keyboard height, which
-          shrinks the flex container so the form stays visible at the bottom. */}
       <KeyboardAvoidingView
         style={{ flex: 1 }}
         behavior={Platform.OS === "ios" ? "padding" : "height"}

@@ -1,0 +1,266 @@
+// String export of lume_final.html for use with react-native-webview's
+// source={{ html }} prop. The canonical file is assets/lume_final.html —
+// this file exists only because WebView cannot require() a bundled asset directly.
+// The 4 backticks inside the Three.js GLSL shaders are escaped below.
+
+export const LUME_SCENE_HTML = `<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<style>
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  body { background: #FAFAF7; overflow: hidden; }
+  canvas { display: block; width: 100vw; height: 100vh; }
+</style>
+</head>
+<body>
+<canvas id="c"></canvas>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
+<script>
+const W = window.innerWidth, H = window.innerHeight;
+const renderer = new THREE.WebGLRenderer({ canvas: document.getElementById('c'), antialias: true });
+renderer.setPixelRatio(Math.min(devicePixelRatio, 2));
+renderer.setSize(W, H);
+renderer.shadowMap.enabled = true;
+renderer.shadowMap.type = THREE.PCFSoftShadowMap;
+renderer.toneMapping = THREE.ACESFilmicToneMapping;
+renderer.toneMappingExposure = 1.15;
+const scene = new THREE.Scene();
+scene.background = new THREE.Color(0xFDF8E8);
+scene.fog = new THREE.FogExp2(0xFDF0C0, 0.014);
+const camera = new THREE.PerspectiveCamera(55, W/H, 0.1, 1000);
+camera.position.set(0, 8, 22);
+camera.lookAt(0, 0, 0);
+const ambient = new THREE.AmbientLight(0xFFF9D0, 0.65);
+scene.add(ambient);
+const sun = new THREE.DirectionalLight(0xFFF5C0, 1.8);
+sun.position.set(8, 20, 10);
+sun.castShadow = true;
+sun.shadow.mapSize.set(2048, 2048);
+sun.shadow.camera.near = 0.5;
+sun.shadow.camera.far = 80;
+sun.shadow.camera.left = -20;
+sun.shadow.camera.right = 20;
+sun.shadow.camera.top = 20;
+sun.shadow.camera.bottom = -20;
+sun.shadow.bias = -0.001;
+scene.add(sun);
+const fill = new THREE.DirectionalLight(0xE3D517, 0.4);
+fill.position.set(-10, 5, -5);
+scene.add(fill);
+const rim = new THREE.PointLight(0xFFE066, 1.2, 40);
+rim.position.set(-5, 10, -8);
+scene.add(rim);
+const skyGeo = new THREE.SphereGeometry(180, 32, 16);
+const skyMat = new THREE.ShaderMaterial({
+  side: THREE.BackSide,
+  uniforms: {
+    uTime: { value: 0 },
+    uTop: { value: new THREE.Color(0xFAF3D0) },
+    uMid: { value: new THREE.Color(0xFDF0A0) },
+    uHorizon: { value: new THREE.Color(0xFFF5C8) },
+  },
+  vertexShader: \`
+    varying vec3 vPos;
+    void main() {
+      vPos = position;
+      gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0);
+    }
+  \`,
+  fragmentShader: \`
+    varying vec3 vPos;
+    uniform vec3 uTop;
+    uniform vec3 uMid;
+    uniform vec3 uHorizon;
+    uniform float uTime;
+    void main() {
+      float h = normalize(vPos).y;
+      float t1 = smoothstep(0.0, 0.35, h);
+      float t2 = smoothstep(0.35, 1.0, h);
+      vec3 col = mix(uHorizon, uMid, t1);
+      col = mix(col, uTop, t2);
+      float pulse = sin(uTime * 0.15) * 0.015;
+      col += pulse;
+      gl_FragColor = vec4(col, 1.0);
+    }
+  \`,
+});
+const sky = new THREE.Mesh(skyGeo, skyMat);
+scene.add(sky);
+const sunGroup = new THREE.Group();
+scene.add(sunGroup);
+const sunCoreGeo = new THREE.CircleGeometry(5.5, 64);
+const sunCoreMat = new THREE.MeshBasicMaterial({ color: 0xFFFDE0 });
+const sunCore = new THREE.Mesh(sunCoreGeo, sunCoreMat);
+sunGroup.add(sunCore);
+const glow1Geo = new THREE.RingGeometry(5.5, 8.5, 64);
+const glow1Mat = new THREE.MeshBasicMaterial({ color: 0xFFF5A0, transparent: true, opacity: 0.35, side: THREE.DoubleSide });
+sunGroup.add(new THREE.Mesh(glow1Geo, glow1Mat));
+const glow2Geo = new THREE.RingGeometry(8.5, 14.0, 64);
+const glow2Mat = new THREE.MeshBasicMaterial({ color: 0xFFED60, transparent: true, opacity: 0.18, side: THREE.DoubleSide });
+sunGroup.add(new THREE.Mesh(glow2Geo, glow2Mat));
+const glow3Geo = new THREE.RingGeometry(14.0, 26.0, 64);
+const glow3Mat = new THREE.MeshBasicMaterial({ color: 0xFDE88A, transparent: true, opacity: 0.09, side: THREE.DoubleSide });
+sunGroup.add(new THREE.Mesh(glow3Geo, glow3Mat));
+sunGroup.position.set(0, -8, -55);
+sunGroup.lookAt(camera.position);
+const reflFragments = [];
+for (let i = 0; i < 180; i++) {
+  const t = Math.pow(Math.random(), 1.4);
+  const z = 2 - t * 50;
+  const coneWidth = (1.0 - t) * 5.5 + 0.1;
+  const x = (Math.random() - 0.5) * 2.0 * coneWidth;
+  const size = (1.0 - t) * (0.35 + Math.random() * 0.55) + 0.04;
+  const aspect = 0.15 + Math.random() * 0.35;
+  const geo = new THREE.PlaneGeometry(size, size * aspect);
+  const baseBrightness = (1.0 - t * 0.7);
+  const mat = new THREE.MeshBasicMaterial({
+    color: new THREE.Color(1.0, 0.97, 0.72 + Math.random() * 0.18),
+    transparent: true, opacity: 0.0, side: THREE.DoubleSide,
+  });
+  const mesh = new THREE.Mesh(geo, mat);
+  mesh.rotation.x = -Math.PI / 2;
+  mesh.rotation.z = (Math.random() - 0.5) * 0.6;
+  mesh.position.set(x, 0.06 + Math.random() * 0.04, z);
+  reflFragments.push({
+    mesh, phase: Math.random() * Math.PI * 2,
+    flickerSpeed: 1.5 + Math.random() * 4.0, flickerAmp: 0.4 + Math.random() * 0.5,
+    baseBrightness, baseOpacity: baseBrightness * (0.25 + Math.random() * 0.45), t,
+  });
+  scene.add(mesh);
+}
+const waterGeo = new THREE.PlaneGeometry(120, 120, 180, 180);
+const waterPos = waterGeo.attributes.position;
+const waveData = [];
+for (let i = 0; i < waterPos.count; i++) {
+  waveData.push({
+    x: waterPos.getX(i), y: waterPos.getY(i),
+    phase: Math.random() * Math.PI * 2, freq: 0.3 + Math.random() * 0.4, amp: 0.08 + Math.random() * 0.18,
+  });
+}
+const waterMat = new THREE.MeshStandardMaterial({
+  color: 0xE8D84A, roughness: 0.12, metalness: 0.08, transparent: true, opacity: 0.82, side: THREE.DoubleSide,
+});
+const water = new THREE.Mesh(waterGeo, waterMat);
+water.rotation.x = -Math.PI / 2;
+water.receiveShadow = true;
+scene.add(water);
+const shimmerGeo = new THREE.PlaneGeometry(120, 120, 60, 60);
+const shimmerMat = new THREE.MeshStandardMaterial({
+  color: 0xF5E87A, roughness: 0.05, metalness: 0.15, transparent: true, opacity: 0.25,
+});
+const shimmerLayer = new THREE.Mesh(shimmerGeo, shimmerMat);
+shimmerLayer.rotation.x = -Math.PI / 2;
+shimmerLayer.position.y = 0.05;
+scene.add(shimmerLayer);
+const particles = [];
+for (let i = 0; i < 38; i++) {
+  const size = 0.04 + Math.random() * 0.14;
+  const geo = new THREE.PlaneGeometry(size, size * (0.6 + Math.random() * 0.8));
+  const mat = new THREE.MeshStandardMaterial({
+    color: i % 3 === 0 ? 0xE3D517 : (i % 3 === 1 ? 0xFAF3B0 : 0xFAFAF7),
+    roughness: 0.8, transparent: true, opacity: 0.35 + Math.random() * 0.45, side: THREE.DoubleSide,
+  });
+  const mesh = new THREE.Mesh(geo, mat);
+  const angle = Math.random() * Math.PI * 2;
+  const r = 3 + Math.random() * 14;
+  mesh.position.set(Math.cos(angle) * r, 0.05 + Math.random() * 0.4, Math.sin(angle) * r);
+  mesh.rotation.set(Math.random() * 0.3, Math.random() * Math.PI * 2, Math.random() * 0.3);
+  particles.push({
+    mesh, speed: 0.0008 + Math.random() * 0.0015, angle, r,
+    bobPhase: Math.random() * Math.PI * 2, rotSpeed: (Math.random() - 0.5) * 0.004,
+  });
+  scene.add(mesh);
+}
+const orbs = [];
+const orbColors = [0xE3D517, 0xFAF3B0, 0xFFF5A0, 0xE8D840];
+for (let i = 0; i < 5; i++) {
+  const r = 0.3 + Math.random() * 0.5;
+  const geo = new THREE.SphereGeometry(r, 16, 16);
+  const mat = new THREE.MeshStandardMaterial({
+    color: orbColors[i % orbColors.length], emissive: orbColors[i % orbColors.length],
+    emissiveIntensity: 0.6, roughness: 0.1, transparent: true, opacity: 0.18 + Math.random() * 0.2,
+  });
+  const orb = new THREE.Mesh(geo, mat);
+  const angle = (i / 5) * Math.PI * 2 + Math.random();
+  const dist = 5 + Math.random() * 9;
+  orb.position.set(Math.cos(angle)*dist, 0.2 + Math.random()*1.2, Math.sin(angle)*dist);
+  orbs.push({ mesh: orb, phase: Math.random()*Math.PI*2, speed: 0.003+Math.random()*0.004 });
+  scene.add(orb);
+}
+let mouseX = 0, mouseY = 0, targetX = 0, targetY = 0;
+document.addEventListener('mousemove', e => {
+  targetX = (e.clientX / window.innerWidth - 0.5) * 2;
+  targetY = (e.clientY / window.innerHeight - 0.5) * 2;
+});
+const clock = new THREE.Clock();
+function animate() {
+  requestAnimationFrame(animate);
+  const t = clock.getElapsedTime();
+  mouseX += (targetX - mouseX) * 0.035;
+  mouseY += (targetY - mouseY) * 0.035;
+  camera.position.x = mouseX * 2.5;
+  camera.position.y = 8 - mouseY * 1.2;
+  camera.lookAt(0, 1, 0);
+  const riseDuration = 12.0;
+  const riseProgress = Math.min(t / riseDuration, 1.0);
+  const eased = 1.0 - Math.pow(1.0 - riseProgress, 3.0);
+  const glowFade = Math.max(0.0, Math.min(1.0, (sunGroup.position.y + 2.0) / 8.0));
+  sunGroup.position.y = -8.0 + 18.0 * eased;
+  sunGroup.lookAt(camera.position);
+  const pulse = 1.0 + Math.sin(t * 0.5) * 0.012;
+  sunGroup.scale.setScalar(pulse);
+  glow1Mat.opacity = (0.32 + Math.sin(t * 0.7) * 0.05) * glowFade;
+  glow2Mat.opacity = (0.15 + Math.sin(t * 0.5 + 1.0) * 0.04) * glowFade;
+  glow3Mat.opacity = (0.07 + Math.sin(t * 0.3 + 2.0) * 0.03) * glowFade;
+  sunCoreMat.color.setRGB(1.0, 0.55 + 0.45 * eased, 0.1 + 0.78 * eased);
+  sun.intensity = 0.15 + 1.65 * eased;
+  sun.color.setRGB(1.0, 0.65 + 0.35 * eased, 0.25 + 0.63 * eased);
+  ambient.intensity = 0.15 + 0.55 * eased;
+  ambient.color.setRGB(0.72 + 0.28 * eased, 0.70 + 0.24 * eased, 0.60 + 0.25 * eased);
+  skyMat.uniforms.uTime.value = t;
+  scene.fog.color.setRGB(0.82 + 0.17 * eased, 0.78 + 0.16 * eased, 0.55 + 0.20 * eased);
+  scene.fog.density = 0.028 - 0.014 * eased;
+  const wc = 0.88 + Math.sin(t * 0.4) * 0.06;
+  const wb = 0.35 + 0.65 * eased;
+  waterMat.color.setRGB(wc * 0.91 * wb, wc * 0.855 * wb, wc * 0.29 * wb);
+  waterMat.opacity = 0.55 + 0.27 * eased;
+  for (const f of reflFragments) {
+    const flicker = Math.sin(t * f.flickerSpeed + f.phase) * f.flickerAmp
+                  + Math.sin(t * f.flickerSpeed * 1.7 + f.phase * 2.1) * (f.flickerAmp * 0.4);
+    const visible = Math.max(0.0, 0.5 + flicker);
+    f.mesh.material.opacity = f.baseOpacity * visible * glowFade;
+    f.mesh.position.y = 0.06 + Math.sin(t * f.flickerSpeed * 0.4 + f.phase) * 0.03;
+  }
+  for (let i = 0; i < waterPos.count; i++) {
+    const d = waveData[i];
+    const h = Math.sin(d.x * 0.08 * d.freq + t * 1.1 + d.phase) * d.amp
+            + Math.cos(d.y * 0.08 * d.freq * 0.7 + t * 0.9 + d.phase * 0.5) * d.amp * 0.6;
+    waterPos.setZ(i, h);
+  }
+  waterPos.needsUpdate = true;
+  waterGeo.computeVertexNormals();
+  for (const p of particles) {
+    p.angle += p.speed;
+    p.mesh.position.x = Math.cos(p.angle) * p.r;
+    p.mesh.position.z = Math.sin(p.angle) * p.r;
+    p.mesh.position.y = 0.05 + Math.sin(t * 0.6 + p.bobPhase) * 0.12;
+    p.mesh.rotation.y += p.rotSpeed;
+  }
+  for (const o of orbs) {
+    o.mesh.position.y += Math.sin(t * o.speed * 60 + o.phase) * 0.003;
+    o.mesh.material.opacity = 0.15 + Math.sin(t * o.speed * 40 + o.phase) * 0.08;
+  }
+  renderer.render(scene, camera);
+}
+animate();
+window.addEventListener('resize', () => {
+  const W = window.innerWidth, H = window.innerHeight;
+  camera.aspect = W / H;
+  camera.updateProjectionMatrix();
+  renderer.setSize(W, H);
+});
+</script>
+</body>
+</html>`;
