@@ -774,6 +774,7 @@ function AppInner() {
       await loadLogs();
       await loadWeekly();
       await loadTodayCalories();
+      fetchHomePrediction();
     } catch (err) {
       setLogMessage("Failed to delete entry");
     } finally {
@@ -800,6 +801,7 @@ function AppInner() {
       await loadLogs();
       await loadWeekly();
       await loadTodayCalories();
+      fetchHomePrediction();
     } catch (err) {
       setLogMessage("Failed to update entry");
     } finally {
@@ -1171,6 +1173,7 @@ function AppInner() {
         onDone={() => {
           setIsMultiLogOpen(false);
           Promise.all([loadSummary(), loadLogs(), loadWeekly(), loadTodayCalories()]);
+          fetchHomePrediction();
         }}
       />
     );
@@ -2706,23 +2709,29 @@ function WaterIntakeScreen({ onBack }: { onBack: () => void }) {
         .single();
 
       if (existing) {
-        // Recompute total_oz with the new preferences.
-        // Bottle mode: use the new bottle size if bottles have been logged.
-        // Non-bottle mode: total is just direct_oz (bottle_count stays 0).
-        const recomputedTotal =
-          setup.usesBottle === "yes"
-            ? (existing.bottle_count ?? 0) * (setup.bottleSize ?? 0) + (existing.direct_oz ?? 0)
-            : (existing.direct_oz ?? 0);
+        // Recompute total_oz from the active mode only — never mix both modes.
+        // Switching to bottle: zero out direct_oz so stale oz don't inflate the total.
+        // Switching to direct: zero out bottle_count so stale bottles don't inflate the total.
+        const isBottle = setup.usesBottle === "yes";
+        const recomputedTotal = isBottle
+          ? (existing.bottle_count ?? 0) * (setup.bottleSize ?? 0)
+          : (existing.direct_oz ?? 0);
 
         await supabase
           .from("hydration_daily_logs")
           .update({
             goal_oz_snapshot: setup.dailyGoalOz,
             total_oz:         recomputedTotal,
+            bottle_count:     isBottle ? (existing.bottle_count ?? 0) : 0,
+            direct_oz:        isBottle ? 0 : (existing.direct_oz ?? 0),
             updated_at:       new Date().toISOString(),
           })
           .eq("user_id", userId)
           .eq("log_date", today);
+
+        // Mirror the zeroed state locally so the UI stays in sync.
+        if (isBottle) setDirectOz(0);
+        else setBottleCount(0);
       }
 
       // Refresh streak and chart — goal change may flip whether today counts.
@@ -6391,6 +6400,7 @@ function WeightScreen({ onBack }: { onBack: () => void }) {
         { headers: { Authorization: `Bearer ${session.access_token}` } },
       );
       setGoalKg(rounded);
+      fetchPrediction();
     } catch {
       setGoalMessage("Failed to save. Please try again.");
     } finally {
@@ -7265,9 +7275,11 @@ function MultiLogScreen({
     }
 
     setLogFailed(failed);
-    if (failed.length < toLog.length) {
+    if (failed.length === 0) {
       Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
       onDone();
+    } else {
+      setPhase("reviewing");
     }
   };
 

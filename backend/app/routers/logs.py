@@ -2,7 +2,7 @@ import datetime
 from typing import Optional
 
 from fastapi import APIRouter, Depends, HTTPException, Query
-from pydantic import BaseModel, ConfigDict
+from pydantic import BaseModel, ConfigDict, Field, field_validator
 from sqlalchemy.orm import Session
 
 from app.database import get_db
@@ -14,26 +14,37 @@ router = APIRouter()
 
 class CreateFoodLog(BaseModel):
     """Shape of the request body for POST /logs."""
-    name:     str
-    calories: float
-    protein:  float
-    carbs:    float
-    fat:      float
-    log_date: Optional[str] = None  # YYYY-MM-DD; defaults to today if omitted
+    name:     str            = Field(..., min_length=1, max_length=200)
+    calories: float          = Field(..., ge=0, le=10_000)
+    protein:  float          = Field(..., ge=0, le=1_000)
+    carbs:    float          = Field(..., ge=0, le=1_000)
+    fat:      float          = Field(..., ge=0, le=1_000)
+    log_date: Optional[str]  = None  # YYYY-MM-DD; defaults to today if omitted
     # Nutrition-source metadata — optional so existing clients keep working.
-    source_type:         Optional[str]   = None
-    confidence:          Optional[float] = None
+    source_type:         Optional[str]   = Field(None, max_length=50)
+    confidence:          Optional[float] = Field(None, ge=0.0, le=1.0)
     is_estimated:        Optional[bool]  = None
-    serving_description: Optional[str]   = None
+    serving_description: Optional[str]  = Field(None, max_length=200)
     # Serving metadata — optional; omit for old-style logs without serving context.
-    serving_quantity: Optional[float] = None
-    serving_unit:     Optional[str]   = None
-    serving_grams:    Optional[float] = None
+    serving_quantity: Optional[float] = Field(None, gt=0, le=100)
+    serving_unit:     Optional[str]   = Field(None, max_length=50)
+    serving_grams:    Optional[float] = Field(None, ge=0, le=10_000)
     # Immutable per-1-serving base nutrition — stored so future edits can rescale.
-    base_calories: Optional[float] = None
-    base_protein:  Optional[float] = None
-    base_carbs:    Optional[float] = None
-    base_fat:      Optional[float] = None
+    base_calories: Optional[float] = Field(None, ge=0, le=10_000)
+    base_protein:  Optional[float] = Field(None, ge=0, le=1_000)
+    base_carbs:    Optional[float] = Field(None, ge=0, le=1_000)
+    base_fat:      Optional[float] = Field(None, ge=0, le=1_000)
+
+    @field_validator("log_date")
+    @classmethod
+    def validate_log_date(cls, v: Optional[str]) -> Optional[str]:
+        if v is None:
+            return v
+        try:
+            datetime.date.fromisoformat(v)
+        except ValueError:
+            raise ValueError("log_date must be YYYY-MM-DD")
+        return v
 
 
 class UpdateFoodLog(BaseModel):
@@ -45,12 +56,12 @@ class UpdateFoodLog(BaseModel):
     Manual macro fields (calories/protein/carbs/fat) are used only when the
     row has no base nutrition (old rows) or when serving_quantity is absent.
     """
-    name:             Optional[str]   = None
-    calories:         Optional[float] = None
-    protein:          Optional[float] = None
-    carbs:            Optional[float] = None
-    fat:              Optional[float] = None
-    serving_quantity: Optional[float] = None
+    name:             Optional[str]   = Field(None, min_length=1, max_length=200)
+    calories:         Optional[float] = Field(None, ge=0, le=10_000)
+    protein:          Optional[float] = Field(None, ge=0, le=1_000)
+    carbs:            Optional[float] = Field(None, ge=0, le=1_000)
+    fat:              Optional[float] = Field(None, ge=0, le=1_000)
+    serving_quantity: Optional[float] = Field(None, gt=0, le=100)
 
 
 class FoodLogOut(BaseModel):

@@ -1,8 +1,8 @@
 import datetime
-from typing import Optional
+from typing import Literal, Optional
 
 from fastapi import APIRouter, Depends
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 from sqlalchemy.orm import Session
 
 from app.database import get_db
@@ -21,14 +21,14 @@ class UpsertProfile(BaseModel):
     activity_level='moderate', onboarding_completed=false) fill the gaps.
     On an existing row, unset fields are left untouched.
     """
-    display_name:         Optional[str]   = None
-    sex:                  Optional[str]   = None   # 'male' | 'female' | 'other'
-    age:                  Optional[int]   = None
-    height_cm:            Optional[float] = None
-    weight_kg:            Optional[float] = None
-    goal_weight_kg:       Optional[float] = None
-    goal_type:            Optional[str]   = None   # 'lose' | 'maintain' | 'gain'
-    activity_level:       Optional[str]   = None   # 'sedentary'|'light'|'moderate'|'active'|'very_active'
+    display_name:         Optional[str]   = Field(None, min_length=1, max_length=100)
+    sex:                  Optional[Literal["male", "female", "other"]] = None
+    age:                  Optional[int]   = Field(None, ge=13, le=120)
+    height_cm:            Optional[float] = Field(None, ge=50.0, le=300.0)
+    weight_kg:            Optional[float] = Field(None, ge=20.0, le=500.0)
+    goal_weight_kg:       Optional[float] = Field(None, ge=20.0, le=500.0)
+    goal_type:            Optional[Literal["lose", "maintain", "gain"]] = None
+    activity_level:       Optional[Literal["sedentary", "light", "moderate", "active", "very_active"]] = None
     onboarding_completed: Optional[bool]  = None
 
 
