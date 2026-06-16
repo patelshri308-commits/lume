@@ -7,6 +7,7 @@ import { useFonts } from "expo-font";
 import { Ionicons } from "@expo/vector-icons";
 import * as Haptics from "expo-haptics";
 import DateTimePicker, { DateTimePickerAndroid } from "@react-native-community/datetimepicker";
+import Slider from "@react-native-community/slider";
 import {
   Alert,
   Animated,
@@ -362,6 +363,7 @@ function AppInner() {
   const [homeWeightKg,     setHomeWeightKg]     = useState<number | null>(null);
   const [homePrediction,   setHomePrediction]   = useState<WeightPrediction | null>(null);
   const [homePredLoading,  setHomePredLoading]  = useState(false);
+  const [homeWeightLogs,   setHomeWeightLogs]   = useState<WeightLogEntry[]>([]);
   const [currentPage,      setCurrentPage]      = useState<"home" | "weight">("home");
 
   const { width: screenW } = useWindowDimensions();
@@ -439,6 +441,22 @@ function AppInner() {
       // silently ignore — card stays hidden
     } finally {
       setHomePredLoading(false);
+    }
+  };
+
+  const fetchHomeWeightLogs = async () => {
+    try {
+      const { data: { session: s } } = await supabase.auth.getSession();
+      if (!s?.user?.id) return;
+      const { data: rows } = await supabase
+        .from("weight_logs")
+        .select("log_date, weight_kg")
+        .eq("user_id", s.user.id)
+        .order("log_date", { ascending: false })
+        .limit(120);
+      setHomeWeightLogs((rows ?? []).map(r => ({ log_date: r.log_date, weight_kg: Number(r.weight_kg) })));
+    } catch {
+      // silently ignore
     }
   };
 
@@ -881,12 +899,14 @@ function AppInner() {
       setHomeWaterGoalOz(64);
       setHomeWeightKg(null);
       setHomePrediction(null);
+      setHomeWeightLogs([]);
     } else {
       loadWeekly();
       loadTodayCalories();
       fetchHomeWaterSummary();
       fetchHomeWeightSummary();
       fetchHomePrediction();
+      fetchHomeWeightLogs();
     }
   }, [session]); // eslint-disable-line react-hooks/exhaustive-deps
 
@@ -934,6 +954,7 @@ function AppInner() {
     if (!isWeightOpen && session?.access_token) {
       fetchHomeWeightSummary();
       fetchHomePrediction();
+      fetchHomeWeightLogs();
     }
   }, [isWeightOpen]); // eslint-disable-line react-hooks/exhaustive-deps
 
@@ -1586,9 +1607,90 @@ function AppInner() {
               ? styles.predBadgeTextMedium
               : styles.predBadgeTextLow;
 
+          // Goal headline — three states: reached / on track / off track
+          const goalHeadline = !isLow && p.goal_weight_kg != null && p.goal_direction != null ? (
+            p.goal_direction === "maintain" ? (
+              <LinearGradient
+                colors={["#E8F5E9", "#C8E6C9"]} start={{ x: 0, y: 0 }} end={{ x: 1, y: 1 }}
+                style={styles.goalHeadlineCard}
+              >
+                <Text style={styles.goalHeadlineEmoji}>🎉</Text>
+                <Text style={styles.goalHeadlineTitle}>Goal reached!</Text>
+                <Text style={styles.goalHeadlineSub}>You're at your target weight. Keep it up.</Text>
+              </LinearGradient>
+            ) : p.projected_goal_date != null && p.estimated_weeks_to_goal != null ? (
+              <LinearGradient
+                colors={["#FFF8D4", "#FDEFA5", "#F7DF6A"]}
+                locations={[0, 0.55, 1]}
+                start={{ x: 0.1, y: 0 }} end={{ x: 1, y: 1 }}
+                style={styles.goalHeadlineCard}
+              >
+                <Text style={styles.goalHeadlineSub}>At your current pace</Text>
+                <Text style={styles.goalHeadlineDate}>
+                  {new Date(p.projected_goal_date + "T00:00:00").toLocaleDateString("en-US", {
+                    month: "long", day: "numeric", year: "numeric",
+                  })}
+                </Text>
+                <Text style={styles.goalHeadlineSub}>
+                  ~{Math.round(p.estimated_weeks_to_goal)} weeks away · {p.goal_weight_kg} kg goal
+                </Text>
+              </LinearGradient>
+            ) : (
+              <View style={styles.goalOffTrackCard}>
+                <Ionicons name="trending-down" size={18} color="#92400E" />
+                <View style={{ flex: 1 }}>
+                  <Text style={styles.goalOffTrackTitle}>Not on track for your goal</Text>
+                  <Text style={styles.goalOffTrackBody}>
+                    You're currently {p.goal_direction === "lose" ? "gaining" : "losing"} weight.
+                    Adjust your intake to move toward your {p.goal_weight_kg} kg goal.
+                  </Text>
+                </View>
+              </View>
+            )
+          ) : null;
+
+          // Has the user logged their weight today?
+          const hasLoggedToday = homeWeightLogs.some(e => e.log_date === localToday());
+
+          // Weekly consistency — did at least one log exist in each of the last 7 weeks?
+          const nowMs = Date.UTC(
+            new Date().getFullYear(), new Date().getMonth(), new Date().getDate()
+          );
+          // oldest week first (index 0 = 42–48 days ago, index 6 = 0–6 days ago)
+          const weekLogged = Array.from({ length: 7 }, (_, wi) => {
+            const startDay = (6 - wi) * 7;
+            const endDay   = startDay + 6;
+            return homeWeightLogs.some(e => {
+              const [y, mo, d] = e.log_date.split("-").map(Number);
+              const daysAgo = Math.round((nowMs - Date.UTC(y, mo - 1, d)) / 86400000);
+              return daysAgo >= startDay && daysAgo <= endDay;
+            });
+          });
+          const weeksLoggedCount = weekLogged.filter(Boolean).length;
+
           return (
             <View style={styles.section}>
               <Text style={styles.sectionLabel}>WEIGHT PROJECTION</Text>
+
+              {goalHeadline}
+
+              {/* Nudge to log today's weight — taps straight into WeightScreen */}
+              {!hasLoggedToday && (
+                <TouchableOpacity
+                  style={styles.weightNudgeCard}
+                  onPress={() => setIsWeightOpen(true)}
+                  activeOpacity={0.8}
+                >
+                  <View style={styles.weightNudgeLeft}>
+                    <Ionicons name="scale-outline" size={20} color="#C48A1A" />
+                    <View>
+                      <Text style={styles.weightNudgeTitle}>Log today's weight</Text>
+                      <Text style={styles.weightNudgeSub}>Fresh data improves your projection</Text>
+                    </View>
+                  </View>
+                  <Ionicons name="chevron-forward" size={16} color="rgba(26,26,20,0.3)" />
+                </TouchableOpacity>
+              )}
 
               {!isLow && p.latest_weight_kg != null && p.weekly_change_kg != null && (
                 <View style={{ marginBottom: 16 }}>
@@ -1596,7 +1698,107 @@ function AppInner() {
                     startWeight={p.latest_weight_kg}
                     weeklyChangeKg={p.weekly_change_kg}
                     goalWeightKg={p.goal_weight_kg}
+                    weightLogs={homeWeightLogs}
+                    avgDailyCalories={p.avg_daily_calories}
                   />
+                </View>
+              )}
+
+              {/* Weekly consistency score */}
+              <View style={styles.consistencyCard}>
+                <View style={styles.consistencyHeader}>
+                  <Text style={styles.consistencyTitle}>Weekly consistency</Text>
+                  <Text style={styles.consistencyCount}>
+                    {weeksLoggedCount} of 7 weeks logged
+                  </Text>
+                </View>
+                <View style={styles.consistencyRow}>
+                  {weekLogged.map((logged, i) => (
+                    <View
+                      key={i}
+                      style={[
+                        styles.consistencySegment,
+                        logged && styles.consistencySegmentFilled,
+                        i === 6 && styles.consistencySegmentCurrent,
+                        i === 6 && logged && styles.consistencySegmentCurrentFilled,
+                      ]}
+                    />
+                  ))}
+                </View>
+                <View style={styles.consistencyLabels}>
+                  <Text style={styles.consistencyLabelText}>7 weeks ago</Text>
+                  <Text style={styles.consistencyLabelText}>This week</Text>
+                </View>
+              </View>
+
+              {/* Pace comparison — only when moving toward goal */}
+              {!isLow && p.weekly_change_kg != null &&
+                p.goal_direction != null && p.goal_direction !== "maintain" && (() => {
+                const rate = p.weekly_change_kg;
+                const isLoss = p.goal_direction === "lose";
+                const movingRight = isLoss ? rate < 0 : rate > 0;
+                if (!movingRight) return null; // goal headline already handles off-track
+
+                const inRange = isLoss ? (rate <= -0.5 && rate >= -1.0) : (rate >= 0.25 && rate <= 0.5);
+                const tooSlow = isLoss ? rate > -0.5 : (rate > 0 && rate < 0.25);
+
+                let calorieHint: string | null = null;
+                if (tooSlow && p.tdee != null && p.avg_daily_calories != null) {
+                  const targetRate = isLoss ? -0.5 : 0.25;
+                  const neededCalories = p.tdee + (targetRate * 7700) / 7;
+                  const delta = Math.abs(Math.round(neededCalories - p.avg_daily_calories));
+                  calorieHint = isLoss
+                    ? `Eating ~${delta} kcal/day less would put you in the healthy range.`
+                    : `Eating ~${delta} kcal/day more would put you in the healthy range.`;
+                }
+
+                if (inRange) {
+                  return (
+                    <View style={styles.paceOnTrackCard}>
+                      <Ionicons name="checkmark-circle" size={17} color="#2e7d32" />
+                      <View style={{ flex: 1 }}>
+                        <Text style={styles.paceOnTrackTitle}>You're in the zone</Text>
+                        <Text style={styles.paceOnTrackBody}>
+                          {Math.abs(rate).toFixed(2)} kg/wk is right in the healthy{" "}
+                          {isLoss ? "loss" : "gain"} range of{" "}
+                          {isLoss ? "0.5–1" : "0.25–0.5"} kg/wk.
+                        </Text>
+                      </View>
+                    </View>
+                  );
+                }
+
+                if (tooSlow) {
+                  return (
+                    <View style={styles.paceSlowCard}>
+                      <Ionicons name="information-circle-outline" size={17} color="#1e40af" />
+                      <View style={{ flex: 1 }}>
+                        <Text style={styles.paceSlowTitle}>
+                          {isLoss ? "Slower than recommended" : "Below recommended gain rate"}
+                        </Text>
+                        <Text style={styles.paceSlowBody}>
+                          {Math.abs(rate).toFixed(2)} kg/wk is below the recommended{" "}
+                          {isLoss ? "0.5–1" : "0.25–0.5"} kg/wk range.
+                          {calorieHint ? `\n${calorieHint}` : ""}
+                        </Text>
+                      </View>
+                    </View>
+                  );
+                }
+
+                return null;
+              })()}
+
+              {/* Aggressive pace warning — based on actual ML rate, not the slider */}
+              {p.weekly_change_kg != null && p.weekly_change_kg < -1.0 && (
+                <View style={styles.paceWarningCard}>
+                  <Ionicons name="warning-outline" size={17} color="#92400E" />
+                  <View style={{ flex: 1 }}>
+                    <Text style={styles.paceWarningTitle}>Faster than recommended</Text>
+                    <Text style={styles.paceWarningBody}>
+                      At {Math.abs(p.weekly_change_kg).toFixed(1)} kg/wk you're above the safe range of 0.5–1 kg/wk. Rapid loss can be hard to sustain and may affect muscle mass.
+                    </Text>
+                  </View>
                 </View>
               )}
 
@@ -4539,6 +4741,224 @@ const styles = StyleSheet.create({
   predBadgeTextHigh:   { color: "#2e7d32" },
   predBadgeTextMedium: { color: "#C48A1A" },
   predBadgeTextLow:    { color: "rgba(26,26,20,0.45)" },
+
+  // Goal headline card — shown at top of Weight Projection page
+  goalHeadlineCard: {
+    borderRadius: 20,
+    padding: 20,
+    alignItems: "center",
+    marginBottom: 16,
+  },
+  goalHeadlineEmoji: {
+    fontSize: 28,
+    marginBottom: 4,
+  },
+  goalHeadlineTitle: {
+    fontFamily: "Chillax-SemiBold",
+    fontSize: 22,
+    color: "#1A1A14",
+    letterSpacing: -0.3,
+  },
+  goalHeadlineDate: {
+    fontFamily: "Chillax-SemiBold",
+    fontSize: 28,
+    color: "#1A1A14",
+    letterSpacing: -0.5,
+    marginVertical: 4,
+    textAlign: "center",
+  },
+  goalHeadlineSub: {
+    fontFamily: "Inter-Variable",
+    fontSize: 12,
+    color: "rgba(26,26,20,0.55)",
+    textAlign: "center",
+    marginTop: 2,
+  },
+
+  // Off-track variant (amber, no gradient)
+  goalOffTrackCard: {
+    flexDirection: "row",
+    gap: 10,
+    alignItems: "flex-start",
+    backgroundColor: "#FEF3C7",
+    borderRadius: 16,
+    padding: 14,
+    marginBottom: 16,
+    borderWidth: 1,
+    borderColor: "#F59E0B",
+  },
+  goalOffTrackTitle: {
+    fontFamily: "Chillax-SemiBold",
+    fontSize: 13,
+    color: "#92400E",
+    marginBottom: 3,
+  },
+  goalOffTrackBody: {
+    fontFamily: "Inter-Variable",
+    fontSize: 12,
+    color: "#92400E",
+    lineHeight: 17,
+  },
+
+  // Log today's weight nudge
+  weightNudgeCard: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "space-between",
+    backgroundColor: "#FFFBEC",
+    borderRadius: 16,
+    padding: 14,
+    marginBottom: 16,
+    borderWidth: 1.5,
+    borderColor: "#F5D834",
+  },
+  weightNudgeLeft: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 12,
+    flex: 1,
+  },
+  weightNudgeTitle: {
+    fontFamily: "Chillax-SemiBold",
+    fontSize: 14,
+    color: "#1A1A14",
+    marginBottom: 2,
+  },
+  weightNudgeSub: {
+    fontFamily: "Inter-Variable",
+    fontSize: 12,
+    color: "rgba(26,26,20,0.5)",
+  },
+
+  // Weekly consistency score card
+  consistencyCard: {
+    borderRadius: 16,
+    backgroundColor: "rgba(255,255,255,0.85)",
+    borderWidth: 1,
+    borderColor: "rgba(26,26,20,0.08)",
+    padding: 14,
+    marginBottom: 16,
+  },
+  consistencyHeader: {
+    flexDirection: "row",
+    justifyContent: "space-between",
+    alignItems: "center",
+    marginBottom: 12,
+  },
+  consistencyTitle: {
+    fontFamily: "Chillax-SemiBold",
+    fontSize: 13,
+    color: "#1A1A14",
+  },
+  consistencyCount: {
+    fontFamily: "Inter-Variable",
+    fontSize: 12,
+    color: "rgba(26,26,20,0.5)",
+  },
+  consistencyRow: {
+    flexDirection: "row",
+    gap: 5,
+  },
+  consistencySegment: {
+    flex: 1,
+    height: 10,
+    borderRadius: 100,
+    backgroundColor: "rgba(26,26,20,0.08)",
+  },
+  consistencySegmentFilled: {
+    backgroundColor: "#1A1A14",
+  },
+  consistencySegmentCurrent: {
+    borderWidth: 1.5,
+    borderColor: "rgba(26,26,20,0.2)",
+  },
+  consistencySegmentCurrentFilled: {
+    backgroundColor: "#E3D517",
+    borderColor: "#E3D517",
+  },
+  consistencyLabels: {
+    flexDirection: "row",
+    justifyContent: "space-between",
+    marginTop: 6,
+  },
+  consistencyLabelText: {
+    fontFamily: "Inter-Variable",
+    fontSize: 10,
+    color: "rgba(26,26,20,0.35)",
+  },
+
+  // Pace comparison cards
+  paceOnTrackCard: {
+    flexDirection: "row",
+    gap: 10,
+    alignItems: "flex-start",
+    backgroundColor: "#F0FDF4",
+    borderRadius: 16,
+    padding: 14,
+    marginBottom: 16,
+    borderWidth: 1,
+    borderColor: "#86EFAC",
+  },
+  paceOnTrackTitle: {
+    fontFamily: "Chillax-SemiBold",
+    fontSize: 13,
+    color: "#166534",
+    marginBottom: 3,
+  },
+  paceOnTrackBody: {
+    fontFamily: "Inter-Variable",
+    fontSize: 12,
+    color: "#166534",
+    lineHeight: 17,
+  },
+  paceSlowCard: {
+    flexDirection: "row",
+    gap: 10,
+    alignItems: "flex-start",
+    backgroundColor: "#EFF6FF",
+    borderRadius: 16,
+    padding: 14,
+    marginBottom: 16,
+    borderWidth: 1,
+    borderColor: "#93C5FD",
+  },
+  paceSlowTitle: {
+    fontFamily: "Chillax-SemiBold",
+    fontSize: 13,
+    color: "#1e40af",
+    marginBottom: 3,
+  },
+  paceSlowBody: {
+    fontFamily: "Inter-Variable",
+    fontSize: 12,
+    color: "#1e40af",
+    lineHeight: 17,
+  },
+
+  // Aggressive pace warning card
+  paceWarningCard: {
+    flexDirection: "row",
+    gap: 10,
+    alignItems: "flex-start",
+    backgroundColor: "#FEF3C7",
+    borderRadius: 16,
+    padding: 14,
+    marginBottom: 16,
+    borderWidth: 1,
+    borderColor: "#F59E0B",
+  },
+  paceWarningTitle: {
+    fontFamily: "Chillax-SemiBold",
+    fontSize: 13,
+    color: "#92400E",
+    marginBottom: 3,
+  },
+  paceWarningBody: {
+    fontFamily: "Inter-Variable",
+    fontSize: 12,
+    color: "#92400E",
+    lineHeight: 17,
+  },
 });
 
 // ---------------------------------------------------------------------------
@@ -5122,25 +5542,92 @@ function WeightProjectionChart({
   startWeight,
   weeklyChangeKg,
   goalWeightKg,
+  weightLogs,
+  avgDailyCalories,
 }: {
   startWeight: number;
   weeklyChangeKg: number | null;
   goalWeightKg: number | null;
+  weightLogs: WeightLogEntry[];
+  avgDailyCalories: number | null;
 }) {
   const [range, setRange] = useState<WPRange>("1M");
+  const baseCalories = avgDailyCalories ?? null;
+  const [sliderCalories, setSliderCalories] = useState<number>(baseCalories ?? 2000);
+
+  // Sync slider base when prediction first loads
+  useEffect(() => {
+    if (baseCalories != null) setSliderCalories(baseCalories);
+  }, [baseCalories]);
+
+  const isAdjusted = baseCalories != null && Math.round(sliderCalories) !== Math.round(baseCalories);
+
+  // Physics delta on top of ML baseline
+  const dailyDelta = baseCalories != null ? sliderCalories - baseCalories : 0;
+  const weeklyDeltaKg = (dailyDelta * 7) / 7700;
+  const adjustedWeeklyChangeKg = (weeklyChangeKg ?? 0) + weeklyDeltaKg;
+  const adjustedRatePerDay = adjustedWeeklyChangeKg / 7;
 
   const totalDays = WP_RANGE_DAYS[range];
-  const ratePerDay = (weeklyChangeKg ?? 0) / 7;
-  const endWeight = startWeight + ratePerDay * totalDays;
+
+  // ── Dynamic metabolic simulation ────────────────────────────────────────────
+  // As weight changes, TDEE shifts by ~15 kcal/day per kg (Mifflin × moderate
+  // activity 1.55). This curves the projection — weight loss decelerates as the
+  // body gets lighter and needs fewer calories to maintain itself.
+  const KCAL_PER_KG   = 7700;
+  const TDEE_PER_KG   = 15;   // kcal/day TDEE change per kg body weight
+  const impliedDeficit = adjustedRatePerDay * KCAL_PER_KG; // kcal/day at current weight
+
+  const simWeights: number[] = [startWeight];
+  let simW = startWeight;
+  for (let d = 1; d <= totalDays; d++) {
+    const weightDelta   = simW - startWeight;
+    const adjustedDef   = impliedDeficit - TDEE_PER_KG * weightDelta;
+    simW = Math.max(20, Math.min(500, simW + adjustedDef / KCAL_PER_KG));
+    simWeights.push(simW);
+  }
+  const endWeight = simWeights[totalDays];
+
+  // Past window scales with range so history stays visually meaningful
+  const PAST_DAYS = Math.max(14, Math.round(totalDays / 3));
+  const totalSpan = PAST_DAYS + totalDays;
 
   // SVG coordinate space
   const W = 300, H = 150;
   const PL = 38, PR = 8, PT = 12, PB = 26;
   const chartW = W - PL - PR;
   const chartH = H - PT - PB;
+  const bottomY = H - PB;
 
-  // Y scale — pad so start/end/goal all fit with breathing room
-  const allW = [startWeight, endWeight];
+  // dayOffset: 0 = today, negative = past, positive = future
+  const toX = (dayOffset: number) => PL + ((dayOffset + PAST_DAYS) / totalSpan) * chartW;
+  const todayX = toX(0);
+
+  // Map weight log entries to day offsets relative to today
+  const todayDate = new Date();
+  const todayMs = Date.UTC(todayDate.getFullYear(), todayDate.getMonth(), todayDate.getDate());
+  const histPts: { dayOffset: number; weight: number }[] = [];
+  for (const log of weightLogs) {
+    const [y, mo, d] = log.log_date.split("-").map(Number);
+    const logMs = Date.UTC(y, mo - 1, d);
+    const dayOffset = Math.round((logMs - todayMs) / 86400000);
+    if (dayOffset >= -PAST_DAYS && dayOffset <= 0) {
+      histPts.push({ dayOffset, weight: log.weight_kg });
+    }
+  }
+  histPts.sort((a, b) => a.dayOffset - b.dayOffset); // oldest first
+
+  // Confidence band — uncertainty grows as √time (σ = 0.25 kg/wk)
+  const SIGMA_PER_WEEK = 0.25;
+  const maxBandUncertainty = SIGMA_PER_WEEK * Math.sqrt(totalDays / 7);
+
+  // Y scale — includes simulation curve extremes + historical + goal + band
+  const allW = [
+    startWeight,
+    endWeight + maxBandUncertainty,
+    endWeight - maxBandUncertainty,
+    ...histPts.map(p => p.weight),
+  ];
   if (goalWeightKg != null) allW.push(goalWeightKg);
   let yMin = Math.min(...allW);
   let yMax = Math.max(...allW);
@@ -5149,41 +5636,106 @@ function WeightProjectionChart({
   yMax += yPad;
   const ySpan = yMax - yMin;
 
-  const toX = (day: number) => PL + (day / totalDays) * chartW;
   const toY = (w: number) => PT + (1 - (w - yMin) / ySpan) * chartH;
 
-  // Sample the projection line
-  const step = totalDays <= 14 ? 1 : totalDays <= 30 ? 2 : totalDays <= 91 ? 5 : totalDays <= 182 ? 7 : 14;
-  const ptDays: number[] = [];
-  for (let d = 0; d <= totalDays; d += step) ptDays.push(d);
-  if (ptDays[ptDays.length - 1] !== totalDays) ptDays.push(totalDays);
-  const pts = ptDays.map((d) => ({
-    x: toX(d),
-    y: toY(startWeight + ratePerDay * d),
-  }));
+  // Historical SVG points
+  const histSvgPts = histPts.map(p => ({ x: toX(p.dayOffset), y: toY(p.weight) }));
+  const histLinePath = histSvgPts.map((p, i) => `${i === 0 ? "M" : "L"}${p.x.toFixed(1)},${p.y.toFixed(1)}`).join(" ");
 
-  const linePath = pts.map((p, i) => `${i === 0 ? "M" : "L"}${p.x.toFixed(1)},${p.y.toFixed(1)}`).join(" ");
-  const bottomY = (H - PB).toFixed(1);
-  const areaPath = `${linePath} L${pts[pts.length - 1].x.toFixed(1)},${bottomY} L${pts[0].x.toFixed(1)},${bottomY} Z`;
+  // Future projection — sample the simulation curve for SVG rendering
+  const renderStep = totalDays <= 14 ? 1 : totalDays <= 30 ? 2 : totalDays <= 91 ? 5 : totalDays <= 182 ? 7 : 14;
+  const futureDayOffsets: number[] = [];
+  for (let d = 0; d <= totalDays; d += renderStep) futureDayOffsets.push(d);
+  if (futureDayOffsets[futureDayOffsets.length - 1] !== totalDays) futureDayOffsets.push(totalDays);
+  const futurePts = futureDayOffsets.map(d => ({ x: toX(d), y: toY(simWeights[d]) }));
+  const futureLinePath = futurePts.map((p, i) => `${i === 0 ? "M" : "L"}${p.x.toFixed(1)},${p.y.toFixed(1)}`).join(" ");
+  const areaPath = `${futureLinePath} L${futurePts[futurePts.length - 1].x.toFixed(1)},${bottomY} L${futurePts[0].x.toFixed(1)},${bottomY} Z`;
 
-  // Goal reference line
-  const goalY = goalWeightKg != null ? toY(goalWeightKg) : null;
-  const goalVisible = goalY != null && goalY >= PT && goalY <= H - PB;
+  // Confidence band — centered on the simulation curve
+  const bandUpperPts = futureDayOffsets.map(d => {
+    const u = SIGMA_PER_WEEK * Math.sqrt(d / 7);
+    return { x: toX(d), y: toY(simWeights[d] + u) };
+  });
+  const bandLowerPts = futureDayOffsets.map(d => {
+    const u = SIGMA_PER_WEEK * Math.sqrt(d / 7);
+    return { x: toX(d), y: toY(simWeights[d] - u) };
+  });
+  const bandPath = [
+    ...bandUpperPts.map((p, i) => `${i === 0 ? "M" : "L"}${p.x.toFixed(1)},${p.y.toFixed(1)}`),
+    ...[...bandLowerPts].reverse().map(p => `L${p.x.toFixed(1)},${p.y.toFixed(1)}`),
+    "Z",
+  ].join(" ");
 
-  // Goal intersection within the selected range
-  let goalIntersectX: number | null = null;
-  let goalIntersectY: number | null = null;
-  if (goalWeightKg != null && ratePerDay !== 0) {
-    const daysToGoal = (goalWeightKg - startWeight) / ratePerDay;
-    if (daysToGoal > 0 && daysToGoal <= totalDays) {
-      goalIntersectX = toX(daysToGoal);
-      goalIntersectY = goalY;
+  // Milestone markers — scan simulation for each 5 kg crossing
+  const milestones: { weight: number; x: number; y: number }[] = [];
+  if (adjustedRatePerDay !== 0) {
+    const dir   = adjustedRatePerDay < 0 ? -1 : 1;
+    const first = dir < 0 ? Math.floor(startWeight / 5) * 5 : Math.ceil(startWeight / 5) * 5;
+    let m = first;
+    for (let iter = 0; iter < 20 && milestones.length < 5; iter++, m += dir * 5) {
+      let mDay: number | null = null;
+      for (let d = 1; d <= totalDays; d++) {
+        const crossed = dir < 0
+          ? simWeights[d] <= m && simWeights[d - 1] > m
+          : simWeights[d] >= m && simWeights[d - 1] < m;
+        if (crossed) {
+          const frac = Math.abs(simWeights[d - 1] - m) / Math.abs(simWeights[d] - simWeights[d - 1]);
+          mDay = (d - 1) + frac;
+          break;
+        }
+      }
+      if (mDay === null) break;
+      const mx = toX(mDay);
+      const my = toY(m);
+      if (my > PT + 10 && my < bottomY - 10) milestones.push({ weight: m, x: mx, y: my });
     }
   }
 
-  // X-axis tick labels
-  const todayDate = new Date();
-  const xLabels: { day: number; label: string }[] = (() => {
+  // Goal reference line
+  const goalY = goalWeightKg != null ? toY(goalWeightKg) : null;
+  const goalVisible = goalY != null && goalY >= PT && goalY <= bottomY;
+
+  // Goal intersection + date — scan simulation for crossing
+  let goalIntersectX: number | null = null;
+  let goalIntersectY: number | null = null;
+  let adjustedGoalDate: string | null = null;
+  if (goalWeightKg != null && adjustedRatePerDay !== 0) {
+    const isLoss = adjustedRatePerDay < 0;
+    for (let d = 1; d <= totalDays; d++) {
+      const crossed = isLoss
+        ? simWeights[d] <= goalWeightKg && simWeights[d - 1] > goalWeightKg
+        : simWeights[d] >= goalWeightKg && simWeights[d - 1] < goalWeightKg;
+      if (crossed) {
+        const frac = Math.abs(simWeights[d - 1] - goalWeightKg) / Math.abs(simWeights[d] - simWeights[d - 1]);
+        const exactDay = (d - 1) + frac;
+        goalIntersectX = toX(exactDay);
+        goalIntersectY = goalY;
+        adjustedGoalDate = new Date(todayDate.getTime() + exactDay * 86400000)
+          .toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric" });
+        break;
+      }
+    }
+    // Goal within range but not crossed yet — still compute date for slider callout
+    if (adjustedGoalDate === null) {
+      // Extend simulation beyond range to find date (up to 5×)
+      let extW = simWeights[totalDays];
+      for (let d = totalDays + 1; d <= totalDays * 5 && adjustedGoalDate === null; d++) {
+        const prev = extW;
+        const def  = impliedDeficit - TDEE_PER_KG * (extW - startWeight);
+        extW = Math.max(20, Math.min(500, extW + def / KCAL_PER_KG));
+        const crossed = isLoss
+          ? extW <= goalWeightKg && prev > goalWeightKg
+          : extW >= goalWeightKg && prev < goalWeightKg;
+        if (crossed) {
+          adjustedGoalDate = new Date(todayDate.getTime() + d * 86400000)
+            .toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric" });
+        }
+      }
+    }
+  }
+
+  // X-axis future tick labels (day offsets are positive = days from today)
+  const xLabels: { dayOffset: number; label: string }[] = (() => {
     const fmt = (n: number) =>
       new Date(todayDate.getTime() + n * 86400000).toLocaleDateString("en-US", {
         month: "short", day: "numeric",
@@ -5191,17 +5743,15 @@ function WeightProjectionChart({
     const fmtM = (n: number) =>
       new Date(todayDate.getTime() + n * 86400000).toLocaleDateString("en-US", { month: "short" });
     switch (range) {
-      case "2W": return [7, 14].map(d => ({ day: d, label: fmt(d) }));
-      case "1M": return [10, 20, 30].map(d => ({ day: d, label: fmt(d) }));
-      case "3M": return [30, 60, 91].map(d => ({ day: d, label: fmtM(d) }));
-      case "6M": return [61, 122, 182].map(d => ({ day: d, label: fmtM(d) }));
-      case "1Y": return [91, 182, 274, 365].map(d => ({ day: d, label: fmtM(d) }));
+      case "2W": return [7, 14].map(d => ({ dayOffset: d, label: fmt(d) }));
+      case "1M": return [10, 20, 30].map(d => ({ dayOffset: d, label: fmt(d) }));
+      case "3M": return [30, 60, 91].map(d => ({ dayOffset: d, label: fmtM(d) }));
+      case "6M": return [61, 122, 182].map(d => ({ dayOffset: d, label: fmtM(d) }));
+      case "1Y": return [91, 182, 274, 365].map(d => ({ dayOffset: d, label: fmtM(d) }));
     }
   })();
 
-  // Y-axis tick values
   const yTicks = [0, 1 / 3, 2 / 3, 1].map(f => yMin + f * ySpan);
-
   const showDisclaimer = range === "3M" || range === "6M" || range === "1Y";
 
   return (
@@ -5230,9 +5780,15 @@ function WeightProjectionChart({
               <Stop offset="0%" stopColor="#F5D834" stopOpacity={0.45} />
               <Stop offset="100%" stopColor="#F5D834" stopOpacity={0} />
             </SvgLinearGradient>
+            {/* Band fades in from "Today" to convey growing uncertainty */}
+            <SvgLinearGradient id="wp-band" x1="0" y1="0" x2="1" y2="0">
+              <Stop offset="0%" stopColor="#1A1A14" stopOpacity={0} />
+              <Stop offset="25%" stopColor="#1A1A14" stopOpacity={0.07} />
+              <Stop offset="100%" stopColor="#1A1A14" stopOpacity={0.12} />
+            </SvgLinearGradient>
           </Defs>
 
-          {/* Horizontal grid lines + y-axis labels */}
+          {/* Grid lines + Y labels */}
           {yTicks.map((w, i) => {
             const ty = toY(w);
             return (
@@ -5247,20 +5803,51 @@ function WeightProjectionChart({
             );
           })}
 
+          {/* "Today" vertical separator */}
+          <SvgLine x1={todayX} y1={PT} x2={todayX} y2={bottomY}
+            stroke="rgba(26,26,20,0.18)" strokeWidth={1} strokeDasharray="3,3" />
+
           {/* Goal dashed reference line */}
           {goalVisible && goalY != null && (
             <SvgLine x1={PL} y1={goalY} x2={W - PR} y2={goalY}
               stroke="#2e7d32" strokeWidth={1.5} strokeDasharray="4,3" />
           )}
 
-          {/* Area fill under line */}
+          {/* Confidence band — subtle cone widening into the future */}
+          <SvgPath d={bandPath} fill="url(#wp-band)" />
+
+          {/* Future area fill */}
           <SvgPath d={areaPath} fill="url(#wp-area)" />
 
-          {/* Projection line */}
-          <SvgPath d={linePath} fill="none" stroke="#1A1A14"
+          {/* Future projection line */}
+          <SvgPath d={futureLinePath} fill="none" stroke="#1A1A14"
             strokeWidth={2.2} strokeLinecap="round" strokeLinejoin="round" />
 
-          {/* Goal intersection — pulsing ring + dot + label */}
+          {/* Milestone markers — hollow dots + kg label every 5 kg */}
+          {milestones.map(({ weight, x, y }) => (
+            <G key={weight}>
+              <Circle cx={x} cy={y} r={3.5} fill="#fff" stroke="#1A1A14" strokeWidth={1.5} />
+              <SvgText
+                x={x} y={adjustedRatePerDay < 0 ? y - 7 : y + 14}
+                fontSize={6.5} fill="rgba(26,26,20,0.5)" textAnchor="middle"
+              >
+                {weight} kg
+              </SvgText>
+            </G>
+          ))}
+
+          {/* Historical line — muted, connects real weigh-ins */}
+          {histSvgPts.length >= 2 && (
+            <SvgPath d={histLinePath} fill="none" stroke="rgba(26,26,20,0.4)"
+              strokeWidth={1.8} strokeLinecap="round" strokeLinejoin="round" />
+          )}
+
+          {/* Historical dots */}
+          {histSvgPts.map((p, i) => (
+            <Circle key={i} cx={p.x} cy={p.y} r={2.8} fill="#1A1A14" fillOpacity={0.5} />
+          ))}
+
+          {/* Goal intersection */}
           {goalIntersectX != null && goalIntersectY != null && (
             <G>
               <Circle cx={goalIntersectX} cy={goalIntersectY} r={9}
@@ -5273,16 +5860,19 @@ function WeightProjectionChart({
             </G>
           )}
 
-          {/* Start + end dots */}
-          <Circle cx={toX(0)} cy={toY(startWeight)} r={3.5} fill="#1A1A14" />
+          {/* Today dot — prominent anchor between history and projection */}
+          <Circle cx={todayX} cy={toY(startWeight)} r={4} fill="#1A1A14" />
+
+          {/* End dot */}
           <Circle cx={toX(totalDays)} cy={toY(endWeight)} r={3.5} fill="#1A1A14" />
 
-          {/* X-axis: "Today" at origin + range tick labels */}
-          <SvgText x={PL} y={H - 5} fontSize={6.5} fill="rgba(26,26,20,0.42)" textAnchor="middle">
+          {/* X-axis labels */}
+          <SvgText x={todayX} y={H - 5} fontSize={6.5}
+            fill="rgba(26,26,20,0.55)" textAnchor="middle">
             Today
           </SvgText>
-          {xLabels.map(({ day, label }) => (
-            <SvgText key={day} x={toX(day)} y={H - 5} fontSize={6.5}
+          {xLabels.map(({ dayOffset, label }) => (
+            <SvgText key={dayOffset} x={toX(dayOffset)} y={H - 5} fontSize={6.5}
               fill="rgba(26,26,20,0.42)" textAnchor="middle">
               {label}
             </SvgText>
@@ -5292,6 +5882,84 @@ function WeightProjectionChart({
 
       {showDisclaimer && (
         <Text style={wpStyles.disclaimer}>Projection assumes current pace</Text>
+      )}
+
+      {/* What-if slider — only shown when avg calories are known */}
+      {baseCalories != null && (
+        <View style={[wpStyles.sliderCard, isAdjusted && wpStyles.sliderCardAdjusted]}>
+          {/* Header row */}
+          <View style={wpStyles.sliderHeader}>
+            <Text style={wpStyles.sliderTitle}>What if I ate…</Text>
+            {isAdjusted && (
+              <TouchableOpacity
+                onPress={() => setSliderCalories(baseCalories)}
+                style={wpStyles.resetBtn}
+                activeOpacity={0.75}
+              >
+                <Text style={wpStyles.resetBtnText}>Reset to actual pace</Text>
+              </TouchableOpacity>
+            )}
+          </View>
+
+          {/* Calorie value + delta */}
+          <View style={wpStyles.sliderValueRow}>
+            <Text style={wpStyles.sliderKcal}>
+              {Math.round(sliderCalories).toLocaleString()} kcal/day
+            </Text>
+            {isAdjusted && (
+              <Text style={[
+                wpStyles.sliderDelta,
+                dailyDelta < 0 ? wpStyles.sliderDeltaLess : wpStyles.sliderDeltaMore,
+              ]}>
+                {dailyDelta > 0 ? "+" : "−"}{Math.abs(Math.round(dailyDelta))} from your avg
+              </Text>
+            )}
+            {!isAdjusted && (
+              <Text style={wpStyles.sliderDeltaNeutral}>your current average</Text>
+            )}
+          </View>
+
+          <Slider
+            style={wpStyles.slider}
+            minimumValue={Math.max(500, baseCalories - 800)}
+            maximumValue={baseCalories + 1000}
+            step={50}
+            value={sliderCalories}
+            onValueChange={setSliderCalories}
+            minimumTrackTintColor={isAdjusted ? "#C48A1A" : "#1A1A14"}
+            maximumTrackTintColor="rgba(26,26,20,0.15)"
+            thumbTintColor={isAdjusted ? "#C48A1A" : "#1A1A14"}
+          />
+
+          {/* Projection summary */}
+          <View style={wpStyles.sliderSummary}>
+            <Text style={wpStyles.sliderSummaryLabel}>
+              {isAdjusted ? "Hypothetical rate" : "Your current rate"}
+            </Text>
+            <Text style={[
+              wpStyles.sliderSummaryRate,
+              adjustedWeeklyChangeKg < -0.05 ? wpStyles.sliderRateLoss
+                : adjustedWeeklyChangeKg > 0.05 ? wpStyles.sliderRateGain
+                : wpStyles.sliderRateNeutral,
+            ]}>
+              {adjustedWeeklyChangeKg === 0 ? "Maintaining"
+                : `${adjustedWeeklyChangeKg > 0 ? "+" : "−"}${Math.abs(adjustedWeeklyChangeKg).toFixed(2)} kg/wk`}
+            </Text>
+          </View>
+
+          {adjustedGoalDate != null && (
+            <Text style={wpStyles.sliderGoalDate}>
+              {isAdjusted ? "Hypothetical goal date: " : "Goal date: "}
+              <Text style={wpStyles.sliderGoalDateBold}>{adjustedGoalDate}</Text>
+            </Text>
+          )}
+
+          {!isAdjusted && (
+            <Text style={wpStyles.sliderHint}>
+              Drag to explore hypothetical paces
+            </Text>
+          )}
+        </View>
       )}
     </View>
   );
@@ -5336,6 +6004,107 @@ const wpStyles = StyleSheet.create({
     fontFamily: "Inter-Variable",
     fontSize: 11,
     color: "rgba(26,26,20,0.35)",
+    fontStyle: "italic",
+    textAlign: "center",
+  },
+  sliderCard: {
+    marginTop: 14,
+    borderRadius: 20,
+    backgroundColor: "rgba(255,255,255,0.85)",
+    borderWidth: 1.5,
+    borderColor: "rgba(26,26,20,0.1)",
+    padding: 16,
+  },
+  sliderCardAdjusted: {
+    borderColor: "#C48A1A",
+    backgroundColor: "#FFFBEC",
+  },
+  sliderHeader: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "space-between",
+    marginBottom: 8,
+  },
+  sliderTitle: {
+    fontFamily: "Chillax-SemiBold",
+    fontSize: 15,
+    color: "#1A1A14",
+  },
+  resetBtn: {
+    paddingHorizontal: 12,
+    paddingVertical: 5,
+    borderRadius: 100,
+    backgroundColor: "#1A1A14",
+  },
+  resetBtnText: {
+    fontFamily: "Chillax-Medium",
+    fontSize: 11,
+    color: "#E3D517",
+  },
+  sliderValueRow: {
+    flexDirection: "row",
+    alignItems: "baseline",
+    gap: 8,
+    marginBottom: 4,
+  },
+  sliderKcal: {
+    fontFamily: "Chillax-SemiBold",
+    fontSize: 22,
+    color: "#1A1A14",
+  },
+  sliderDelta: {
+    fontFamily: "Inter-Variable",
+    fontSize: 12,
+  },
+  sliderDeltaLess: {
+    color: "#2e7d32",
+  },
+  sliderDeltaMore: {
+    color: "#c0392b",
+  },
+  sliderDeltaNeutral: {
+    fontFamily: "Inter-Variable",
+    fontSize: 12,
+    color: "rgba(26,26,20,0.4)",
+  },
+  slider: {
+    width: "100%",
+    height: 36,
+    marginVertical: 2,
+  },
+  sliderSummary: {
+    flexDirection: "row",
+    justifyContent: "space-between",
+    alignItems: "center",
+    marginTop: 4,
+  },
+  sliderSummaryLabel: {
+    fontFamily: "Inter-Variable",
+    fontSize: 12,
+    color: "rgba(26,26,20,0.45)",
+  },
+  sliderSummaryRate: {
+    fontFamily: "Chillax-SemiBold",
+    fontSize: 14,
+  },
+  sliderRateLoss: { color: "#2e7d32" },
+  sliderRateGain: { color: "#c0392b" },
+  sliderRateNeutral: { color: "#1A1A14" },
+  sliderGoalDate: {
+    marginTop: 6,
+    fontFamily: "Inter-Variable",
+    fontSize: 12,
+    color: "rgba(26,26,20,0.5)",
+  },
+  sliderGoalDateBold: {
+    fontFamily: "Chillax-Medium",
+    color: "#1A1A14",
+  },
+  sliderHint: {
+    marginTop: 8,
+    fontFamily: "Inter-Variable",
+    fontSize: 11,
+    color: "rgba(26,26,20,0.3)",
     fontStyle: "italic",
     textAlign: "center",
   },
