@@ -1,5 +1,6 @@
 import os
 from dataclasses import dataclass, field
+from functools import lru_cache
 import httpx
 from app.services.debug_logger import log_usda_candidates, log_rejection
 from app.services.verified_foods import verified_entry_for_query as _verified_entry_for_query
@@ -382,6 +383,136 @@ _GENERIC_FOOD_PROFILES: dict[str, GenericFoodProfile] = {
         prefer_terms=("protein", "shake", "beverage"),
         avoid_terms=("powder", "dry", "mix", "unflavored whey", "isolate"),
     ),
+    # ── Additional fruits ─────────────────────────────────────────────────────
+    "grapes": GenericFoodProfile(
+        search_query="grapes raw",
+        default_grams=92,
+        prefer_terms=("grapes", "raw"),
+        avoid_terms=("juice", "raisins", "wine", "dried", "jelly"),
+        unit_grams={"cup": 92, "cups": 92},
+    ),
+    "mango": GenericFoodProfile(
+        search_query="mango raw",
+        default_grams=165,
+        prefer_terms=("mango", "raw"),
+        avoid_terms=("juice", "dried", "frozen", "chutney", "nectar"),
+        unit_grams={"cup": 165, "cups": 165},
+    ),
+    "watermelon": GenericFoodProfile(
+        search_query="watermelon raw",
+        default_grams=280,
+        prefer_terms=("watermelon", "raw"),
+        avoid_terms=("juice", "rind", "pickled"),
+        unit_grams={"cup": 154, "cups": 154},
+    ),
+    "pineapple": GenericFoodProfile(
+        search_query="pineapple raw",
+        default_grams=165,
+        prefer_terms=("pineapple", "raw"),
+        avoid_terms=("juice", "canned", "dried", "upside"),
+        unit_grams={"cup": 165, "cups": 165},
+    ),
+    # ── Additional vegetables ─────────────────────────────────────────────────
+    "carrots": GenericFoodProfile(
+        search_query="carrots raw",
+        default_grams=61,
+        prefer_terms=("carrots", "raw"),
+        avoid_terms=("juice", "cooked", "frozen", "babyfood", "glazed"),
+        unit_grams={"cup": 128, "cups": 128},
+    ),
+    "cucumber": GenericFoodProfile(
+        search_query="cucumber raw",
+        default_grams=119,
+        prefer_terms=("cucumber", "raw"),
+        avoid_terms=("pickled", "pickle", "dill"),
+    ),
+    "tomato": GenericFoodProfile(
+        search_query="tomato raw",
+        default_grams=123,
+        prefer_terms=("tomato", "raw"),
+        avoid_terms=("sauce", "paste", "juice", "canned", "soup", "sun-dried"),
+    ),
+    # ── Additional proteins ───────────────────────────────────────────────────
+    "tuna": GenericFoodProfile(
+        search_query="tuna canned water",
+        default_grams=85,
+        prefer_terms=("tuna", "canned", "water"),
+        avoid_terms=("oil", "fresh", "raw", "bluefin", "albacore"),
+        unit_grams={"can": 85, "oz": 28.35},
+    ),
+    "turkey breast": GenericFoodProfile(
+        search_query="turkey breast cooked roasted",
+        default_grams=85,
+        prefer_terms=("turkey", "breast", "cooked"),
+        avoid_terms=("raw", "deli", "ground", "lunchmeat", "frozen"),
+    ),
+    "shrimp": GenericFoodProfile(
+        search_query="shrimp cooked moist heat",
+        default_grams=85,
+        prefer_terms=("shrimp", "cooked"),
+        avoid_terms=("raw", "breaded", "fried", "imitation", "frozen"),
+        unit_grams={"oz": 28.35},
+    ),
+    "bacon": GenericFoodProfile(
+        search_query="bacon cooked pan-fried",
+        default_grams=28,
+        prefer_terms=("bacon", "cooked", "pork"),
+        avoid_terms=("raw", "turkey", "canadian", "imitation", "bits"),
+        unit_grams={"slice": 10, "slices": 10, "strip": 10, "strips": 10},
+    ),
+    # ── Additional dairy ──────────────────────────────────────────────────────
+    "cottage cheese": GenericFoodProfile(
+        search_query="cottage cheese",
+        default_grams=113,
+        prefer_terms=("cottage", "cheese"),
+        avoid_terms=("cream cheese", "ricotta", "dry curd"),
+        unit_grams={"cup": 226, "cups": 226},
+    ),
+    # ── Additional grains ─────────────────────────────────────────────────────
+    "quinoa": GenericFoodProfile(
+        search_query="quinoa cooked",
+        default_grams=185,
+        prefer_terms=("quinoa", "cooked"),
+        avoid_terms=("dry", "uncooked", "flour", "raw"),
+        unit_grams={"cup": 185, "cups": 185},
+    ),
+    "white bread": GenericFoodProfile(
+        search_query="bread white commercially prepared",
+        default_grams=28,
+        prefer_terms=("bread", "white"),
+        avoid_terms=("toasted", "reduced calorie", "rye", "wheat", "pumpernickel", "sourdough"),
+        unit_grams={"slice": 28, "slices": 28},
+    ),
+    "whole wheat bread": GenericFoodProfile(
+        search_query="bread whole wheat commercially prepared",
+        default_grams=28,
+        prefer_terms=("bread", "whole", "wheat"),
+        avoid_terms=("toasted", "reduced calorie", "white", "rye"),
+        unit_grams={"slice": 28, "slices": 28},
+    ),
+    # ── Additional nuts ───────────────────────────────────────────────────────
+    "walnuts": GenericFoodProfile(
+        search_query="walnuts english",
+        default_grams=28,
+        prefer_terms=("walnuts", "english"),
+        avoid_terms=("oil", "butter", "flour", "black walnut"),
+        unit_grams={"oz": 28.35, "cup": 117, "cups": 117},
+    ),
+    "cashews": GenericFoodProfile(
+        search_query="cashews raw",
+        default_grams=28,
+        prefer_terms=("cashews", "raw"),
+        avoid_terms=("butter", "oil", "flour", "roasted"),
+        unit_grams={"oz": 28.35, "cup": 137, "cups": 137},
+    ),
+    # ── Beverages ─────────────────────────────────────────────────────────────
+    "orange juice": GenericFoodProfile(
+        search_query="orange juice raw",
+        default_grams=248,
+        prefer_terms=("orange", "juice", "raw"),
+        avoid_terms=("drink", "blend", "concentrate", "fortified"),
+        unit_grams={"cup": 248, "cups": 248},
+    ),
 }
 
 
@@ -400,11 +531,30 @@ _GENERIC_FOOD_PROFILES: dict[str, GenericFoodProfile] = {
 #      (butter in scrambled eggs, oil for grilled chicken) are not estimated
 #      yet; the base whole-food values are used as an approximation.
 _PROFILE_ALIASES: dict[str, str] = {
-    # ── Plural forms ─────────────────────────────────────────────────────────
-    "bananas":         "banana",
-    "apples":          "apple",
-    "oranges":         "orange",
-    "chicken breasts": "chicken breast",
+    # ── Plural / spelling variants ────────────────────────────────────────────
+    "bananas":          "banana",
+    "apples":           "apple",
+    "oranges":          "orange",
+    "strawberry":       "strawberries",
+    "blueberry":        "blueberries",
+    "avocados":         "avocado",
+    "grape":            "grapes",
+    "mangoes":          "mango",
+    "pineapples":       "pineapple",
+    "carrot":           "carrots",
+    "tomatoes":         "tomato",
+    "cucumbers":        "cucumber",
+    "chicken breasts":  "chicken breast",
+    "tuna fish":        "tuna",
+    "canned tuna":      "tuna",
+    "walnut":           "walnuts",
+    "cashew":           "cashews",
+    "almond":           "almonds",
+    "black bean":       "black beans",
+    "wheat bread":      "whole wheat bread",
+    "whole grain bread": "whole wheat bread",
+    "greek yoghurt":    "greek yogurt",
+    "oj":               "orange juice",
     # ── Egg preparation variants ─────────────────────────────────────────────
     "scrambled egg":   "egg",
     "scrambled eggs":  "egg",
@@ -886,6 +1036,7 @@ def _extract_leading_quantity(query: str) -> int:
 # Single-serving lookup (internal) + public wrapper with quantity scaling
 # ---------------------------------------------------------------------------
 
+@lru_cache(maxsize=500)
 def _fetch_nutrition(query: str, prefer_generic: bool = False) -> dict:
     """
     Fetch single-serving nutrition data from USDA FoodData Central.
@@ -938,7 +1089,7 @@ def _fetch_nutrition(query: str, prefer_generic: bool = False) -> dict:
     params: dict = {
         "query":    query,
         "api_key":  api_key,
-        "pageSize": 10,   # Fetch a pool of candidates so we can rank them
+        "pageSize": 20,   # Fetch a pool of candidates so we can rank them
     }
     if prefer_generic:
         # Restrict to scientific databases; exclude manufacturer-submitted entries.
