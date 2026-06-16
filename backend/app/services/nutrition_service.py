@@ -555,6 +555,43 @@ _PROFILE_ALIASES: dict[str, str] = {
     "whole grain bread": "whole wheat bread",
     "greek yoghurt":    "greek yogurt",
     "oj":               "orange juice",
+    # ── Bare / short forms → reasonable canonical ─────────────────────────────
+    "chicken":          "chicken breast",
+    "potatoes":         "potato",
+    "beans":            "black beans",
+    # ── Salmon prep variants ──────────────────────────────────────────────────
+    # Only alias when cooking method doesn't materially change the macros.
+    # Smoked salmon and raw sashimi are intentionally excluded.
+    "grilled salmon":   "salmon",
+    "baked salmon":     "salmon",
+    "pan seared salmon": "salmon",
+    "steamed salmon":   "salmon",
+    # ── Potato prep variants ──────────────────────────────────────────────────
+    # Profile for "potato" is already baked; roasted is nutritionally equivalent.
+    "baked potato":     "potato",
+    "roasted potato":   "potato",
+    "roasted potatoes": "potato",
+    "baked potatoes":   "potato",
+    # ── Broccoli prep variants ────────────────────────────────────────────────
+    "steamed broccoli": "broccoli",
+    "roasted broccoli": "broccoli",
+    # ── Egg prep variants (beyond what was already aliased) ───────────────────
+    "hard boiled egg":  "egg",
+    "hard boiled eggs": "eggs",
+    "soft boiled egg":  "egg",
+    "soft boiled eggs": "eggs",
+    # ── Sweet potato prep variants ────────────────────────────────────────────
+    "roasted sweet potato":  "sweet potato",
+    "baked sweet potato":    "sweet potato",
+    "steamed sweet potato":  "sweet potato",
+    # ── Chicken breast prep variants ──────────────────────────────────────────
+    # Fried chicken is intentionally excluded — batter and oil change macros.
+    "baked chicken":         "chicken breast",
+    "pan seared chicken":    "chicken breast",
+    "pan seared chicken breast": "chicken breast",
+    # ── Turkey prep variants ──────────────────────────────────────────────────
+    "grilled turkey breast": "turkey breast",
+    "roasted turkey breast": "turkey breast",
     # ── Egg preparation variants ─────────────────────────────────────────────
     "scrambled egg":   "egg",
     "scrambled eggs":  "egg",

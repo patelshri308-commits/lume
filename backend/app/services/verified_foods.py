@@ -558,10 +558,34 @@ _VERIFIED_ALIASES: dict[str, str] = {
     "carrot":           "carrots",
     "tomatoes":         "tomato",
     "cucumbers":        "cucumber",
+    "potatoes":         "potato",
+    "baked potato":     "potato",
+    "roasted potato":   "potato",
+    "roasted potatoes": "potato",
+    "baked potatoes":   "potato",
+    "steamed broccoli": "broccoli",
+    "roasted broccoli": "broccoli",
+    "roasted sweet potato":  "sweet potato",
+    "baked sweet potato":    "sweet potato",
+    "steamed sweet potato":  "sweet potato",
     # ── Proteins ─────────────────────────────────────────────────────────────
+    "chicken":          "chicken breast",
     "chicken breasts":  "chicken breast",
     "tuna fish":        "tuna",
     "canned tuna":      "tuna",
+    # Salmon prep variants (smoked/raw excluded — different macros)
+    "grilled salmon":   "salmon",
+    "baked salmon":     "salmon",
+    "pan seared salmon": "salmon",
+    "steamed salmon":   "salmon",
+    # Egg prep variants
+    "hard boiled egg":  "egg",
+    "hard boiled eggs": "eggs",
+    "soft boiled egg":  "egg",
+    "soft boiled eggs": "eggs",
+    # Chicken prep variants (fried excluded — batter/oil changes macros)
+    "baked chicken":    "chicken breast",
+    "pan seared chicken": "chicken breast",
     # ── Dairy ────────────────────────────────────────────────────────────────
     "greek yoghurt":    "greek yogurt",
     # ── Grains ───────────────────────────────────────────────────────────────
@@ -572,6 +596,7 @@ _VERIFIED_ALIASES: dict[str, str] = {
     "walnut":           "walnuts",
     "cashew":           "cashews",
     "black bean":       "black beans",
+    "beans":            "black beans",
     # ── Beverages ────────────────────────────────────────────────────────────
     "oj":               "orange juice",
 }

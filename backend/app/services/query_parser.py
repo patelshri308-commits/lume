@@ -49,6 +49,7 @@ _UNITS: frozenset[str] = frozenset({
     "ml", "milliliter", "milliliters",
     "l", "liter", "liters",
     "slice", "slices",
+    "strip", "strips",
     "piece", "pieces",
     "serving", "servings",
     "scoop", "scoops",
@@ -198,5 +199,8 @@ def parse(raw: str) -> ParsedQuery:
             if c.strip()
         ]
 
+    # Strip a leading "of" preposition left over from "N unit of food"
+    # e.g. "a cup of oatmeal" → after qty+unit: "of oatmeal" → "oatmeal"
+    remaining = re.sub(r"^of\s+", "", remaining)
     pq.core_food = remaining.strip()
     return pq
