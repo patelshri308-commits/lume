@@ -2338,7 +2338,7 @@ function AccountScreen({ profile, fields, onChange, onSave, onBack, onLogOut, sa
 
           {/* Back navigation */}
           <TouchableOpacity onPress={onBack} style={setupStyles.acctBackButton} activeOpacity={0.7}>
-            <Ionicons name="arrow-back" size={18} color="#555" />
+            <Ionicons name="arrow-back" size={18} color="#1A1A14" />
             <Text style={setupStyles.acctBackText}>Back</Text>
           </TouchableOpacity>
 
@@ -2948,7 +2948,7 @@ function WaterIntakeScreen({ onBack }: { onBack: () => void }) {
           style={setupStyles.acctBackButton}
           activeOpacity={0.7}
         >
-          <Ionicons name="arrow-back" size={18} color="#555" />
+          <Ionicons name="arrow-back" size={18} color="#1A1A14" />
           <Text style={setupStyles.acctBackText}>Back</Text>
         </TouchableOpacity>
 
@@ -3002,7 +3002,7 @@ function WaterIntakeScreen({ onBack }: { onBack: () => void }) {
                           : pressed && waterStyles.btnPressed,
                       ]}
                     >
-                      <Ionicons name="remove" size={22} color={bottleCount === 0 ? "#ccc" : "#1A1A14"} />
+                      <Ionicons name="remove" size={22} color={bottleCount === 0 ? "rgba(26,26,20,0.2)" : "#1A1A14"} />
                     </Pressable>
 
                     <View style={waterStyles.stepperCenter}>
@@ -3592,8 +3592,8 @@ function WeeklyGlowLine({ data, goal = CALORIE_GOAL }: { data: WeeklyDay[]; goal
 const COLORS = {
   primary:      "#E3D517",  // brand yellow
   primaryLight: "#FAF3B0",  // soft yellow for card accents
-  textPrimary:  "#111111",
-  textSecondary:"#666666",
+  textPrimary:  "#1A1A14",
+  textSecondary:"rgba(26,26,20,0.5)",
 };
 
 const styles = StyleSheet.create({
@@ -3850,12 +3850,13 @@ const styles = StyleSheet.create({
   appSubtitle: {
     fontSize: 14,
     fontFamily: "Inter-Variable",
-    color: "#555",
+    color: "rgba(26,26,20,0.5)",
     marginBottom: 16,
   },
   logOutText: {
     fontSize: 13,
-    color: "#555",
+    fontFamily: "Inter-Variable",
+    color: "rgba(26,26,20,0.5)",
     paddingTop: 8,
   },
   sidebarBackdrop: {
@@ -3886,18 +3887,18 @@ const styles = StyleSheet.create({
   sidebarTitle: {
     fontSize: 22,
     fontFamily: "Chillax-SemiBold",
-    color: "#111",
+    color: "#1A1A14",
     marginBottom: 32,
   },
   sidebarDivider: {
     height: 1,
-    backgroundColor: "#eee",
+    backgroundColor: "rgba(26,26,20,0.08)",
     marginBottom: 20,
   },
   sidebarItem: {
     fontSize: 15,
     fontFamily: "Chillax-Medium",
-    color: "#111",
+    color: "#1A1A14",
   },
   sidebarLogOutWrapper: {
     alignSelf: "flex-start",
@@ -3908,7 +3909,7 @@ const styles = StyleSheet.create({
   sidebarLogOut: {
     fontSize: 15,
     fontFamily: "Chillax-Medium",
-    color: "#111",
+    color: "#1A1A14",
   },
   calorieBadge: {
     position: "absolute",
@@ -3923,12 +3924,13 @@ const styles = StyleSheet.create({
   calorieBadgeText: {
     fontSize: 12,
     fontFamily: "Chillax-Medium",
-    color: "#111",
+    color: "#1A1A14",
   },
 
   // Date selector
   dateSection: {
     marginBottom: 4,
+    marginTop: 16,
   },
   dateTrigger: {
     flexDirection: "row",
@@ -3944,11 +3946,11 @@ const styles = StyleSheet.create({
   dateTriggerText: {
     fontSize: 15,
     fontFamily: "Inter-Variable",
-    color: "#111",
+    color: "#1A1A14",
   },
   dateTriggerIcon: {
     fontSize: 14,
-    color: "#555",
+    color: "rgba(26,26,20,0.5)",
   },
   datePicker: {
     marginTop: 4,
@@ -3961,7 +3963,7 @@ const styles = StyleSheet.create({
   sectionLabel: {
     fontSize: 11,
     fontFamily: "Chillax-Medium",
-    color: "#555",
+    color: "rgba(26,26,20,0.5)",
     letterSpacing: 1.2,
     marginBottom: 10,
   },
@@ -3970,7 +3972,7 @@ const styles = StyleSheet.create({
   inputRow: {
     flexDirection: "row",
     alignItems: "center",
-    backgroundColor: "#fff",
+    backgroundColor: "rgba(250,250,247,0.9)",
     borderWidth: 1.5,
     borderColor: COLORS.primary,
     borderRadius: 999,
@@ -3997,14 +3999,14 @@ const styles = StyleSheet.create({
     paddingVertical: 12,
     fontSize: 15,
     fontFamily: "Inter-Variable",
-    color: "#111",
+    color: "#1A1A14",
   },
 
   searchingText: {
     marginTop: 8,
     fontSize: 13,
     fontFamily: "Inter-Variable",
-    color: "#555",
+    color: "rgba(26,26,20,0.5)",
   },
 
   multiLogButton: {
@@ -4074,12 +4076,12 @@ const styles = StyleSheet.create({
     alignItems: "center",
     justifyContent: "center",
     padding: 32,
-    backgroundColor: "#fff",
+    backgroundColor: "#FAFAF7",
   },
   scannerPermissionText: {
     fontSize: 15,
     fontFamily: "Inter-Variable",
-    color: "#333",
+    color: "rgba(26,26,20,0.7)",
     textAlign: "center",
     marginBottom: 20,
   },
@@ -4118,6 +4120,7 @@ const styles = StyleSheet.create({
   cardTitle: {
     fontSize: 16,
     fontFamily: "Chillax-Medium",
+    color: "#1A1A14",
     marginBottom: 4,
     textTransform: "capitalize",
   },
@@ -4273,17 +4276,17 @@ const styles = StyleSheet.create({
   macroValue: {
     fontSize: 18,
     fontFamily: "Chillax-Medium",
-    color: "#111",
+    color: "#1A1A14",
   },
   macroUnit: {
     fontSize: 10,
     fontFamily: "Inter-Variable",
-    color: "#555",
+    color: "rgba(26,26,20,0.5)",
   },
   macroLabel: {
     fontSize: 11,
     fontFamily: "Inter-Variable",
-    color: "#555",
+    color: "rgba(26,26,20,0.5)",
     marginTop: 2,
   },
 
@@ -4291,7 +4294,7 @@ const styles = StyleSheet.create({
   entryCount: {
     fontSize: 12,
     fontFamily: "Chillax-Medium",
-    color: "#111",
+    color: "#1A1A14",
     textAlign: "right",
   },
 
@@ -4333,17 +4336,18 @@ const styles = StyleSheet.create({
   logEntryName: {
     fontSize: 14,
     fontFamily: "Chillax-Medium",
+    color: "#1A1A14",
     textTransform: "capitalize",
   },
   logEntryMacros: {
     fontSize: 12,
     fontFamily: "Inter-Variable",
-    color: "#777",
+    color: "rgba(26,26,20,0.45)",
   },
   logEntryTime: {
     fontSize: 11,
     fontFamily: "Inter-Variable",
-    color: "#bbb",
+    color: "rgba(26,26,20,0.3)",
     marginTop: 2,
   },
   // Source badge row — sits between macros and timestamp
@@ -4369,13 +4373,13 @@ const styles = StyleSheet.create({
   servingDescription: {
     fontSize: 10,
     fontFamily: "Inter-Variable",
-    color: "#aaa",
+    color: "rgba(26,26,20,0.35)",
     flexShrink: 1,
   },
   sourceMetaText: {
     fontSize: 10,
     fontFamily: "Inter-Variable",
-    color: "#999",
+    color: "rgba(26,26,20,0.4)",
     flexShrink: 1,
   },
   // Log entry action buttons (Edit + Delete stacked)
@@ -4385,6 +4389,7 @@ const styles = StyleSheet.create({
   },
   editButton: {
     fontSize: 12,
+    fontFamily: "Inter-Variable",
     color: COLORS.primary,
     fontWeight: "600",
   },
@@ -4392,12 +4397,12 @@ const styles = StyleSheet.create({
   // Inline edit form
   editInput: {
     borderWidth: 1,
-    borderColor: "#ddd",
+    borderColor: "rgba(26,26,20,0.12)",
     borderRadius: 6,
     padding: 8,
     fontSize: 13,
     fontFamily: "Inter-Variable",
-    color: "#111",
+    color: "#1A1A14",
     marginBottom: 6,
   },
   editMacroRow: {
@@ -4411,7 +4416,7 @@ const styles = StyleSheet.create({
   editMacroLabel: {
     fontSize: 10,
     fontFamily: "Inter-Variable",
-    color: "#555",
+    color: "rgba(26,26,20,0.5)",
     marginBottom: 3,
   },
   editMacroInput: {
@@ -4439,7 +4444,7 @@ const styles = StyleSheet.create({
   editCancelButton: {
     flex: 1,
     borderWidth: 1,
-    borderColor: "#ddd",
+    borderColor: "rgba(26,26,20,0.12)",
     borderRadius: 6,
     paddingVertical: 8,
     alignItems: "center",
@@ -4447,7 +4452,7 @@ const styles = StyleSheet.create({
   editCancelText: {
     fontSize: 13,
     fontFamily: "Inter-Variable",
-    color: "#555",
+    color: "rgba(26,26,20,0.5)",
   },
 
   logsToggle: {
@@ -4463,12 +4468,14 @@ const styles = StyleSheet.create({
 
   deleteButton: {
     fontSize: 12,
+    fontFamily: "Inter-Variable",
     color: "#c62828",
     fontWeight: "600",
   },
   deleteButtonDisabled: {
     fontSize: 12,
-    color: "#ccc",
+    fontFamily: "Inter-Variable",
+    color: "rgba(26,26,20,0.25)",
     fontWeight: "600",
   },
 
@@ -4477,7 +4484,7 @@ const styles = StyleSheet.create({
     marginTop: 10,
     fontSize: 13,
     fontFamily: "Inter-Variable",
-    color: "#bbb",
+    color: "rgba(26,26,20,0.3)",
     fontStyle: "italic",
   },
 
@@ -4491,13 +4498,13 @@ const styles = StyleSheet.create({
   weekLabel: {
     fontSize: 12,
     fontFamily: "Chillax-Regular",
-    color: "#555",
+    color: "rgba(26,26,20,0.5)",
     width: 72,
   },
   weekBarTrack: {
     flex: 1,
     height: 8,
-    backgroundColor: "#eee",
+    backgroundColor: "rgba(26,26,20,0.08)",
     borderRadius: 4,
     overflow: "hidden",
   },
@@ -4509,7 +4516,7 @@ const styles = StyleSheet.create({
   weekCalories: {
     fontSize: 12,
     fontFamily: "Chillax-SemiBold",
-    color: "#555",
+    color: "rgba(26,26,20,0.5)",
     width: 40,
     textAlign: "right",
   },
@@ -4705,7 +4712,7 @@ const styles = StyleSheet.create({
   profileLoadingText: {
     fontSize: 14,
     fontFamily: "Inter-Variable",
-    color: "#555",
+    color: "rgba(26,26,20,0.5)",
   },
 
   // ── Page tab scroller ─────────────────────────────────────────────────────
@@ -5065,35 +5072,35 @@ const setupStyles = StyleSheet.create({
   headline: {
     fontFamily: "Chillax-SemiBold",
     fontSize: 22,
-    color: "#111",
+    color: "#1A1A14",
     letterSpacing: -0.4,
     marginBottom: 6,
   },
   subhead: {
     fontFamily: "Inter-Variable",
     fontSize: 14,
-    color: "#666",
+    color: "rgba(26,26,20,0.5)",
     marginBottom: 32,
     lineHeight: 20,
   },
   label: {
     fontFamily: "Chillax-Medium",
     fontSize: 12,
-    color: "#555",
+    color: "rgba(26,26,20,0.5)",
     letterSpacing: 0.8,
     textTransform: "uppercase",
     marginBottom: 8,
   },
   input: {
-    backgroundColor: "#fff",
+    backgroundColor: "rgba(250,250,247,0.85)",
     borderWidth: 1.5,
-    borderColor: "#e5e5e0",
+    borderColor: "rgba(26,26,20,0.12)",
     borderRadius: 10,
     paddingHorizontal: 14,
     paddingVertical: 12,
     fontSize: 15,
     fontFamily: "Inter-Variable",
-    color: "#111",
+    color: "#1A1A14",
     marginBottom: 20,
   },
   // Narrower variant for numeric fields (age, height, weight)
@@ -5112,8 +5119,8 @@ const setupStyles = StyleSheet.create({
     paddingVertical: 9,
     borderRadius: 20,
     borderWidth: 1.5,
-    borderColor: "#ddd",
-    backgroundColor: "#fff",
+    borderColor: "rgba(26,26,20,0.12)",
+    backgroundColor: "rgba(250,250,247,0.85)",
   },
   pillSelected: {
     backgroundColor: "#1A1A14",
@@ -5122,7 +5129,7 @@ const setupStyles = StyleSheet.create({
   pillText: {
     fontFamily: "Inter-Variable",
     fontSize: 14,
-    color: "#555",
+    color: "rgba(26,26,20,0.5)",
   },
   pillTextSelected: {
     color: "#F8E94A",
@@ -5169,12 +5176,12 @@ const setupStyles = StyleSheet.create({
   acctBackText: {
     fontFamily: "Inter-Variable",
     fontSize: 14,
-    color: "#555",
+    color: "rgba(26,26,20,0.5)",
   },
   acctGreeting: {
     fontFamily: "Chillax-Medium",
     fontSize: 15,
-    color: "#555",
+    color: "rgba(26,26,20,0.5)",
     marginTop: -4,
     marginBottom: 24,
   },
@@ -5187,9 +5194,9 @@ const setupStyles = StyleSheet.create({
     paddingVertical: 14,
     borderRadius: 12,
     borderWidth: 1.5,
-    borderColor: "#e5e5e0",
+    borderColor: "rgba(26,26,20,0.12)",
     alignItems: "center",
-    backgroundColor: "#fff",
+    backgroundColor: "rgba(250,250,247,0.85)",
   },
   acctLogOutText: {
     fontFamily: "Chillax-Medium",
@@ -5224,7 +5231,7 @@ const waterStyles = StyleSheet.create({
   setupCard: {
     borderRadius: 20,
     padding: 24,
-    backgroundColor: "#fff",
+    backgroundColor: "rgba(250,250,247,0.9)",
     shadowColor: "#000",
     shadowOpacity: 0.05,
     shadowRadius: 12,
@@ -5277,8 +5284,8 @@ const waterStyles = StyleSheet.create({
     paddingVertical: 9,
     borderRadius: 20,
     borderWidth: 1,
-    borderColor: "#ddd",
-    backgroundColor: "#fff",
+    borderColor: "rgba(26,26,20,0.12)",
+    backgroundColor: "rgba(250,250,247,0.85)",
   },
   pillSelected: {
     backgroundColor: "#1A1A14",
@@ -5287,7 +5294,7 @@ const waterStyles = StyleSheet.create({
   pillText: {
     fontFamily: "Inter-Variable",
     fontSize: 14,
-    color: "#555",
+    color: "rgba(26,26,20,0.5)",
   },
   pillTextSelected: {
     color: "#F8E94A",
@@ -5314,7 +5321,7 @@ const waterStyles = StyleSheet.create({
     marginTop: 16,
     borderRadius: 20,
     padding: 24,
-    backgroundColor: "#fff",
+    backgroundColor: "rgba(250,250,247,0.9)",
     shadowColor: "#000",
     shadowOpacity: 0.05,
     shadowRadius: 12,
@@ -5358,13 +5365,13 @@ const waterStyles = StyleSheet.create({
     height: 46,
     borderRadius: 23,
     borderWidth: 1.5,
-    borderColor: "#ddd",
-    backgroundColor: "#fff",
+    borderColor: "rgba(26,26,20,0.12)",
+    backgroundColor: "rgba(250,250,247,0.85)",
     alignItems: "center",
     justifyContent: "center",
   },
   stepperButtonDisabled: {
-    borderColor: "#eee",
+    borderColor: "rgba(26,26,20,0.06)",
   },
   // Shared press-state style applied via Pressable's style callback
   btnPressed: {
@@ -5497,7 +5504,7 @@ const waterStyles = StyleSheet.create({
   saveButtonText: {
     fontFamily: "Chillax-Medium",
     fontSize: 15,
-    color: "#fff",
+    color: "#F8E94A",
   },
 
   // ── last 7 days chart card ─────────────────────────────────────────────────
@@ -6562,7 +6569,7 @@ function WeightScreen({ onBack }: { onBack: () => void }) {
             style={setupStyles.acctBackButton}
             activeOpacity={0.7}
           >
-            <Ionicons name="arrow-back" size={18} color="#555" />
+            <Ionicons name="arrow-back" size={18} color="#1A1A14" />
             <Text style={setupStyles.acctBackText}>Back</Text>
           </TouchableOpacity>
 
@@ -6931,7 +6938,7 @@ const weightStyles = StyleSheet.create({
   card: {
     borderRadius: 20,
     padding: 24,
-    backgroundColor: "#fff",
+    backgroundColor: "rgba(250,250,247,0.9)",
     shadowColor: "#000",
     shadowOpacity: 0.05,
     shadowRadius: 12,
@@ -6972,7 +6979,7 @@ const weightStyles = StyleSheet.create({
   historyCard: {
     borderRadius: 20,
     padding: 24,
-    backgroundColor: "#fff",
+    backgroundColor: "rgba(250,250,247,0.9)",
     shadowColor: "#000",
     shadowOpacity: 0.05,
     shadowRadius: 12,
@@ -7008,7 +7015,7 @@ const weightStyles = StyleSheet.create({
     flex: 1,
     backgroundColor: "#FAFAF7",
     borderWidth: 1.5,
-    borderColor: "#e5e5e0",
+    borderColor: "rgba(26,26,20,0.12)",
     borderRadius: 12,
     paddingHorizontal: 16,
     paddingVertical: 13,
@@ -7082,7 +7089,7 @@ const weightStyles = StyleSheet.create({
   trendCard: {
     borderRadius: 20,
     padding: 24,
-    backgroundColor: "#fff",
+    backgroundColor: "rgba(250,250,247,0.9)",
     shadowColor: "#000",
     shadowOpacity: 0.05,
     shadowRadius: 12,
@@ -7105,7 +7112,7 @@ const weightStyles = StyleSheet.create({
   predCard: {
     borderRadius: 20,
     padding: 24,
-    backgroundColor: "#fff",
+    backgroundColor: "rgba(250,250,247,0.9)",
     shadowColor: "#000",
     shadowOpacity: 0.05,
     shadowRadius: 12,
@@ -7390,7 +7397,7 @@ function MultiLogScreen({
             style={[setupStyles.acctBackButton, phase === "logging" && mlStyles.backDisabled]}
             activeOpacity={phase === "logging" ? 1 : 0.7}
           >
-            <Ionicons name="arrow-back" size={18} color="#555" />
+            <Ionicons name="arrow-back" size={18} color="#1A1A14" />
             <Text style={setupStyles.acctBackText}>
               {phase === "reviewing" ? "Edit input" : "Back"}
             </Text>
@@ -7569,7 +7576,7 @@ const mlStyles = StyleSheet.create({
     opacity: 0.35,
   },
   inputCard: {
-    backgroundColor: "#fff",
+    backgroundColor: "rgba(250,250,247,0.9)",
     borderRadius: 20,
     padding: 20,
     shadowColor: "#000",
@@ -7615,7 +7622,7 @@ const mlStyles = StyleSheet.create({
     letterSpacing: -0.2,
   },
   itemCard: {
-    backgroundColor: "#fff",
+    backgroundColor: "rgba(250,250,247,0.9)",
     borderRadius: 16,
     padding: 16,
     marginBottom: 10,
