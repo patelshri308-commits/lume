@@ -1,8 +1,9 @@
 ---
-github_status: draft
-approved_for_github: false
-created_on_github: false
-github_issue_url:
+github_status: closed
+approved_for_github: true
+created_on_github: true
+github_issue_url: https://github.com/patelshri308-commits/lume/issues/2
+github_issue_number: 2
 severity: medium
 labels:
   - qa
