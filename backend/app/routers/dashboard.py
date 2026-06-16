@@ -1,5 +1,6 @@
 import datetime
 from typing import Optional
+from sqlalchemy import distinct
 
 from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy.orm import Session
@@ -87,3 +88,35 @@ def get_weekly_summary(
         }
         for day in days
     ]
+
+
+@router.get("/dashboard/food-streak")
+def get_food_streak(
+    db: Session = Depends(get_db),
+    user_id: str = Depends(get_current_user),
+):
+    today = datetime.datetime.utcnow().date()
+
+    # Fetch all distinct dates the user has logged food, most recent first.
+    # Limit to 366 days — no streak can be longer than a year.
+    rows = (
+        db.query(distinct(models.FoodLog.log_date))
+        .filter(
+            models.FoodLog.user_id == user_id,
+            models.FoodLog.log_date <= today,
+            models.FoodLog.log_date >= today - datetime.timedelta(days=365),
+        )
+        .order_by(models.FoodLog.log_date.desc())
+        .all()
+    )
+
+    logged_dates = {row[0] for row in rows}
+
+    # Walk backward from today counting consecutive days with at least one log.
+    streak = 0
+    cursor = today
+    while cursor in logged_dates:
+        streak += 1
+        cursor -= datetime.timedelta(days=1)
+
+    return {"streak": streak}

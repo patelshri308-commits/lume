@@ -333,6 +333,7 @@ function AppInner() {
   const [weeklyData,    setWeeklyData]    = useState<WeeklyDay[]>([]);
   const [weeklyLoading, setWeeklyLoading] = useState(false);
   const [weeklyError,   setWeeklyError]   = useState(false);
+  const [foodStreak,    setFoodStreak]    = useState<number>(0);
   const [refreshing,    setRefreshing]    = useState(false);
   const [selectedDate,    setSelectedDate]    = useState(localToday());
   const [showDatePicker,  setShowDatePicker]  = useState(false);
@@ -362,6 +363,7 @@ function AppInner() {
   const [isWeightOpen,   setIsWeightOpen]   = useState(false);
   const [isMultiLogOpen, setIsMultiLogOpen] = useState(false);
   const [homeWeightKg,     setHomeWeightKg]     = useState<number | null>(null);
+  const [homeWeightPrevKg, setHomeWeightPrevKg] = useState<number | null>(null);
   const [homePrediction,   setHomePrediction]   = useState<WeightPrediction | null>(null);
   const [homePredLoading,  setHomePredLoading]  = useState(false);
   const [homeWeightLogs,   setHomeWeightLogs]   = useState<WeightLogEntry[]>([]);
@@ -424,9 +426,9 @@ function AppInner() {
         .select("weight_kg")
         .eq("user_id", user.id)
         .order("log_date", { ascending: false })
-        .limit(1)
-        .single();
-      setHomeWeightKg(data?.weight_kg ?? null);
+        .limit(2);
+      setHomeWeightKg(data?.[0]?.weight_kg ?? null);
+      setHomeWeightPrevKg(data?.[1]?.weight_kg ?? null);
     } catch {
       // silently ignore — widget keeps last known value
     }
@@ -442,6 +444,16 @@ function AppInner() {
       // silently ignore — card stays hidden
     } finally {
       setHomePredLoading(false);
+    }
+  };
+
+  const fetchFoodStreak = async () => {
+    try {
+      const headers = await getAuthHeaders();
+      const res = await axios.get<{ streak: number }>(`${API_URL}/dashboard/food-streak`, { headers });
+      setFoodStreak(res.data.streak);
+    } catch {
+      // silently ignore — streak stays at last known value
     }
   };
 
@@ -732,6 +744,7 @@ function AppInner() {
       await loadWeekly();
       await loadTodayCalories();
       fetchHomePrediction();
+      fetchFoodStreak();
     } catch {
       setLogMessage("Failed to log food");
     }
@@ -912,6 +925,7 @@ function AppInner() {
       fetchHomeWeightSummary();
       fetchHomePrediction();
       fetchHomeWeightLogs();
+      fetchFoodStreak();
     }
   }, [session]); // eslint-disable-line react-hooks/exhaustive-deps
 
@@ -1267,6 +1281,13 @@ function AppInner() {
         {currentPage === "home" && (
           <>
 
+        {/* Greeting */}
+        <GreetingHeader
+          displayName={profile?.display_name ?? null}
+          todayCalories={todayCalories}
+          calorieGoal={calorieGoal}
+        />
+
         {/* Date selector */}
         <View style={styles.dateSection}>
           <Text style={styles.sectionLabel}>VIEWING DATE</Text>
@@ -1359,15 +1380,40 @@ function AppInner() {
           {!summaryLoading && summary && (
             <TotalsRadialRings summary={summary} selectedDate={selectedDate} goal={calorieGoal} />
           )}
+          {!summaryLoading && summary && (
+            <CalorieProgressBar consumed={summary.total_calories} goal={calorieGoal} />
+          )}
+          {!summaryLoading && summary && (
+            <MacroPills
+              protein={summary.total_protein}
+              carbs={summary.total_carbs}
+              fat={summary.total_fat}
+              calorieGoal={calorieGoal}
+            />
+          )}
+          {!summaryLoading && summary && weeklyData.length > 0 && (
+            <DailyInsight
+              summary={summary}
+              calorieGoal={calorieGoal}
+              weeklyData={weeklyData}
+            />
+          )}
 
           {/* Water + Weight compact strip */}
           <View style={styles.dailyStatStrip}>
             <TouchableOpacity style={styles.dailyStatHalf} onPress={() => setIsWaterOpen(true)} activeOpacity={0.8}>
-              <Ionicons name="water-outline" size={16} color="#1A1A14" />
+              <Ionicons
+                name="water-outline"
+                size={16}
+                color={homeWaterOz >= homeWaterGoalOz ? "#29B6F6" : "#1A1A14"}
+              />
               <View style={styles.dailyStatContent}>
                 <View style={styles.dailyStatTopRow}>
                   <Text style={styles.dailyStatLabel}>Water</Text>
-                  <Text style={styles.dailyStatPct}>
+                  <Text style={[
+                    styles.dailyStatPct,
+                    homeWaterOz >= homeWaterGoalOz && { color: "#29B6F6" },
+                  ]}>
                     {Math.min(100, Math.round((homeWaterOz / Math.max(homeWaterGoalOz, 1)) * 100))}%
                   </Text>
                 </View>
@@ -1390,10 +1436,22 @@ function AppInner() {
               <View style={styles.dailyStatContent}>
                 <Text style={styles.dailyStatLabel}>Weight</Text>
                 {homeWeightKg != null ? (
-                  <Text style={styles.dailyStatValue}>
-                    {homeWeightKg}{" "}
-                    <Text style={styles.dailyStatUnit}>kg</Text>
-                  </Text>
+                  <>
+                    <Text style={styles.dailyStatValue}>
+                      {homeWeightKg}{" "}
+                      <Text style={styles.dailyStatUnit}>kg</Text>
+                    </Text>
+                    {homeWeightPrevKg != null && (() => {
+                      const delta = Math.round((homeWeightKg - homeWeightPrevKg) * 10) / 10;
+                      if (delta === 0) return null;
+                      const up = delta > 0;
+                      return (
+                        <Text style={{ fontSize: 11, fontFamily: "Inter-Variable", color: up ? "#E57373" : "#66BB6A", marginTop: 2 }}>
+                          {up ? "▲" : "▼"} {Math.abs(delta)} kg
+                        </Text>
+                      );
+                    })()}
+                  </>
                 ) : (
                   <Text style={styles.dailyStatEmpty}>Tap to log</Text>
                 )}
@@ -1401,6 +1459,9 @@ function AppInner() {
             </TouchableOpacity>
           </View>
         </View>
+
+        {/* Streak */}
+        {foodStreak > 0 && <StreakCard streak={foodStreak} />}
 
         {/* Logged Foods */}
         <View style={styles.section}>
@@ -4631,7 +4692,7 @@ const styles = StyleSheet.create({
     backgroundColor: "#C48A1A",
   },
   dailyStatBarFillMet: {
-    backgroundColor: "#2e7d32",
+    backgroundColor: "#29B6F6",
   },
 
   // Profile loading screen (shown while GET /profile is in-flight)
@@ -7675,5 +7736,377 @@ const mlStyles = StyleSheet.create({
     color: "#D9534F",
     textAlign: "right",
     marginTop: 3,
+  },
+});
+
+// ── GreetingHeader ────────────────────────────────────────────────────────────
+
+function getGreetingTime(): string {
+  const hour = new Date().getHours();
+  if (hour < 12) return "Good morning";
+  if (hour < 17) return "Good afternoon";
+  return "Good evening";
+}
+
+function getCalorieMessage(todayCalories: number | null, calorieGoal: number): string {
+  if (todayCalories === null) return "Let's get your first meal logged.";
+  const diff = todayCalories - calorieGoal;
+  if (diff > 200)  return "You've exceeded your calorie goal today.";
+  if (diff > 0)    return "Almost at your calorie goal — nice work.";
+  if (diff > -300) return "You're right on track today.";
+  return "Plenty of room left in your calorie budget.";
+}
+
+function GreetingHeader({
+  displayName,
+  todayCalories,
+  calorieGoal,
+}: {
+  displayName: string | null;
+  todayCalories: number | null;
+  calorieGoal: number;
+}) {
+  const greeting = getGreetingTime();
+  const name     = displayName ? `, ${displayName.split(" ")[0]}` : "";
+  const message  = getCalorieMessage(todayCalories, calorieGoal);
+
+  return (
+    <View style={greetingStyles.container}>
+      <Text style={greetingStyles.heading}>{greeting}{name}</Text>
+      <Text style={greetingStyles.sub}>{message}</Text>
+    </View>
+  );
+}
+
+const greetingStyles = StyleSheet.create({
+  container: {
+    marginBottom: 8,
+  },
+  heading: {
+    fontFamily: "Chillax-SemiBold",
+    fontSize: 26,
+    color: "#1A1A14",
+    letterSpacing: -0.5,
+  },
+  sub: {
+    fontFamily: "Inter-Variable",
+    fontSize: 14,
+    color: COLORS.textSecondary,
+    marginTop: 3,
+  },
+});
+
+// ── CalorieProgressBar ────────────────────────────────────────────────────────
+
+function CalorieProgressBar({ consumed, goal }: { consumed: number; goal: number }) {
+  const pct     = goal > 0 ? Math.min(1, consumed / goal) : 0;
+  const over    = consumed > goal;
+  const barColor = over ? "#E57373" : COLORS.primary;
+
+  return (
+    <View style={calorieBarStyles.container}>
+      <View style={calorieBarStyles.track}>
+        <View style={[calorieBarStyles.fill, { width: `${Math.round(pct * 100)}%` as any, backgroundColor: barColor }]} />
+      </View>
+      <View style={calorieBarStyles.labels}>
+        <Text style={calorieBarStyles.consumed}>{Math.round(consumed)} kcal</Text>
+        <Text style={calorieBarStyles.goal}>goal {Math.round(goal)}</Text>
+      </View>
+    </View>
+  );
+}
+
+const calorieBarStyles = StyleSheet.create({
+  container: {
+    marginTop: 10,
+    marginBottom: 4,
+  },
+  track: {
+    height: 6,
+    borderRadius: 3,
+    backgroundColor: "#EDECDF",
+    overflow: "hidden",
+  },
+  fill: {
+    height: 6,
+    borderRadius: 3,
+  },
+  labels: {
+    flexDirection: "row",
+    justifyContent: "space-between",
+    marginTop: 5,
+  },
+  consumed: {
+    fontFamily: "Inter-Variable",
+    fontSize: 12,
+    color: "#1A1A14",
+    fontWeight: "600",
+  },
+  goal: {
+    fontFamily: "Inter-Variable",
+    fontSize: 12,
+    color: COLORS.textSecondary,
+  },
+});
+
+// ── MacroPills ────────────────────────────────────────────────────────────────
+
+const computeMacroTargets = (calorieGoal: number) => ({
+  protein: Math.round(calorieGoal * 0.30 / 4),
+  carbs:   Math.round(calorieGoal * 0.40 / 4),
+  fat:     Math.round(calorieGoal * 0.30 / 9),
+});
+
+const MACRO_COLORS = {
+  protein: { track: "#E8F5E9", fill: "#66BB6A", over: "#E57373" },
+  carbs:   { track: "#FFF8E1", fill: "#FFD54F", over: "#E57373" },
+  fat:     { track: "#FCE4EC", fill: "#F06292", over: "#E57373" },
+};
+
+function MacroPill({
+  label,
+  consumed,
+  target,
+  colors,
+}: {
+  label: string;
+  consumed: number;
+  target: number;
+  colors: { track: string; fill: string; over: string };
+}) {
+  const pct      = target > 0 ? Math.min(1, consumed / target) : 0;
+  const over     = consumed > target;
+  const fillColor = over ? colors.over : colors.fill;
+
+  return (
+    <View style={macroPillStyles.pill}>
+      <View style={macroPillStyles.pillHeader}>
+        <Text style={macroPillStyles.label}>{label}</Text>
+        <Text style={[macroPillStyles.value, over && macroPillStyles.valueOver]}>
+          {Math.round(consumed)}<Text style={macroPillStyles.target}>/{target}g</Text>
+        </Text>
+      </View>
+      <View style={[macroPillStyles.track, { backgroundColor: colors.track }]}>
+        <View style={[macroPillStyles.fill, { width: `${Math.round(pct * 100)}%` as any, backgroundColor: fillColor }]} />
+      </View>
+    </View>
+  );
+}
+
+function MacroPills({
+  protein,
+  carbs,
+  fat,
+  calorieGoal,
+}: {
+  protein: number;
+  carbs: number;
+  fat: number;
+  calorieGoal: number;
+}) {
+  const targets = computeMacroTargets(calorieGoal);
+
+  return (
+    <View style={macroPillStyles.row}>
+      <MacroPill label="Protein" consumed={protein} target={targets.protein} colors={MACRO_COLORS.protein} />
+      <MacroPill label="Carbs"   consumed={carbs}   target={targets.carbs}   colors={MACRO_COLORS.carbs}   />
+      <MacroPill label="Fat"     consumed={fat}      target={targets.fat}     colors={MACRO_COLORS.fat}     />
+    </View>
+  );
+}
+
+const macroPillStyles = StyleSheet.create({
+  row: {
+    flexDirection: "row",
+    gap: 8,
+    marginTop: 10,
+    marginBottom: 4,
+  },
+  pill: {
+    flex: 1,
+    backgroundColor: "#FAFAF5",
+    borderRadius: 12,
+    padding: 10,
+  },
+  pillHeader: {
+    flexDirection: "row",
+    justifyContent: "space-between",
+    alignItems: "baseline",
+    marginBottom: 6,
+  },
+  label: {
+    fontFamily: "Inter-Variable",
+    fontSize: 11,
+    color: COLORS.textSecondary,
+    fontWeight: "600",
+    textTransform: "uppercase",
+    letterSpacing: 0.4,
+  },
+  value: {
+    fontFamily: "Inter-Variable",
+    fontSize: 12,
+    color: "#1A1A14",
+    fontWeight: "700",
+  },
+  valueOver: {
+    color: "#E57373",
+  },
+  target: {
+    fontFamily: "Inter-Variable",
+    fontSize: 11,
+    color: COLORS.textSecondary,
+    fontWeight: "400",
+  },
+  track: {
+    height: 5,
+    borderRadius: 3,
+    overflow: "hidden",
+  },
+  fill: {
+    height: 5,
+    borderRadius: 3,
+  },
+});
+
+// ── DailyInsight ──────────────────────────────────────────────────────────────
+
+function getDailyInsight(
+  summary: { total_calories: number; total_protein: number },
+  calorieGoal: number,
+  weeklyData: { date: string; total_calories: number }[],
+): { text: string; icon: string } {
+  const proteinTarget = computeMacroTargets(calorieGoal).protein;
+  const loggedDays    = weeklyData.filter(d => d.total_calories > 0);
+  const avgCalories   = loggedDays.length > 0
+    ? loggedDays.reduce((s, d) => s + d.total_calories, 0) / loggedDays.length
+    : null;
+
+  if (avgCalories !== null && avgCalories > calorieGoal + 200) {
+    return {
+      icon: "📈",
+      text: `You've averaged ${Math.round(avgCalories - calorieGoal)} kcal over your goal this week.`,
+    };
+  }
+  if (avgCalories !== null && avgCalories < calorieGoal - 300) {
+    return {
+      icon: "⚠️",
+      text: `You've been under your calorie goal this week — make sure you're eating enough.`,
+    };
+  }
+  if (summary.total_protein < proteinTarget - 20) {
+    return {
+      icon: "💪",
+      text: `Protein is running low today (${Math.round(summary.total_protein)}g of ${proteinTarget}g). Consider a high-protein snack.`,
+    };
+  }
+  if (Math.abs(summary.total_calories - calorieGoal) <= 100) {
+    return {
+      icon: "✅",
+      text: `You're right on track with your calorie goal today.`,
+    };
+  }
+  return {
+    icon: "📊",
+    text: `Keep logging to see your weekly trends.`,
+  };
+}
+
+function DailyInsight({
+  summary,
+  calorieGoal,
+  weeklyData,
+}: {
+  summary: { total_calories: number; total_protein: number };
+  calorieGoal: number;
+  weeklyData: { date: string; total_calories: number }[];
+}) {
+  const { icon, text } = getDailyInsight(summary, calorieGoal, weeklyData);
+
+  return (
+    <View style={insightStyles.container}>
+      <Text style={insightStyles.icon}>{icon}</Text>
+      <Text style={insightStyles.text}>{text}</Text>
+    </View>
+  );
+}
+
+const insightStyles = StyleSheet.create({
+  container: {
+    flexDirection: "row",
+    alignItems: "flex-start",
+    backgroundColor: "#FAFAF5",
+    borderRadius: 12,
+    padding: 12,
+    marginTop: 10,
+    gap: 8,
+  },
+  icon: {
+    fontSize: 16,
+    lineHeight: 20,
+  },
+  text: {
+    flex: 1,
+    fontFamily: "Inter-Variable",
+    fontSize: 13,
+    color: "#1A1A14",
+    lineHeight: 18,
+  },
+});
+
+// ── StreakCard ────────────────────────────────────────────────────────────────
+
+function StreakCard({ streak }: { streak: number }) {
+  const label = streak === 1 ? "day streak" : "day streak";
+  const message = streak >= 7
+    ? "You're on fire — keep it up!"
+    : streak >= 3
+    ? "Great consistency this week."
+    : "Good start — keep logging daily.";
+
+  return (
+    <View style={streakStyles.card}>
+      <Text style={streakStyles.flame}>🔥</Text>
+      <View style={streakStyles.content}>
+        <Text style={streakStyles.count}>{streak} <Text style={streakStyles.label}>{label}</Text></Text>
+        <Text style={streakStyles.message}>{message}</Text>
+      </View>
+    </View>
+  );
+}
+
+const streakStyles = StyleSheet.create({
+  card: {
+    flexDirection: "row",
+    alignItems: "center",
+    backgroundColor: "#FFF8E1",
+    borderRadius: 14,
+    paddingVertical: 12,
+    paddingHorizontal: 16,
+    marginBottom: 12,
+    gap: 12,
+  },
+  flame: {
+    fontSize: 28,
+  },
+  content: {
+    flex: 1,
+  },
+  count: {
+    fontFamily: "Chillax-SemiBold",
+    fontSize: 20,
+    color: "#1A1A14",
+    letterSpacing: -0.3,
+  },
+  label: {
+    fontFamily: "Inter-Variable",
+    fontSize: 14,
+    color: COLORS.textSecondary,
+    fontWeight: "400",
+  },
+  message: {
+    fontFamily: "Inter-Variable",
+    fontSize: 12,
+    color: COLORS.textSecondary,
+    marginTop: 2,
   },
 });
