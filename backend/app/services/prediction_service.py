@@ -1,14 +1,21 @@
 """
-Weight prediction service — V1 physics-based model.
+Weight prediction service — V2 ML-backed model.
 
-All functions are pure (no DB, no I/O) so they can be unit-tested directly.
-The router is responsible for fetching data and calling compute_weight_prediction.
+projected_change_30d_kg and weekly_change_kg come from a gradient boosting
+model trained on population health data. All other fields (BMR, TDEE,
+daily_balance) are still Mifflin-based and shown for user context.
+
+To retrain on real Lume user data: run backend/train_model.py with a CSV
+that has columns matching FEATURE_COLS (age, sex, height_cm, weight_kg,
+avg_daily_calories, activity_level) and a weight_change_30d_kg target.
 """
 from __future__ import annotations
 
+import pickle
 import statistics
 import datetime
 from datetime import date
+from pathlib import Path
 from typing import Optional
 
 # ── Constants ────────────────────────────────────────────────────────────────
@@ -20,6 +27,46 @@ ACTIVITY_MULTIPLIERS: dict[str, float] = {
     "active":      1.725,
     "very_active": 1.9,
 }
+
+ACTIVITY_LEVEL_ENCODED: dict[str, int] = {
+    "sedentary":   0,
+    "light":       1,
+    "moderate":    2,
+    "active":      3,
+    "very_active": 4,
+}
+
+# ── ML model ──────────────────────────────────────────────────────────────────
+
+_MODEL_PATH = Path(__file__).parent / "weight_change_model.pkl"
+
+def _load_model():
+    with open(_MODEL_PATH, "rb") as f:
+        return pickle.load(f)
+
+try:
+    _ml = _load_model()
+    _weight_model   = _ml["model"]
+    _weight_features = _ml["features"]
+except Exception:
+    _weight_model   = None
+    _weight_features = []
+
+
+def _ml_predict_change_30d(
+    age: int,
+    sex: str,
+    height_cm: float,
+    weight_kg: float,
+    avg_daily_calories: float,
+    activity_level: str,
+) -> Optional[float]:
+    if _weight_model is None:
+        return None
+    sex_enc      = 1 if sex == "male" else 0
+    activity_enc = ACTIVITY_LEVEL_ENCODED.get(activity_level, 2)
+    row          = [[age, sex_enc, height_cm, weight_kg, avg_daily_calories, activity_enc]]
+    return float(_weight_model.predict(row)[0])
 
 KCAL_PER_KG = 7700          # 3500 kcal ≈ 1 lb; 1 lb = 0.4536 kg → ~7700 kcal/kg
 WINDOW_DAYS = 14
@@ -166,8 +213,23 @@ def compute_weight_prediction(
 
     if avg_daily_calories is not None and tdee is not None:
         daily_balance = round(avg_daily_calories - tdee, 1)
-        weekly_change_kg = round((daily_balance * 7) / KCAL_PER_KG, 2)
-        raw_change_30d = (daily_balance * 30) / KCAL_PER_KG
+
+        # Use ML model for the actual projection; fall back to physics if unavailable
+        if profile_complete:
+            assert height_cm is not None and age is not None and sex is not None
+            ml_change = _ml_predict_change_30d(
+                age=age,
+                sex=sex,
+                height_cm=height_cm,
+                weight_kg=weight_kg,
+                avg_daily_calories=avg_daily_calories,
+                activity_level=activity_level,
+            )
+        else:
+            ml_change = None
+
+        raw_change_30d = ml_change if ml_change is not None else (daily_balance * 30) / KCAL_PER_KG
+        weekly_change_kg = round(raw_change_30d / 4.33, 2)
         projected_change_30d_kg = round(raw_change_30d, 2)
         projected_weight_30d_kg = round(
             max(30.0, weight_kg + raw_change_30d), 2  # floor at 30 kg

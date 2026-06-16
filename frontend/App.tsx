@@ -1108,6 +1108,14 @@ function AppInner() {
 
   return (
     <SafeAreaView style={styles.safe}>
+      <LinearGradient
+        colors={["#FFFEF8", "#FFF8D4", "#FDF3B0"]}
+        locations={[0, 0.5, 1]}
+        start={{ x: 0.15, y: 0 }}
+        end={{ x: 0.85, y: 1 }}
+        style={StyleSheet.absoluteFillObject}
+        pointerEvents="none"
+      />
       <ScrollView
         style={styles.scrollView}
         contentContainerStyle={styles.container}
@@ -1123,6 +1131,14 @@ function AppInner() {
 
         {/* Header */}
         <View style={styles.headerRow}>
+          <Animated.View pointerEvents="none" style={[styles.headerGlowOuter, {
+            opacity: glowOuter.interpolate({ inputRange: [0, 1], outputRange: [0.4, 0.85] }),
+            transform: [{ scale: glowOuter.interpolate({ inputRange: [0, 1], outputRange: [1, 1.08] }) }],
+          }]} />
+          <Animated.View pointerEvents="none" style={[styles.headerGlowMid, {
+            opacity: glowMid.interpolate({ inputRange: [0, 1], outputRange: [0.5, 1] }),
+            transform: [{ scale: glowMid.interpolate({ inputRange: [0, 1], outputRange: [1, 1.05] }) }],
+          }]} />
           <TouchableOpacity onPress={() => setIsSidebarOpen(true)} activeOpacity={0.8}>
             <Image
               source={require("./assets/Lume.png")}
@@ -2009,7 +2025,7 @@ const swipeStyles = StyleSheet.create({
   // marginTop lives here (not on logEntry) so the gap never exposes red background.
   outerRow: {
     marginTop: 10,
-    borderRadius: 8,
+    borderRadius: 14,
     overflow: "hidden",
   },
   // Red delete zone — no borderRadius needed; outerRow clips it cleanly.
@@ -3082,7 +3098,7 @@ const styles = StyleSheet.create({
   // is always pushed to the bottom rather than floating mid-screen.
   scrollView: {
     flex: 1,
-    backgroundColor: "#FAFAF7",
+    backgroundColor: "transparent",
   },
   container: {
     padding: 20,
@@ -3304,6 +3320,25 @@ const styles = StyleSheet.create({
     alignItems: "flex-start",
     marginTop: 12,
     marginBottom: 16,
+    overflow: "visible",
+  },
+  headerGlowOuter: {
+    position: "absolute",
+    width: 220,
+    height: 130,
+    borderRadius: 110,
+    top: -30,
+    left: -30,
+    backgroundColor: "rgba(250,230,90,0.22)",
+  },
+  headerGlowMid: {
+    position: "absolute",
+    width: 140,
+    height: 85,
+    borderRadius: 70,
+    top: -15,
+    left: 10,
+    backgroundColor: "rgba(255,245,150,0.30)",
   },
   appSubtitle: {
     fontSize: 14,
@@ -3559,10 +3594,15 @@ const styles = StyleSheet.create({
   card: {
     marginTop: 14,
     padding: 16,
-    borderRadius: 10,
-    backgroundColor: "#f9f9f9",
+    borderRadius: 16,
+    backgroundColor: "rgba(255,255,255,0.80)",
     borderWidth: 1,
-    borderColor: "#eee",
+    borderColor: "rgba(196,138,26,0.15)",
+    shadowColor: "rgba(200,160,20,0.6)",
+    shadowOpacity: 0.10,
+    shadowRadius: 10,
+    shadowOffset: { width: 0, height: 3 },
+    elevation: 2,
   },
   summaryCard: {
     backgroundColor: COLORS.primaryLight,
@@ -3751,8 +3791,15 @@ const styles = StyleSheet.create({
   // Log list
   logEntry: {
     padding: 12,
-    borderRadius: 8,
-    backgroundColor: "#f9f9f9",
+    borderRadius: 14,
+    backgroundColor: "rgba(255,255,255,0.80)",
+    borderWidth: 1,
+    borderColor: "rgba(196,138,26,0.15)",
+    shadowColor: "rgba(200,160,20,0.6)",
+    shadowOpacity: 0.12,
+    shadowRadius: 8,
+    shadowOffset: { width: 0, height: 2 },
+    elevation: 2,
   },
   logEntryRow: {
     flexDirection: "row",
