@@ -2,7 +2,9 @@
 POST /food/parse-multi — unit tests.
 
 All tests mock route_food_query so no network calls are made.
-The endpoint lives in routers/food.py and has no auth requirement.
+get_current_user is overridden via dependency_overrides so tests run without
+a real Supabase token. A dedicated test verifies that unauthenticated requests
+receive 401.
 
 Run:
     cd backend && pytest tests/test_parse_multi.py -v
@@ -15,7 +17,11 @@ import pytest
 from fastapi.testclient import TestClient
 
 from app.main import app
+from app.auth import get_current_user
 from app.routers.food import MAX_MULTI_LINES
+
+# Override auth for the whole test module — returns a fixed test user ID.
+app.dependency_overrides[get_current_user] = lambda: "test-user-id"
 
 client = TestClient(app)
 
@@ -189,3 +195,15 @@ def test_all_required_fields_present():
         "parse_error", "error_message",
     }
     assert required.issubset(item.keys())
+
+
+# ── Auth enforcement ──────────────────────────────────────────────────────────
+
+def test_unauthenticated_request_returns_401():
+    # Temporarily remove the override to test real auth enforcement.
+    app.dependency_overrides.pop(get_current_user, None)
+    try:
+        res = TestClient(app).post(URL, json={"lines": ["banana"]})
+        assert res.status_code == 401
+    finally:
+        app.dependency_overrides[get_current_user] = lambda: "test-user-id"

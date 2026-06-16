@@ -6,10 +6,19 @@
 // ---------------------------------------------------------------------------
 
 // Backend API base URL — no trailing slash.
-// EXPO_PUBLIC_API_URL must be set for real-device and production builds.
-// The 127.0.0.1 fallback is only valid for local web/simulator dev runs.
+// EXPO_PUBLIC_API_URL must be set in frontend/.env for all runs except
+// local simulator/web dev. Real-device dev requires the machine's LAN IP
+// (e.g. http://192.168.x.x:8000) or the deployed Render URL.
 const _apiUrl = process.env.EXPO_PUBLIC_API_URL;
-if (!_apiUrl && !__DEV__) {
-  throw new Error("EXPO_PUBLIC_API_URL is required in non-dev builds. Set it in your .env file.");
+if (!_apiUrl) {
+  if (!__DEV__) {
+    throw new Error("EXPO_PUBLIC_API_URL is required in non-dev builds. Set it in frontend/.env.");
+  } else {
+    console.warn(
+      "[Lume] EXPO_PUBLIC_API_URL is not set. Falling back to http://127.0.0.1:8000, " +
+      "which only works in simulators. Real-device runs need the machine LAN IP or deployed URL " +
+      "set in frontend/.env as EXPO_PUBLIC_API_URL=http://<your-ip>:8000"
+    );
+  }
 }
 export const API_URL: string = _apiUrl ?? "http://127.0.0.1:8000";

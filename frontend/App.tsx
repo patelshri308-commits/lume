@@ -731,6 +731,7 @@ function AppInner() {
       await loadLogs();
       await loadWeekly();
       await loadTodayCalories();
+      fetchHomePrediction();
     } catch {
       setLogMessage("Failed to log food");
     }
@@ -998,6 +999,7 @@ function AppInner() {
           await loadLogs();
           await loadWeekly();
           await loadTodayCalories();
+          fetchHomePrediction();
         } catch {
           setLogMessage("Failed to save — please try again.");
         }
@@ -1561,7 +1563,7 @@ function AppInner() {
             <Text style={styles.searchingText}>Loading...</Text>
           )}
           {!weeklyLoading && weeklyError && weeklyData.length === 0 && (
-            <Text style={styles.logMessage}>Couldn't load weekly data. Pull down to retry.</Text>
+            <Text style={styles.error}>Couldn't load weekly data. Pull down to retry.</Text>
           )}
           {weeklyData.length > 0 && <WeeklyGlowLine data={weeklyData} goal={calorieGoal} />}
         </View>
@@ -7211,10 +7213,14 @@ function MultiLogScreen({
     setPhase("parsing");
     setParseError("");
     try {
+      const { data: { session } } = await supabase.auth.getSession();
+      const headers = session?.access_token
+        ? { Authorization: `Bearer ${session.access_token}` }
+        : {};
       const res = await axios.post<{ items: ParsedItem[]; skipped: number }>(
         `${API_URL}/food/parse-multi`,
         { text: trimmed },
-        { headers: await getAuthHeaders() },
+        { headers },
       );
       setItems(res.data.items);
       setRemovedIndices(new Set());
