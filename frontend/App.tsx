@@ -332,6 +332,7 @@ function AppInner() {
   const tabAnim     = useRef(new Animated.Value(0)).current;  // 0 = home, 1 = weight
   const [weeklyData,    setWeeklyData]    = useState<WeeklyDay[]>([]);
   const [weeklyLoading, setWeeklyLoading] = useState(false);
+  const [weeklyError,   setWeeklyError]   = useState(false);
   const [refreshing,    setRefreshing]    = useState(false);
   const [selectedDate,    setSelectedDate]    = useState(localToday());
   const [showDatePicker,  setShowDatePicker]  = useState(false);
@@ -684,7 +685,7 @@ function AppInner() {
 
     let food: NutritionResult | null = null;
     try {
-      const res = await axios.post(`${API_URL}/food/search`, { query: foodQuery });
+      const res = await axios.post(`${API_URL}/food/search`, { query: foodQuery }, { headers: await getAuthHeaders() });
       food = res.data as NutritionResult;
     } catch {
       setLogMessage("Failed to search");
@@ -827,13 +828,14 @@ function AppInner() {
   const loadWeekly = async () => {
     if (!session?.access_token) return;
     setWeeklyLoading(true);
+    setWeeklyError(false);
     try {
       const res = await axios.get(`${API_URL}/dashboard/weekly`, {
         headers: await getAuthHeaders(),
       });
       setWeeklyData(res.data);
-    } catch (err) {
-      console.log("Error loading weekly data");
+    } catch {
+      setWeeklyError(true);
     } finally {
       setWeeklyLoading(false);
     }
@@ -971,7 +973,7 @@ function AppInner() {
 
     (async () => {
       try {
-        const res  = await axios.post(`${API_URL}/food/barcode`, { barcode });
+        const res  = await axios.post(`${API_URL}/food/barcode`, { barcode }, { headers: await getAuthHeaders() });
         const food = res.data as NutritionResult;
         try {
           await axios.post(
@@ -1557,6 +1559,9 @@ function AppInner() {
           <Text style={styles.sectionLabel}>LAST 7 DAYS</Text>
           {weeklyLoading && weeklyData.length === 0 && (
             <Text style={styles.searchingText}>Loading...</Text>
+          )}
+          {!weeklyLoading && weeklyError && weeklyData.length === 0 && (
+            <Text style={styles.logMessage}>Couldn't load weekly data. Pull down to retry.</Text>
           )}
           {weeklyData.length > 0 && <WeeklyGlowLine data={weeklyData} goal={calorieGoal} />}
         </View>
@@ -7209,6 +7214,7 @@ function MultiLogScreen({
       const res = await axios.post<{ items: ParsedItem[]; skipped: number }>(
         `${API_URL}/food/parse-multi`,
         { text: trimmed },
+        { headers: await getAuthHeaders() },
       );
       setItems(res.data.items);
       setRemovedIndices(new Set());

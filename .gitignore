@@ -17,6 +17,11 @@ dist/
 .idea/
 .vscode/
 
+# MCP / local dev tooling (not part of the app)
+.mcp.json
+package.json
+package-lock.json
+
 # Logs
 *.log
 jobs.db

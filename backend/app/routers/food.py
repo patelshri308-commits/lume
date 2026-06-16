@@ -1,10 +1,11 @@
 import re
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel
 from typing import List, Optional
 from app.services.query_router import route_food_query
 from app.services.barcode_service import lookup_barcode, BarcodeNotFoundError, BarcodeProviderError
 from app.services.multi_parser import split_to_lines
+from app.auth import get_current_user
 
 MAX_MULTI_LINES = 15
 
@@ -33,12 +34,12 @@ class ParseMultiRequest(BaseModel):
 
 
 @router.post("/food/search")
-def search_food(body: FoodSearchRequest):
+def search_food(body: FoodSearchRequest, _: str = Depends(get_current_user)):
     return route_food_query(body.query)
 
 
 @router.post("/food/barcode")
-def scan_barcode(body: BarcodeRequest):
+def scan_barcode(body: BarcodeRequest, _: str = Depends(get_current_user)):
     code = body.barcode.strip()
 
     if not code:
@@ -65,7 +66,7 @@ def scan_barcode(body: BarcodeRequest):
 
 
 @router.post("/food/parse-multi")
-def parse_multi(body: ParseMultiRequest):
+def parse_multi(body: ParseMultiRequest, _: str = Depends(get_current_user)):
     """
     Parse multiple food items in one request.  Mirrors /food/search but accepts
     free-form meal text or a pre-split list of food strings.
@@ -78,7 +79,6 @@ def parse_multi(body: ParseMultiRequest):
     - More than MAX_MULTI_LINES resolved items → HTTP 400.
     - Each item is sent through route_food_query independently.
     - An item that raises is returned as parse_error=True with zeroed macros.
-    - No auth required; no DB writes.
     """
     if body.text is not None:
         non_blank = split_to_lines(body.text)
