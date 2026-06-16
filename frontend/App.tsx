@@ -321,12 +321,14 @@ function AppInner() {
   const [scannedBarcode, setScannedBarcode] = useState<string | null>(null);
   const [cameraPermission, requestCameraPermission] = useCameraPermissions();
   const scanLockRef  = useRef(false);                          // prevents duplicate scan callbacks
+  const tabScrollRef = useRef<ScrollView>(null);
   const sidebarAnim  = useRef(new Animated.Value(0)).current;  // 0 = closed, 1 = open
   // Solar Bloom animated glow values — each loops 0→1→0 at a different duration
   const glowOuter   = useRef(new Animated.Value(0)).current;  // 7 s
   const glowMid     = useRef(new Animated.Value(0)).current;  // 5.5 s
   const glowCore    = useRef(new Animated.Value(0)).current;  // 4 s
   const glowShimmer = useRef(new Animated.Value(0)).current;  // 6.5 s
+  const tabAnim     = useRef(new Animated.Value(0)).current;  // 0 = home, 1 = weight
   const [weeklyData,    setWeeklyData]    = useState<WeeklyDay[]>([]);
   const [weeklyLoading, setWeeklyLoading] = useState(false);
   const [refreshing,    setRefreshing]    = useState(false);
@@ -357,7 +359,20 @@ function AppInner() {
   const [homeWaterGoalOz,setHomeWaterGoalOz]= useState<number>(64);
   const [isWeightOpen,   setIsWeightOpen]   = useState(false);
   const [isMultiLogOpen, setIsMultiLogOpen] = useState(false);
-  const [homeWeightKg,   setHomeWeightKg]   = useState<number | null>(null);
+  const [homeWeightKg,     setHomeWeightKg]     = useState<number | null>(null);
+  const [homePrediction,   setHomePrediction]   = useState<WeightPrediction | null>(null);
+  const [homePredLoading,  setHomePredLoading]  = useState(false);
+  const [currentPage,      setCurrentPage]      = useState<"home" | "weight">("home");
+
+  const { width: screenW } = useWindowDimensions();
+  const [tabBarW, setTabBarW] = useState(screenW - 40);
+  // Natural tab widths measured via onLayout — lets tabs sit close together.
+  const [tab0W, setTab0W] = useState(0);
+  const [tab1W, setTab1W] = useState(0);
+  const homeTabOpacity   = tabAnim.interpolate({ inputRange: [0, 1], outputRange: [1,    0.22] });
+  const weightTabOpacity = tabAnim.interpolate({ inputRange: [0, 1], outputRange: [0.22, 1   ] });
+  const homeTabScale     = tabAnim.interpolate({ inputRange: [0, 1], outputRange: [1,    0.78] });
+  const weightTabScale   = tabAnim.interpolate({ inputRange: [0, 1], outputRange: [0.78, 1   ] });
   const [setupFields,    setSetupFields]    = useState<SetupFields>({
     display_name:   "",
     sex:            "",
@@ -414,6 +429,19 @@ function AppInner() {
     }
   };
 
+  const fetchHomePrediction = async () => {
+    setHomePredLoading(true);
+    try {
+      const headers = await getAuthHeaders();
+      const res = await axios.get<WeightPrediction>(`${API_URL}/prediction/weight`, { headers });
+      setHomePrediction(res.data);
+    } catch {
+      // silently ignore — card stays hidden
+    } finally {
+      setHomePredLoading(false);
+    }
+  };
+
   // Solar Bloom breathing glow — loops indefinitely from mount.
   useEffect(() => {
     const breathe = (val: Animated.Value, duration: number) =>
@@ -441,6 +469,26 @@ function AppInner() {
       useNativeDriver: true,
     }).start();
   }, [isSidebarOpen]);
+
+  // Drive the tab bar opacity/scale and scroll position whenever page changes.
+  useEffect(() => {
+    Animated.spring(tabAnim, {
+      toValue: currentPage === "home" ? 0 : 1,
+      useNativeDriver: true,
+      friction: 8,
+      tension: 70,
+    }).start();
+    if (tab0W > 0 && tab1W > 0) {
+      // With paddingHorizontal = tabBarW/2, centering tab i means scrolling to:
+      //   tab0: tab0W / 2
+      //   tab1: tab0W + TAB_GAP + tab1W / 2
+      const TAB_GAP = 36;
+      const x = currentPage === "home"
+        ? tab0W / 2
+        : tab0W + TAB_GAP + tab1W / 2;
+      tabScrollRef.current?.scrollTo({ x, animated: true });
+    }
+  }, [currentPage, tab0W, tab1W]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // iOS keyboard listeners — lift the floating search bar above the keyboard.
   useEffect(() => {
@@ -832,11 +880,13 @@ function AppInner() {
       setHomeWaterOz(0);
       setHomeWaterGoalOz(64);
       setHomeWeightKg(null);
+      setHomePrediction(null);
     } else {
       loadWeekly();
       loadTodayCalories();
       fetchHomeWaterSummary();
       fetchHomeWeightSummary();
+      fetchHomePrediction();
     }
   }, [session]); // eslint-disable-line react-hooks/exhaustive-deps
 
@@ -879,9 +929,12 @@ function AppInner() {
     if (!isWaterOpen && session?.access_token) fetchHomeWaterSummary();
   }, [isWaterOpen]); // eslint-disable-line react-hooks/exhaustive-deps
 
-  // Refresh the homepage weight widget whenever the weight screen is dismissed.
+  // Refresh the homepage weight widget and prediction whenever the weight screen is dismissed.
   useEffect(() => {
-    if (!isWeightOpen && session?.access_token) fetchHomeWeightSummary();
+    if (!isWeightOpen && session?.access_token) {
+      fetchHomeWeightSummary();
+      fetchHomePrediction();
+    }
   }, [isWeightOpen]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // When a barcode is scanned, look it up and immediately auto-log it —
@@ -1147,6 +1200,44 @@ function AppInner() {
             />
           </TouchableOpacity>
         </View>
+
+        {/* Page tab scroller — negative margin escapes padding:20 so the
+            ScrollView is full screen width. Half-screen padding on each side
+            lets any tab be scrolled to the exact center. */}
+        <ScrollView
+          ref={tabScrollRef}
+          horizontal
+          scrollEnabled={false}
+          showsHorizontalScrollIndicator={false}
+          onLayout={(e) => setTabBarW(e.nativeEvent.layout.width)}
+          contentContainerStyle={{ paddingHorizontal: tabBarW / 2 }}
+          style={[styles.pageTabBar, { marginHorizontal: -20 }]}
+        >
+          <TouchableOpacity
+            onLayout={(e) => setTab0W(e.nativeEvent.layout.width)}
+            style={styles.pageTabItem}
+            onPress={() => setCurrentPage("home")}
+            activeOpacity={1}
+          >
+            <Animated.Text style={[styles.pageTabText, { opacity: homeTabOpacity, transform: [{ scale: homeTabScale }] }]}>
+              Home
+            </Animated.Text>
+          </TouchableOpacity>
+          <View style={{ width: 36 }} />
+          <TouchableOpacity
+            onLayout={(e) => setTab1W(e.nativeEvent.layout.width)}
+            style={styles.pageTabItem}
+            onPress={() => setCurrentPage("weight")}
+            activeOpacity={1}
+          >
+            <Animated.Text style={[styles.pageTabText, { opacity: weightTabOpacity, transform: [{ scale: weightTabScale }] }]}>
+              Weight Projection
+            </Animated.Text>
+          </TouchableOpacity>
+        </ScrollView>
+
+        {currentPage === "home" && (
+          <>
 
         {/* Date selector */}
         <View style={styles.dateSection}>
@@ -1446,6 +1537,141 @@ function AppInner() {
           {weeklyData.length > 0 && <WeeklyGlowLine data={weeklyData} goal={calorieGoal} />}
         </View>
 
+          </>
+        )}
+
+        {currentPage === "weight" && (() => {
+          if (homePredLoading && !homePrediction) {
+            return (
+              <View style={styles.section}>
+                <Text style={styles.predCardLoading}>Loading projection…</Text>
+              </View>
+            );
+          }
+          if (!homePrediction) {
+            return (
+              <View style={styles.section}>
+                <Text style={styles.predCardLoading}>
+                  Log food and weight to see your projection.
+                </Text>
+              </View>
+            );
+          }
+          const p = homePrediction;
+          const isLow = p.confidence === "low";
+
+          const fmtWeekly = (v: number | null) => {
+            if (v === null) return "—";
+            const abs = Math.round(Math.abs(v) * 10) / 10;
+            const sign = v > 0 ? "+" : v < 0 ? "−" : "";
+            return `${sign}${abs} kg/wk`;
+          };
+
+          const weeklyColor = p.weekly_change_kg === null
+            ? styles.predStatNeutral
+            : p.weekly_change_kg < 0
+              ? styles.predStatLoss
+              : p.weekly_change_kg > 0
+                ? styles.predStatGain
+                : styles.predStatNeutral;
+
+          const badgeStyle = p.confidence === "high"
+            ? styles.predBadgeHigh
+            : p.confidence === "medium"
+              ? styles.predBadgeMedium
+              : styles.predBadgeLow;
+          const badgeTextStyle = p.confidence === "high"
+            ? styles.predBadgeTextHigh
+            : p.confidence === "medium"
+              ? styles.predBadgeTextMedium
+              : styles.predBadgeTextLow;
+
+          return (
+            <View style={styles.section}>
+              <Text style={styles.sectionLabel}>WEIGHT PROJECTION</Text>
+
+              {!isLow && p.latest_weight_kg != null && p.weekly_change_kg != null && (
+                <View style={{ marginBottom: 16 }}>
+                  <WeightProjectionChart
+                    startWeight={p.latest_weight_kg}
+                    weeklyChangeKg={p.weekly_change_kg}
+                    goalWeightKg={p.goal_weight_kg}
+                  />
+                </View>
+              )}
+
+              <View style={[styles.predCard, isLow && styles.predCardMuted]}>
+                <View style={styles.predCardHeader}>
+                  <View style={styles.predCardHeaderLeft}>
+                    <Ionicons name="analytics-outline" size={16} color="#C48A1A" />
+                    <Text style={styles.predCardTitle}>What to expect</Text>
+                  </View>
+                </View>
+
+                {isLow ? (
+                  <Text style={styles.predCardNote}>{p.confidence_note}</Text>
+                ) : (
+                  <>
+                    <View style={styles.predStatRow}>
+                      <Text style={styles.predStatLabel}>At this rate</Text>
+                      <Text style={[styles.predStatValue, weeklyColor]}>
+                        {fmtWeekly(p.weekly_change_kg)}
+                      </Text>
+                    </View>
+                    <View style={styles.predStatRow}>
+                      <Text style={styles.predStatLabel}>In 30 days</Text>
+                      <Text style={styles.predStatValue}>
+                        {p.projected_weight_30d_kg != null
+                          ? `~${Math.round(p.projected_weight_30d_kg * 10) / 10} kg`
+                          : "—"}
+                      </Text>
+                    </View>
+                    <View style={styles.predStatRow}>
+                      <Text style={styles.predStatLabel}>Avg intake</Text>
+                      <Text style={styles.predStatValue}>
+                        {p.avg_daily_calories != null ? `${Math.round(p.avg_daily_calories)} kcal/day` : "—"}
+                      </Text>
+                    </View>
+                    <View style={styles.predStatRow}>
+                      <Text style={styles.predStatLabel}>Est. TDEE</Text>
+                      <Text style={styles.predStatValue}>
+                        {p.tdee != null ? `~${Math.round(p.tdee)} kcal/day` : "—"}
+                      </Text>
+                    </View>
+                    {p.goal_weight_kg != null && p.goal_direction !== "maintain" && p.estimated_weeks_to_goal != null && (
+                      <>
+                        <View style={styles.predStatRow}>
+                          <Text style={styles.predStatLabel}>Goal in</Text>
+                          <Text style={styles.predStatValue}>{p.estimated_weeks_to_goal} wks</Text>
+                        </View>
+                        {p.projected_goal_date != null && (
+                          <View style={styles.predStatRow}>
+                            <Text style={styles.predStatLabel}>Goal date</Text>
+                            <Text style={styles.predStatValue}>
+                              {new Date(p.projected_goal_date + "T00:00:00").toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric" })}
+                            </Text>
+                          </View>
+                        )}
+                      </>
+                    )}
+                    {p.goal_weight_kg != null && p.goal_direction === "maintain" && (
+                      <Text style={styles.predGoalReached}>Goal reached 🎉</Text>
+                    )}
+                  </>
+                )}
+
+                <View style={styles.predCardFooter}>
+                  <View style={[styles.predBadge, badgeStyle]}>
+                    <Text style={[styles.predBadgeText, badgeTextStyle]}>
+                      {p.confidence} confidence
+                    </Text>
+                  </View>
+                </View>
+                <Text style={styles.predCardNote}>{p.confidence_note}</Text>
+              </View>
+            </View>
+          );
+        })()}
 
       </ScrollView>
 
@@ -1454,7 +1680,7 @@ function AppInner() {
           top: 20 / right: 20 matches the container padding so it sits flush
           with the right margin, vertically level with the header row.
           pointerEvents="none" keeps it non-interactive. */}
-      {todayCalories !== null && (
+      {currentPage === "home" && todayCalories !== null && (
         <View style={styles.calorieBadge} pointerEvents="none">
           <Text style={styles.calorieBadgeText}>
             {`${Math.round(todayCalories)} Cals`}
@@ -1470,6 +1696,7 @@ function AppInner() {
           is measured from the screen edge while bottomBar is positioned inside the
           SafeAreaView whose layout origin is already above the home-indicator inset.
           Without this correction the bar overshoots upward by ~34pt on Face ID devices. */}
+      {currentPage === "home" && (
       <View style={[styles.bottomBar, { bottom: keyboardHeight > 0 ? keyboardHeight - insets.bottom : 0, paddingBottom: keyboardHeight > 0 ? 8 : (insets.bottom || 8) }]}>
         <View style={[styles.inputRow, isSearchFocused && styles.inputRowFocused]}>
           <TouchableOpacity
@@ -1510,6 +1737,7 @@ function AppInner() {
           </Text>
         ) : null}
       </View>
+      )}
 
       {/* Sidebar backdrop — fades in/out; tapping closes the drawer */}
       <Animated.View
@@ -4200,6 +4428,117 @@ const styles = StyleSheet.create({
     fontFamily: "Inter-Variable",
     color: "#555",
   },
+
+  // ── Page tab scroller ─────────────────────────────────────────────────────
+  pageTabBar: {
+    height: 52,
+    marginTop: 14,
+    marginBottom: 4,
+  },
+  pageTabItem: {
+    paddingHorizontal: 4,
+    paddingVertical: 10,
+  },
+  pageTabText: {
+    fontFamily: "Chillax-SemiBold",
+    fontSize: 19,
+    color: "#1A1A14",
+    letterSpacing: -0.4,
+  },
+
+  // ── Weight Projection home card ────────────────────────────────────────────
+  predCard: {
+    marginTop: 10,
+    padding: 16,
+    borderRadius: 20,
+    backgroundColor: "rgba(255,255,255,0.85)",
+    borderWidth: 1.5,
+    borderColor: "#F5D834",
+    shadowColor: "rgba(200,160,20,0.6)",
+    shadowOpacity: 0.12,
+    shadowRadius: 10,
+    shadowOffset: { width: 0, height: 3 },
+    elevation: 2,
+    gap: 10,
+  },
+  predCardMuted: {
+    opacity: 0.7,
+  },
+  predCardLoading: {
+    fontFamily: "Inter-Variable",
+    fontSize: 13,
+    color: "rgba(26,26,20,0.45)",
+    textAlign: "center",
+    paddingVertical: 6,
+  },
+  predCardHeader: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "space-between",
+  },
+  predCardHeaderLeft: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 6,
+  },
+  predCardTitle: {
+    fontFamily: "Chillax-Medium",
+    fontSize: 14,
+    color: "#1A1A14",
+    letterSpacing: 0.1,
+  },
+  predStatRow: {
+    flexDirection: "row",
+    justifyContent: "space-between",
+    alignItems: "center",
+  },
+  predStatLabel: {
+    fontFamily: "Inter-Variable",
+    fontSize: 13,
+    color: "rgba(26,26,20,0.55)",
+  },
+  predStatValue: {
+    fontFamily: "Chillax-SemiBold",
+    fontSize: 14,
+    color: "#1A1A14",
+    letterSpacing: -0.2,
+  },
+  predStatLoss: { color: "#2e7d32" },
+  predStatGain: { color: "#C48A1A" },
+  predStatNeutral: { color: "#1A1A14" },
+  predGoalReached: {
+    fontFamily: "Chillax-Medium",
+    fontSize: 13,
+    color: "#2e7d32",
+    textAlign: "center",
+  },
+  predCardNote: {
+    fontFamily: "Inter-Variable",
+    fontSize: 12,
+    color: "rgba(26,26,20,0.5)",
+    fontStyle: "italic",
+    lineHeight: 17,
+  },
+  predCardFooter: {
+    flexDirection: "row",
+    marginTop: 2,
+  },
+  predBadge: {
+    borderRadius: 100,
+    paddingHorizontal: 8,
+    paddingVertical: 3,
+  },
+  predBadgeHigh:   { backgroundColor: "rgba(46,125,50,0.12)" },
+  predBadgeMedium: { backgroundColor: "rgba(196,138,26,0.12)" },
+  predBadgeLow:    { backgroundColor: "rgba(26,26,20,0.07)" },
+  predBadgeText: {
+    fontFamily: "Chillax-Medium",
+    fontSize: 11,
+    letterSpacing: 0.2,
+  },
+  predBadgeTextHigh:   { color: "#2e7d32" },
+  predBadgeTextMedium: { color: "#C48A1A" },
+  predBadgeTextLow:    { color: "rgba(26,26,20,0.45)" },
 });
 
 // ---------------------------------------------------------------------------
@@ -4766,6 +5105,239 @@ const waterStyles = StyleSheet.create({
     fontSize: 13,
     color: "rgba(26,26,20,0.45)",
     lineHeight: 18,
+  },
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
+// WeightProjectionChart
+// ─────────────────────────────────────────────────────────────────────────────
+
+type WPRange = "2W" | "1M" | "3M" | "6M" | "1Y";
+const WP_RANGES: WPRange[] = ["2W", "1M", "3M", "6M", "1Y"];
+const WP_RANGE_DAYS: Record<WPRange, number> = {
+  "2W": 14, "1M": 30, "3M": 91, "6M": 182, "1Y": 365,
+};
+
+function WeightProjectionChart({
+  startWeight,
+  weeklyChangeKg,
+  goalWeightKg,
+}: {
+  startWeight: number;
+  weeklyChangeKg: number | null;
+  goalWeightKg: number | null;
+}) {
+  const [range, setRange] = useState<WPRange>("1M");
+
+  const totalDays = WP_RANGE_DAYS[range];
+  const ratePerDay = (weeklyChangeKg ?? 0) / 7;
+  const endWeight = startWeight + ratePerDay * totalDays;
+
+  // SVG coordinate space
+  const W = 300, H = 150;
+  const PL = 38, PR = 8, PT = 12, PB = 26;
+  const chartW = W - PL - PR;
+  const chartH = H - PT - PB;
+
+  // Y scale — pad so start/end/goal all fit with breathing room
+  const allW = [startWeight, endWeight];
+  if (goalWeightKg != null) allW.push(goalWeightKg);
+  let yMin = Math.min(...allW);
+  let yMax = Math.max(...allW);
+  const yPad = Math.max((yMax - yMin) * 0.18, 1.5);
+  yMin -= yPad;
+  yMax += yPad;
+  const ySpan = yMax - yMin;
+
+  const toX = (day: number) => PL + (day / totalDays) * chartW;
+  const toY = (w: number) => PT + (1 - (w - yMin) / ySpan) * chartH;
+
+  // Sample the projection line
+  const step = totalDays <= 14 ? 1 : totalDays <= 30 ? 2 : totalDays <= 91 ? 5 : totalDays <= 182 ? 7 : 14;
+  const ptDays: number[] = [];
+  for (let d = 0; d <= totalDays; d += step) ptDays.push(d);
+  if (ptDays[ptDays.length - 1] !== totalDays) ptDays.push(totalDays);
+  const pts = ptDays.map((d) => ({
+    x: toX(d),
+    y: toY(startWeight + ratePerDay * d),
+  }));
+
+  const linePath = pts.map((p, i) => `${i === 0 ? "M" : "L"}${p.x.toFixed(1)},${p.y.toFixed(1)}`).join(" ");
+  const bottomY = (H - PB).toFixed(1);
+  const areaPath = `${linePath} L${pts[pts.length - 1].x.toFixed(1)},${bottomY} L${pts[0].x.toFixed(1)},${bottomY} Z`;
+
+  // Goal reference line
+  const goalY = goalWeightKg != null ? toY(goalWeightKg) : null;
+  const goalVisible = goalY != null && goalY >= PT && goalY <= H - PB;
+
+  // Goal intersection within the selected range
+  let goalIntersectX: number | null = null;
+  let goalIntersectY: number | null = null;
+  if (goalWeightKg != null && ratePerDay !== 0) {
+    const daysToGoal = (goalWeightKg - startWeight) / ratePerDay;
+    if (daysToGoal > 0 && daysToGoal <= totalDays) {
+      goalIntersectX = toX(daysToGoal);
+      goalIntersectY = goalY;
+    }
+  }
+
+  // X-axis tick labels
+  const todayDate = new Date();
+  const xLabels: { day: number; label: string }[] = (() => {
+    const fmt = (n: number) =>
+      new Date(todayDate.getTime() + n * 86400000).toLocaleDateString("en-US", {
+        month: "short", day: "numeric",
+      });
+    const fmtM = (n: number) =>
+      new Date(todayDate.getTime() + n * 86400000).toLocaleDateString("en-US", { month: "short" });
+    switch (range) {
+      case "2W": return [7, 14].map(d => ({ day: d, label: fmt(d) }));
+      case "1M": return [10, 20, 30].map(d => ({ day: d, label: fmt(d) }));
+      case "3M": return [30, 60, 91].map(d => ({ day: d, label: fmtM(d) }));
+      case "6M": return [61, 122, 182].map(d => ({ day: d, label: fmtM(d) }));
+      case "1Y": return [91, 182, 274, 365].map(d => ({ day: d, label: fmtM(d) }));
+    }
+  })();
+
+  // Y-axis tick values
+  const yTicks = [0, 1 / 3, 2 / 3, 1].map(f => yMin + f * ySpan);
+
+  const showDisclaimer = range === "3M" || range === "6M" || range === "1Y";
+
+  return (
+    <View>
+      {/* Range selector */}
+      <View style={wpStyles.rangeRow}>
+        {WP_RANGES.map((r) => (
+          <TouchableOpacity
+            key={r}
+            style={[wpStyles.rangePill, range === r && wpStyles.rangePillActive]}
+            onPress={() => setRange(r)}
+            activeOpacity={0.75}
+          >
+            <Text style={[wpStyles.rangePillText, range === r && wpStyles.rangePillTextActive]}>
+              {r}
+            </Text>
+          </TouchableOpacity>
+        ))}
+      </View>
+
+      {/* SVG chart */}
+      <View style={wpStyles.chartCard}>
+        <Svg width="100%" height={H} viewBox={`0 0 ${W} ${H}`}>
+          <Defs>
+            <SvgLinearGradient id="wp-area" x1="0" y1="0" x2="0" y2="1">
+              <Stop offset="0%" stopColor="#F5D834" stopOpacity={0.45} />
+              <Stop offset="100%" stopColor="#F5D834" stopOpacity={0} />
+            </SvgLinearGradient>
+          </Defs>
+
+          {/* Horizontal grid lines + y-axis labels */}
+          {yTicks.map((w, i) => {
+            const ty = toY(w);
+            return (
+              <G key={i}>
+                <SvgLine x1={PL} y1={ty} x2={W - PR} y2={ty}
+                  stroke="rgba(26,26,20,0.06)" strokeWidth={1} />
+                <SvgText x={PL - 3} y={ty + 3} fontSize={6.5}
+                  fill="rgba(26,26,20,0.38)" textAnchor="end">
+                  {w.toFixed(1)}
+                </SvgText>
+              </G>
+            );
+          })}
+
+          {/* Goal dashed reference line */}
+          {goalVisible && goalY != null && (
+            <SvgLine x1={PL} y1={goalY} x2={W - PR} y2={goalY}
+              stroke="#2e7d32" strokeWidth={1.5} strokeDasharray="4,3" />
+          )}
+
+          {/* Area fill under line */}
+          <SvgPath d={areaPath} fill="url(#wp-area)" />
+
+          {/* Projection line */}
+          <SvgPath d={linePath} fill="none" stroke="#1A1A14"
+            strokeWidth={2.2} strokeLinecap="round" strokeLinejoin="round" />
+
+          {/* Goal intersection — pulsing ring + dot + label */}
+          {goalIntersectX != null && goalIntersectY != null && (
+            <G>
+              <Circle cx={goalIntersectX} cy={goalIntersectY} r={9}
+                fill="none" stroke="#2e7d32" strokeWidth={1.5} strokeOpacity={0.3} />
+              <Circle cx={goalIntersectX} cy={goalIntersectY} r={4.5} fill="#2e7d32" />
+              <SvgText x={goalIntersectX} y={goalIntersectY - 13}
+                fontSize={7.5} fill="#2e7d32" textAnchor="middle">
+                Goal
+              </SvgText>
+            </G>
+          )}
+
+          {/* Start + end dots */}
+          <Circle cx={toX(0)} cy={toY(startWeight)} r={3.5} fill="#1A1A14" />
+          <Circle cx={toX(totalDays)} cy={toY(endWeight)} r={3.5} fill="#1A1A14" />
+
+          {/* X-axis: "Today" at origin + range tick labels */}
+          <SvgText x={PL} y={H - 5} fontSize={6.5} fill="rgba(26,26,20,0.42)" textAnchor="middle">
+            Today
+          </SvgText>
+          {xLabels.map(({ day, label }) => (
+            <SvgText key={day} x={toX(day)} y={H - 5} fontSize={6.5}
+              fill="rgba(26,26,20,0.42)" textAnchor="middle">
+              {label}
+            </SvgText>
+          ))}
+        </Svg>
+      </View>
+
+      {showDisclaimer && (
+        <Text style={wpStyles.disclaimer}>Projection assumes current pace</Text>
+      )}
+    </View>
+  );
+}
+
+const wpStyles = StyleSheet.create({
+  rangeRow: {
+    flexDirection: "row",
+    gap: 6,
+    justifyContent: "center",
+    marginBottom: 12,
+  },
+  rangePill: {
+    paddingHorizontal: 14,
+    paddingVertical: 6,
+    borderRadius: 100,
+    backgroundColor: "rgba(26,26,20,0.07)",
+  },
+  rangePillActive: {
+    backgroundColor: "#1A1A14",
+  },
+  rangePillText: {
+    fontFamily: "Chillax-Medium",
+    fontSize: 12,
+    color: "rgba(26,26,20,0.45)",
+  },
+  rangePillTextActive: {
+    color: "#E3D517",
+  },
+  chartCard: {
+    borderRadius: 20,
+    backgroundColor: "rgba(255,255,255,0.85)",
+    borderWidth: 1.5,
+    borderColor: "#F5D834",
+    paddingHorizontal: 10,
+    paddingTop: 10,
+    paddingBottom: 4,
+    overflow: "hidden",
+  },
+  disclaimer: {
+    marginTop: 8,
+    fontFamily: "Inter-Variable",
+    fontSize: 11,
+    color: "rgba(26,26,20,0.35)",
+    fontStyle: "italic",
+    textAlign: "center",
   },
 });
 
