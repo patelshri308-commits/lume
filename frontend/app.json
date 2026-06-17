@@ -15,7 +15,10 @@
     },
     "ios": {
       "supportsTablet": true,
-      "bundleIdentifier": "com.anonymous.frontend"
+      "bundleIdentifier": "com.anonymous.frontend",
+      "infoPlist": {
+        "NSLocationWhenInUseUsageDescription": "Lume uses your location to center the map for route planning."
+      }
     },
     "android": {
       "adaptiveIcon": {
@@ -30,7 +33,13 @@
     },
     "plugins": [
       "expo-font",
-      "@react-native-community/datetimepicker"
+      "@react-native-community/datetimepicker",
+      [
+        "expo-location",
+        {
+          "locationWhenInUsePermission": "Lume uses your location to center the map for route planning."
+        }
+      ]
     ]
   }
 }

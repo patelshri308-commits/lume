@@ -1,4 +1,6 @@
-import React, { useState, useEffect, useRef } from "react";
+import React, { useState, useEffect, useRef, useCallback } from "react";
+import MapView, { Marker, Polyline, PROVIDER_DEFAULT } from "react-native-maps";
+import * as Location from "expo-location";
 import { Keyboard, KeyboardAvoidingView, Platform, Modal, Linking, InputAccessoryView } from "react-native";
 import HomepageHero from "./components/HomepageHero";
 import { CameraView, useCameraPermissions } from "expo-camera";
@@ -367,17 +369,20 @@ function AppInner() {
   const [homePrediction,   setHomePrediction]   = useState<WeightPrediction | null>(null);
   const [homePredLoading,  setHomePredLoading]  = useState(false);
   const [homeWeightLogs,   setHomeWeightLogs]   = useState<WeightLogEntry[]>([]);
-  const [currentPage,      setCurrentPage]      = useState<"home" | "weight">("home");
+  const [currentPage,      setCurrentPage]      = useState<"home" | "weight" | "cardio">("home");
 
   const { width: screenW } = useWindowDimensions();
   const [tabBarW, setTabBarW] = useState(screenW - 40);
   // Natural tab widths measured via onLayout — lets tabs sit close together.
   const [tab0W, setTab0W] = useState(0);
   const [tab1W, setTab1W] = useState(0);
-  const homeTabOpacity   = tabAnim.interpolate({ inputRange: [0, 1], outputRange: [1,    0.22] });
-  const weightTabOpacity = tabAnim.interpolate({ inputRange: [0, 1], outputRange: [0.22, 1   ] });
-  const homeTabScale     = tabAnim.interpolate({ inputRange: [0, 1], outputRange: [1,    0.78] });
-  const weightTabScale   = tabAnim.interpolate({ inputRange: [0, 1], outputRange: [0.78, 1   ] });
+  const [tab2W, setTab2W] = useState(0);
+  const homeTabOpacity   = tabAnim.interpolate({ inputRange: [0, 1, 2], outputRange: [1,    0.22, 0.22] });
+  const weightTabOpacity = tabAnim.interpolate({ inputRange: [0, 1, 2], outputRange: [0.22, 1,    0.22] });
+  const cardioTabOpacity = tabAnim.interpolate({ inputRange: [0, 1, 2], outputRange: [0.22, 0.22, 1   ] });
+  const homeTabScale     = tabAnim.interpolate({ inputRange: [0, 1, 2], outputRange: [1,    0.78, 0.78] });
+  const weightTabScale   = tabAnim.interpolate({ inputRange: [0, 1, 2], outputRange: [0.78, 1,    0.78] });
+  const cardioTabScale   = tabAnim.interpolate({ inputRange: [0, 1, 2], outputRange: [0.78, 0.78, 1   ] });
   const [setupFields,    setSetupFields]    = useState<SetupFields>({
     display_name:   "",
     sex:            "",
@@ -503,23 +508,26 @@ function AppInner() {
 
   // Drive the tab bar opacity/scale and scroll position whenever page changes.
   useEffect(() => {
+    const toValue = currentPage === "home" ? 0 : currentPage === "weight" ? 1 : 2;
     Animated.spring(tabAnim, {
-      toValue: currentPage === "home" ? 0 : 1,
+      toValue,
       useNativeDriver: true,
       friction: 8,
       tension: 70,
     }).start();
-    if (tab0W > 0 && tab1W > 0) {
-      // With paddingHorizontal = tabBarW/2, centering tab i means scrolling to:
-      //   tab0: tab0W / 2
-      //   tab1: tab0W + TAB_GAP + tab1W / 2
+    if (tab0W > 0 && tab1W > 0 && tab2W > 0) {
       const TAB_GAP = 36;
-      const x = currentPage === "home"
-        ? tab0W / 2
-        : tab0W + TAB_GAP + tab1W / 2;
+      let x: number;
+      if (currentPage === "home") {
+        x = tab0W / 2;
+      } else if (currentPage === "weight") {
+        x = tab0W + TAB_GAP + tab1W / 2;
+      } else {
+        x = tab0W + TAB_GAP + tab1W + TAB_GAP + tab2W / 2;
+      }
       tabScrollRef.current?.scrollTo({ x, animated: true });
     }
-  }, [currentPage, tab0W, tab1W]); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [currentPage, tab0W, tab1W, tab2W]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // iOS keyboard listeners — lift the floating search bar above the keyboard.
   useEffect(() => {
@@ -1214,6 +1222,7 @@ function AppInner() {
       <ScrollView
         style={styles.scrollView}
         contentContainerStyle={styles.container}
+        scrollEnabled={currentPage !== "cardio"}
         refreshControl={
           <RefreshControl
             refreshing={refreshing}
@@ -1274,6 +1283,17 @@ function AppInner() {
           >
             <Animated.Text style={[styles.pageTabText, { opacity: weightTabOpacity, transform: [{ scale: weightTabScale }] }]}>
               Weight Projection
+            </Animated.Text>
+          </TouchableOpacity>
+          <View style={{ width: 36 }} />
+          <TouchableOpacity
+            onLayout={(e) => setTab2W(e.nativeEvent.layout.width)}
+            style={styles.pageTabItem}
+            onPress={() => setCurrentPage("cardio")}
+            activeOpacity={1}
+          >
+            <Animated.Text style={[styles.pageTabText, { opacity: cardioTabOpacity, transform: [{ scale: cardioTabScale }] }]}>
+              Cardio
             </Animated.Text>
           </TouchableOpacity>
         </ScrollView>
@@ -1947,6 +1967,12 @@ function AppInner() {
         })()}
 
       </ScrollView>
+
+      {/* Cardio plan mode — full-screen overlay when cardio tab is active.
+          Rendered outside the ScrollView so MapView touch gestures work cleanly. */}
+      {currentPage === "cardio" && (
+        <CardioScreen onBack={() => setCurrentPage("home")} />
+      )}
 
       {/* Today's calorie badge — absolutely positioned so it stays fixed
           while the ScrollView content scrolls beneath it.
@@ -6363,6 +6389,484 @@ function WeightTrendChart({ entries, unit }: { entries: WeightLogEntry[]; unit: 
     </Svg>
   );
 }
+
+// ─────────────────────────────────────────────────────────────────────────────
+// CardioScreen — Plan Mode
+// Users tap waypoints on the map; the route snaps to real walking paths via
+// OSRM's free public routing API. Distance updates live as points are added.
+// ─────────────────────────────────────────────────────────────────────────────
+
+type LatLng = { latitude: number; longitude: number };
+type RouteSegment = { coords: LatLng[]; distanceKm: number };
+
+const OSRM_FOOT = "https://router.project-osrm.org/route/v1/foot";
+
+async function fetchOsrmRoute(a: LatLng, b: LatLng): Promise<RouteSegment | null> {
+  try {
+    const url = `${OSRM_FOOT}/${a.longitude},${a.latitude};${b.longitude},${b.latitude}?overview=full&geometries=geojson`;
+    const res = await fetch(url);
+    const json = await res.json();
+    if (json.code !== "Ok" || !json.routes?.[0]) return null;
+    const route = json.routes[0];
+    const coords: LatLng[] = route.geometry.coordinates.map(
+      ([lng, lat]: [number, number]) => ({ latitude: lat, longitude: lng })
+    );
+    return { coords, distanceKm: route.distance / 1000 };
+  } catch {
+    return null;
+  }
+}
+
+function formatDistance(km: number): string {
+  if (km < 1) return `${Math.round(km * 1000)} m`;
+  return `${km.toFixed(2)} km`;
+}
+
+// Haversine distance between two points in km
+function haversineKm(a: LatLng, b: LatLng): number {
+  const R = 6371;
+  const dLat = (b.latitude - a.latitude) * Math.PI / 180;
+  const dLon = (b.longitude - a.longitude) * Math.PI / 180;
+  const s = Math.sin(dLat / 2) ** 2 +
+    Math.cos(a.latitude * Math.PI / 180) *
+    Math.cos(b.latitude * Math.PI / 180) *
+    Math.sin(dLon / 2) ** 2;
+  return R * 2 * Math.atan2(Math.sqrt(s), Math.sqrt(1 - s));
+}
+
+// Perpendicular distance from point p to the line segment a→b (in km).
+// Used to find which segment a long-press is closest to.
+function pointToSegmentDistKm(p: LatLng, a: LatLng, b: LatLng): number {
+  const dx = b.longitude - a.longitude;
+  const dy = b.latitude - a.latitude;
+  if (dx === 0 && dy === 0) return haversineKm(p, a);
+  const t = Math.max(0, Math.min(1,
+    ((p.longitude - a.longitude) * dx + (p.latitude - a.latitude) * dy) / (dx * dx + dy * dy)
+  ));
+  return haversineKm(p, { latitude: a.latitude + t * dy, longitude: a.longitude + t * dx });
+}
+
+// Straight-line fallback segment when OSRM is unavailable
+function straightSegment(a: LatLng, b: LatLng): RouteSegment {
+  return { coords: [a, b], distanceKm: haversineKm(a, b) };
+}
+
+function CardioScreen({ onBack }: { onBack: () => void }) {
+  const insets = useSafeAreaInsets();
+  const [locationGranted, setLocationGranted] = useState<boolean | null>(null);
+  const [userLocation, setUserLocation] = useState<LatLng | null>(null);
+  const [waypoints, setWaypoints] = useState<LatLng[]>([]);
+  const [segments, setSegments] = useState<RouteSegment[]>([]);
+  const [totalKm, setTotalKm] = useState(0);
+  const [routing, setRouting] = useState(false);
+  const [savedName, setSavedName] = useState<string | null>(null);
+  const mapRef = useRef<MapView>(null);
+  // Stable refs so async callbacks always see the latest state
+  const waypointsRef = useRef(waypoints);
+  const segmentsRef  = useRef(segments);
+  useEffect(() => { waypointsRef.current = waypoints; }, [waypoints]);
+  useEffect(() => { segmentsRef.current  = segments;  }, [segments]);
+
+  useEffect(() => {
+    (async () => {
+      const { status } = await Location.requestForegroundPermissionsAsync();
+      if (status !== "granted") { setLocationGranted(false); return; }
+      setLocationGranted(true);
+      const loc = await Location.getCurrentPositionAsync({ accuracy: Location.Accuracy.High });
+      const pt = { latitude: loc.coords.latitude, longitude: loc.coords.longitude };
+      setUserLocation(pt);
+      mapRef.current?.animateToRegion({ ...pt, latitudeDelta: 0.01, longitudeDelta: 0.01 }, 800);
+    })();
+  }, []);
+
+  // Tap → append waypoint to end of route
+  const handleMapPress = useCallback(async (e: any) => {
+    const tapped: LatLng = e.nativeEvent.coordinate;
+    const wps = waypointsRef.current;
+    const prev = wps[wps.length - 1];
+
+    if (prev) {
+      setRouting(true);
+      const seg = await fetchOsrmRoute(prev, tapped) ?? straightSegment(prev, tapped);
+      setRouting(false);
+      setSegments(s => [...s, seg]);
+      setTotalKm(k => k + seg.distanceKm);
+    }
+
+    setWaypoints(w => [...w, tapped]);
+  }, []);
+
+  // Long-press → insert waypoint into the nearest existing segment
+  const handleLongPress = useCallback(async (e: any) => {
+    const tapped: LatLng = e.nativeEvent.coordinate;
+    const wps = waypointsRef.current;
+    const segs = segmentsRef.current;
+
+    // With 0 or 1 waypoints there's no segment yet — fall through to append
+    if (wps.length < 2) {
+      handleMapPress(e);
+      return;
+    }
+
+    // Find the segment closest to the long-pressed point
+    let nearestIdx = 0;
+    let minDist = Infinity;
+    for (let i = 0; i < wps.length - 1; i++) {
+      const d = pointToSegmentDistKm(tapped, wps[i], wps[i + 1]);
+      if (d < minDist) { minDist = d; nearestIdx = i; }
+    }
+
+    setRouting(true);
+    const [seg1, seg2] = await Promise.all([
+      fetchOsrmRoute(wps[nearestIdx], tapped),
+      fetchOsrmRoute(tapped, wps[nearestIdx + 1]),
+    ]);
+    setRouting(false);
+
+    const s1 = seg1 ?? straightSegment(wps[nearestIdx], tapped);
+    const s2 = seg2 ?? straightSegment(tapped, wps[nearestIdx + 1]);
+    const oldDist = segs[nearestIdx].distanceKm;
+
+    setWaypoints(w => {
+      const next = [...w];
+      next.splice(nearestIdx + 1, 0, tapped);
+      return next;
+    });
+    setSegments(s => {
+      const next = [...s];
+      next.splice(nearestIdx, 1, s1, s2);
+      return next;
+    });
+    setTotalKm(k => Math.max(0, k - oldDist + s1.distanceKm + s2.distanceKm));
+  }, [handleMapPress]);
+
+  // Drag existing marker → re-snap the two segments touching it
+  const handleMarkerDrag = useCallback(async (index: number, newCoord: LatLng) => {
+    const wps = waypointsRef.current;
+    const segs = segmentsRef.current;
+
+    const newWps = [...wps];
+    newWps[index] = newCoord;
+
+    setRouting(true);
+
+    const fetches: Promise<RouteSegment | null>[] = [];
+    if (index > 0)             fetches.push(fetchOsrmRoute(newWps[index - 1], newCoord));
+    if (index < wps.length - 1) fetches.push(fetchOsrmRoute(newCoord, newWps[index + 1]));
+    const results = await Promise.all(fetches);
+
+    const newSegs = [...segs];
+    let kmDelta = 0;
+    let ri = 0;
+
+    if (index > 0) {
+      const old = segs[index - 1];
+      const fresh = results[ri++] ?? straightSegment(newWps[index - 1], newCoord);
+      kmDelta += fresh.distanceKm - old.distanceKm;
+      newSegs[index - 1] = fresh;
+    }
+    if (index < wps.length - 1) {
+      const old = segs[index];
+      const fresh = results[ri++] ?? straightSegment(newCoord, newWps[index + 1]);
+      kmDelta += fresh.distanceKm - old.distanceKm;
+      newSegs[index] = fresh;
+    }
+
+    setRouting(false);
+    setWaypoints(newWps);
+    setSegments(newSegs);
+    setTotalKm(k => Math.max(0, k + kmDelta));
+  }, []);
+
+  const handleUndo = useCallback(() => {
+    const wps = waypointsRef.current;
+    const segs = segmentsRef.current;
+    if (wps.length === 0) return;
+    if (segs.length > 0) {
+      setTotalKm(k => Math.max(0, k - segs[segs.length - 1].distanceKm));
+      setSegments(s => s.slice(0, -1));
+    }
+    setWaypoints(w => w.slice(0, -1));
+  }, []);
+
+  const handleClear = useCallback(() => {
+    setWaypoints([]);
+    setSegments([]);
+    setTotalKm(0);
+    setSavedName(null);
+  }, []);
+
+  const handleSave = useCallback(() => {
+    if (waypointsRef.current.length < 2) return;
+    setSavedName(`${formatDistance(totalKm)} route`);
+  }, [totalKm]);
+
+  const initialRegion = userLocation
+    ? { ...userLocation, latitudeDelta: 0.01, longitudeDelta: 0.01 }
+    : { latitude: 37.7749, longitude: -122.4194, latitudeDelta: 0.05, longitudeDelta: 0.05 };
+
+  const hintText = waypoints.length === 0
+    ? "Tap to place your starting point"
+    : routing
+      ? "Routing…"
+      : waypoints.length === 1
+        ? "Tap to continue · long-press to insert · drag dots to adjust"
+        : `${formatDistance(totalKm)} · tap to extend · long-press to insert · drag dots to adjust`;
+
+  return (
+    <View style={cardioStyles.container}>
+      <View style={[cardioStyles.header, { paddingTop: insets.top + 10 }]}>
+        <TouchableOpacity onPress={onBack} style={cardioStyles.backBtn} activeOpacity={0.75}>
+          <Ionicons name="chevron-back" size={22} color="#1A1A14" />
+          <Text style={cardioStyles.backLabel}>Back</Text>
+        </TouchableOpacity>
+        <Text style={cardioStyles.title}>Plan Route</Text>
+        <View style={{ width: 70 }} />
+      </View>
+
+      {locationGranted === false ? (
+        <View style={cardioStyles.permissionBox}>
+          <Text style={cardioStyles.permissionText}>
+            Location access is needed to center the map on your neighborhood.
+            Enable it in Settings → Lume → Location.
+          </Text>
+        </View>
+      ) : (
+        <>
+          <View style={cardioStyles.hintBar}>
+            <Text style={cardioStyles.hintText}>{hintText}</Text>
+          </View>
+
+          <MapView
+            ref={mapRef}
+            style={cardioStyles.map}
+            provider={PROVIDER_DEFAULT}
+            initialRegion={initialRegion}
+            onPress={handleMapPress}
+            onLongPress={handleLongPress}
+            showsUserLocation
+            showsMyLocationButton={false}
+          >
+            {segments.map((seg, i) => (
+              <Polyline
+                key={`seg-${i}`}
+                coordinates={seg.coords}
+                strokeColor="#E86F2C"
+                strokeWidth={4}
+              />
+            ))}
+            {waypoints.map((pt, i) => (
+              <Marker
+                key={`wp-${i}`}
+                coordinate={pt}
+                anchor={{ x: 0.5, y: 0.5 }}
+                draggable
+                onDragEnd={(e) => handleMarkerDrag(i, e.nativeEvent.coordinate)}
+              >
+                <View style={[
+                  cardioStyles.dot,
+                  i === 0 && cardioStyles.dotStart,
+                  i === waypoints.length - 1 && i !== 0 && cardioStyles.dotEnd,
+                ]} />
+              </Marker>
+            ))}
+          </MapView>
+
+          <View style={[cardioStyles.panel, { paddingBottom: insets.bottom + 12 }]}>
+            {savedName ? (
+              <View style={cardioStyles.savedRow}>
+                <Ionicons name="checkmark-circle" size={20} color="#4CAF50" />
+                <Text style={cardioStyles.savedText}>Saved: {savedName}</Text>
+              </View>
+            ) : (
+              <Text style={cardioStyles.distanceText}>
+                {totalKm > 0 ? formatDistance(totalKm) : "0 m"}
+              </Text>
+            )}
+
+            <View style={cardioStyles.btnRow}>
+              <TouchableOpacity
+                style={[cardioStyles.ctrlBtn, waypoints.length === 0 && cardioStyles.ctrlBtnDisabled]}
+                onPress={handleUndo}
+                disabled={waypoints.length === 0}
+                activeOpacity={0.75}
+              >
+                <Ionicons name="arrow-undo" size={18} color={waypoints.length === 0 ? "#ccc" : "#1A1A14"} />
+                <Text style={[cardioStyles.ctrlBtnLabel, waypoints.length === 0 && { color: "#ccc" }]}>Undo</Text>
+              </TouchableOpacity>
+
+              <TouchableOpacity
+                style={[cardioStyles.ctrlBtn, waypoints.length === 0 && cardioStyles.ctrlBtnDisabled]}
+                onPress={handleClear}
+                disabled={waypoints.length === 0}
+                activeOpacity={0.75}
+              >
+                <Ionicons name="trash-outline" size={18} color={waypoints.length === 0 ? "#ccc" : "#1A1A14"} />
+                <Text style={[cardioStyles.ctrlBtnLabel, waypoints.length === 0 && { color: "#ccc" }]}>Clear</Text>
+              </TouchableOpacity>
+
+              <TouchableOpacity
+                style={[cardioStyles.saveBtn, waypoints.length < 2 && cardioStyles.ctrlBtnDisabled]}
+                onPress={handleSave}
+                disabled={waypoints.length < 2}
+                activeOpacity={0.75}
+              >
+                <Text style={[cardioStyles.saveBtnLabel, waypoints.length < 2 && { color: "#ccc" }]}>Save Route</Text>
+              </TouchableOpacity>
+            </View>
+          </View>
+        </>
+      )}
+    </View>
+  );
+}
+
+const cardioStyles = StyleSheet.create({
+  container: {
+    ...StyleSheet.absoluteFillObject,
+    backgroundColor: "#fff",
+    zIndex: 100,
+  },
+  header: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "space-between",
+    paddingHorizontal: 16,
+    paddingBottom: 10,
+    backgroundColor: "#FFFEF8",
+    borderBottomWidth: 1,
+    borderBottomColor: "rgba(0,0,0,0.06)",
+  },
+  backBtn: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 2,
+    width: 70,
+  },
+  backLabel: {
+    fontFamily: "Inter-Variable",
+    fontSize: 16,
+    color: "#1A1A14",
+  },
+  title: {
+    fontFamily: "Chillax-SemiBold",
+    fontSize: 18,
+    color: "#1A1A14",
+    letterSpacing: -0.3,
+  },
+  hintBar: {
+    backgroundColor: "rgba(255,254,248,0.95)",
+    paddingVertical: 8,
+    paddingHorizontal: 16,
+    alignItems: "center",
+    borderBottomWidth: 1,
+    borderBottomColor: "rgba(0,0,0,0.04)",
+  },
+  hintText: {
+    fontFamily: "Inter-Variable",
+    fontSize: 13,
+    color: "#6B6B5E",
+  },
+  map: {
+    flex: 1,
+  },
+  dot: {
+    width: 14,
+    height: 14,
+    borderRadius: 7,
+    backgroundColor: "#E86F2C",
+    borderWidth: 2,
+    borderColor: "#fff",
+  },
+  dotStart: {
+    backgroundColor: "#4CAF50",
+    width: 18,
+    height: 18,
+    borderRadius: 9,
+  },
+  dotEnd: {
+    backgroundColor: "#E86F2C",
+    width: 16,
+    height: 16,
+    borderRadius: 8,
+  },
+  panel: {
+    backgroundColor: "#FFFEF8",
+    paddingTop: 16,
+    paddingHorizontal: 20,
+    borderTopWidth: 1,
+    borderTopColor: "rgba(0,0,0,0.06)",
+    gap: 14,
+  },
+  distanceText: {
+    fontFamily: "Chillax-SemiBold",
+    fontSize: 36,
+    color: "#1A1A14",
+    textAlign: "center",
+    letterSpacing: -1,
+  },
+  savedRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "center",
+    gap: 8,
+  },
+  savedText: {
+    fontFamily: "Inter-Variable",
+    fontSize: 16,
+    color: "#4CAF50",
+  },
+  btnRow: {
+    flexDirection: "row",
+    gap: 10,
+    alignItems: "center",
+  },
+  ctrlBtn: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 6,
+    paddingVertical: 10,
+    paddingHorizontal: 16,
+    borderRadius: 12,
+    backgroundColor: "rgba(0,0,0,0.05)",
+  },
+  ctrlBtnDisabled: {
+    opacity: 0.4,
+  },
+  ctrlBtnLabel: {
+    fontFamily: "Inter-Variable",
+    fontSize: 15,
+    color: "#1A1A14",
+    fontWeight: "500",
+  },
+  saveBtn: {
+    flex: 1,
+    alignItems: "center",
+    paddingVertical: 10,
+    paddingHorizontal: 16,
+    borderRadius: 12,
+    backgroundColor: "#E86F2C",
+  },
+  saveBtnLabel: {
+    fontFamily: "Chillax-SemiBold",
+    fontSize: 15,
+    color: "#fff",
+    letterSpacing: -0.2,
+  },
+  permissionBox: {
+    flex: 1,
+    alignItems: "center",
+    justifyContent: "center",
+    padding: 32,
+  },
+  permissionText: {
+    fontFamily: "Inter-Variable",
+    fontSize: 15,
+    color: "#6B6B5E",
+    textAlign: "center",
+    lineHeight: 22,
+  },
+});
 
 type WeightPrediction = {
   latest_weight_kg:        number | null;
