@@ -1,9 +1,8 @@
-import re
 import httpx
 
 # Reuse macro extraction helpers from barcode_service — same provider, same
 # nutriments structure, no need to duplicate the logic.
-from app.services.barcode_service import _get_macros, _nutrition_tier, _safe_float
+from app.services.barcode_service import _get_macros, _nutrition_tier, _safe_float, _parse_serving_grams, _parse_fl_oz_only
 from app.services.candidate_scorer import score_candidate
 from app.services.debug_logger import log_off_candidates, log_rejection
 
@@ -29,47 +28,6 @@ MIN_SCORE = 10
 # ---------------------------------------------------------------------------
 # Internal helpers
 # ---------------------------------------------------------------------------
-
-def _parse_serving_grams(serving_size: str) -> float | None:
-    """
-    Try to extract a gram value from an OFF serving_size string.
-
-    Handles common formats:
-      "43 g"  "43g"  "1.55 oz"  "1.55oz"  "30 ml"  "13.7 fl oz"
-
-    Returns None when the string is unparseable or the value is implausible.
-    """
-    s = serving_size.lower().strip()
-    # Direct grams / ml
-    m = re.search(r"([\d.]+)\s*(g|ml|gr)\b", s)
-    if m:
-        val = float(m.group(1))
-        return val if 1 < val < 2000 else None
-    # Fluid ounces → ml ≈ g (water-density beverages; must precede plain-oz check)
-    m = re.search(r"([\d.]+)\s*fl\.?\s*oz\b", s)
-    if m:
-        val = float(m.group(1)) * 29.5735
-        return val if 1 < val < 2000 else None
-    # Solid ounces → grams
-    m = re.search(r"([\d.]+)\s*oz\b", s)
-    if m:
-        val = float(m.group(1)) * 28.3495
-        return val if 1 < val < 2000 else None
-    return None
-
-
-def _parse_fl_oz_only(s: str) -> float | None:
-    """
-    Return grams ONLY for fl-oz strings (beverages).  Returns None for any
-    other unit so that solid-food package quantities (e.g. "263 g" for a
-    multi-bar Hershey package) are never accidentally used as serving sizes.
-    Capped at 700 ml to exclude multi-litre containers.
-    """
-    m = re.search(r"([\d.]+)\s*fl\.?\s*oz\b", s.lower())
-    if m:
-        val = float(m.group(1)) * 29.5735
-        return val if 1 < val <= 700 else None
-    return None
 
 
 # ---------------------------------------------------------------------------
@@ -122,12 +80,18 @@ def _normalize_product(product: dict) -> dict | None:
 
     calories, protein, carbs, fat = macros
 
+    # C2 outlier guard: corrupt OFF bulk entries can have wildly wrong calorie
+    # values (e.g. 47,000 kcal). Reject before any scaling so bad data never
+    # surfaces. 3,000 kcal/serving is already extreme for a packaged food item.
+    if calories > 3000:
+        return None
+
     _brands_raw  = product.get("brands") or ""
     brand        = (", ".join(_brands_raw) if isinstance(_brands_raw, list) else _brands_raw).strip() or None
     serving_str  = (product.get("serving_size") or "").strip() or None
 
     # Scale per-100g macros to per-serving using a three-level cascade:
-    #   1. serving_size field (rarely present in OFF v3 search results)
+    #   1. serving_size field from OFF response
     #   2. quantity field parsed as fl oz (single-serve beverages only)
     #   3. _OFF_SERVING_GRAMS keyword lookup (known packaged foods)
     tier = _nutrition_tier(nutriments)
@@ -189,10 +153,13 @@ def search_packaged_product(query: str) -> dict | None:
         response = httpx.get(
             OPENFOODFACTS_SEARCH_URL,
             params={
-                "q":         query.strip(),
-                "page_size": MAX_CANDIDATES,
-                # Request only the fields we actually use to keep response light
-                "fields": "product_name,product_name_en,brands,serving_size,nutriments",
+                "q":                  query.strip(),
+                "page_size":          MAX_CANDIDATES,
+                # C3: restrict to US-sold products (reduces UK/EU supermarket hits
+                # for US brand queries).
+                "countries_tags_en":  "en:united-states",
+                # Request all fields we use (quantity needed for fl-oz beverage path).
+                "fields": "product_name,product_name_en,brands,serving_size,quantity,nutriments",
             },
             timeout=REQUEST_TIMEOUT,
             headers={"User-Agent": "Lume-App/1.0 (calorie tracker)"},

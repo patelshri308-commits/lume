@@ -84,6 +84,43 @@ def _get_macros(nutriments: dict) -> tuple | None:
 # Phase 2: serving-tier detection
 # ---------------------------------------------------------------------------
 
+def _parse_serving_grams(serving_size: str) -> float | None:
+    """
+    Extract a gram weight from an OFF serving_size string.
+
+    Handles common formats: "43 g", "43g", "1.55 oz", "30 ml", "13.7 fl oz".
+    Returns None when unparseable or the value is implausible (< 1g or > 2000g).
+    """
+    import re as _re
+    s = serving_size.lower().strip()
+    # Direct grams / ml (treat ml as g — water-density approximation)
+    m = _re.search(r"([\d.]+)\s*(g|ml|gr)\b", s)
+    if m:
+        val = float(m.group(1))
+        return val if 1 < val < 2000 else None
+    # Fluid ounces → ml (must precede plain-oz check)
+    m = _re.search(r"([\d.]+)\s*fl\.?\s*oz\b", s)
+    if m:
+        val = float(m.group(1)) * 29.5735
+        return val if 1 < val < 2000 else None
+    # Solid ounces → grams
+    m = _re.search(r"([\d.]+)\s*oz\b", s)
+    if m:
+        val = float(m.group(1)) * 28.3495
+        return val if 1 < val < 2000 else None
+    return None
+
+
+def _parse_fl_oz_only(s: str) -> float | None:
+    """Return grams ONLY for fl-oz strings (beverages). Capped at 700 ml."""
+    import re as _re
+    m = _re.search(r"([\d.]+)\s*fl\.?\s*oz\b", s.lower())
+    if m:
+        val = float(m.group(1)) * 29.5735
+        return val if 1 < val <= 700 else None
+    return None
+
+
 def _clean_brand(raw: str) -> str:
     """
     Normalize a raw Open Food Facts brand string.

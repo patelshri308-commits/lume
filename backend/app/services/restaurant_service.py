@@ -2,7 +2,7 @@ import httpx
 
 # Reuse macro extraction helpers from barcode_service — same provider, same
 # nutriments structure, no need to duplicate the logic.
-from app.services.barcode_service import _get_macros, _nutrition_tier, _safe_float
+from app.services.barcode_service import _get_macros, _nutrition_tier, _safe_float, _parse_serving_grams, _parse_fl_oz_only
 from app.services.candidate_scorer import score_candidate
 from app.services.debug_logger import log_off_candidates, log_rejection
 
@@ -28,17 +28,6 @@ MIN_SCORE = 10
 # ---------------------------------------------------------------------------
 # Serving-size helpers (OFF v3 does not return serving_size)
 # ---------------------------------------------------------------------------
-
-import re as _re
-
-def _parse_fl_oz_only(s: str) -> float | None:
-    """Return grams only for fl-oz strings (single-serve beverages). Capped at 700 ml."""
-    m = _re.search(r"([\d.]+)\s*fl\.?\s*oz\b", s.lower())
-    if m:
-        val = float(m.group(1)) * 29.5735
-        return val if 1 < val <= 700 else None
-    return None
-
 
 _OFF_SERVING_GRAMS: dict[str, float] = {
     "chipotle chicken bowl": 450.0,   # full meal-prep / restaurant bowl
@@ -86,15 +75,22 @@ def _normalize_product(product: dict) -> dict | None:
     brand       = (", ".join(_brands_raw) if isinstance(_brands_raw, list) else _brands_raw).strip() or None
     serving_str = (product.get("serving_size") or "").strip() or None
 
+    # C2 outlier guard: reject physically impossible entries before any scaling.
+    # A single food item over 3,000 kcal is essentially never legitimate; the
+    # known failure mode is a corrupt OFF bulk entry (e.g. 47,000 kcal) that
+    # slips through scoring because the product name matches well.
+    if calories > 3000:
+        return None
+
     # Scale per-100g macros to per-serving using a three-level cascade:
-    #   1. serving_size field (rarely present in OFF v3 search results)
+    #   1. serving_size field from OFF response
     #   2. quantity field parsed as fl oz (single-serve beverages only)
     #   3. _OFF_SERVING_GRAMS keyword lookup (known restaurant/meal foods)
     tier = _nutrition_tier(nutriments)
     if tier == "_100g":
         serving_g = None
         if serving_str:
-            pass  # serving_str from OFF v3 is always absent; kept for future-proofing
+            serving_g = _parse_serving_grams(serving_str)
         if serving_g is None:
             qty_str = (product.get("quantity") or "").strip()
             if qty_str:
@@ -149,10 +145,13 @@ def search_restaurant_item(query: str) -> dict | None:
         response = httpx.get(
             OPENFOODFACTS_SEARCH_URL,
             params={
-                "q":         query.strip(),
-                "page_size": MAX_CANDIDATES,
-                # Request only the fields we actually use to keep response light
-                "fields": "product_name,product_name_en,brands,serving_size,nutriments",
+                "q":                  query.strip(),
+                "page_size":          MAX_CANDIDATES,
+                # C3: restrict to US-sold products so US restaurant queries
+                # don't match identically-named UK supermarket entries.
+                "countries_tags_en":  "en:united-states",
+                # Request all fields we use (quantity added for fl-oz beverage path).
+                "fields": "product_name,product_name_en,brands,serving_size,quantity,nutriments",
             },
             timeout=REQUEST_TIMEOUT,
             headers={"User-Agent": "Lume-App/1.0 (calorie tracker)"},

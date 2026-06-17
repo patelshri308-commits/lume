@@ -270,6 +270,58 @@ _GENERIC_FOOD_PROFILES: dict[str, GenericFoodProfile] = {
             "tsp": 4.7,   "teaspoon": 4.7,    "teaspoons": 4.7,
         },
     ),
+    # ── Condiments & spreads (tbsp-scale) ────────────────────────────────────
+    "honey": GenericFoodProfile(
+        search_query="honey",
+        default_grams=21,   # 1 tbsp default serving
+        prefer_terms=("honey",),
+        avoid_terms=("cake", "mustard", "glazed", "barbecue", "butter"),
+        unit_grams={
+            "tbsp": 21.0, "tablespoon": 21.0, "tablespoons": 21.0,
+            "tsp": 7.0,   "teaspoon": 7.0,    "teaspoons": 7.0,
+        },
+    ),
+    "hummus": GenericFoodProfile(
+        search_query="hummus",
+        default_grams=60,   # ~4 tbsp / typical dip serving
+        prefer_terms=("hummus",),
+        avoid_terms=("chip", "pita", "wrap"),
+        unit_grams={
+            "tbsp": 15.0, "tablespoon": 15.0, "tablespoons": 15.0,
+            "cup": 246.0, "cups": 246.0,
+        },
+    ),
+    "cream cheese": GenericFoodProfile(
+        search_query="cream cheese",
+        default_grams=29,   # ~2 tbsp default serving
+        prefer_terms=("cream", "cheese"),
+        avoid_terms=("cake", "frosting", "icing", "pie", "fat-free"),
+        unit_grams={
+            "tbsp": 14.5, "tablespoon": 14.5, "tablespoons": 14.5,
+            "oz": 28.35,
+        },
+    ),
+    "sour cream": GenericFoodProfile(
+        search_query="sour cream",
+        default_grams=30,   # 2 tbsp default serving
+        prefer_terms=("sour", "cream"),
+        avoid_terms=("reduced fat", "fat free", "nonfat"),
+        unit_grams={
+            "tbsp": 15.0, "tablespoon": 15.0, "tablespoons": 15.0,
+            "cup": 230.0, "cups": 230.0,
+        },
+    ),
+    "heavy cream": GenericFoodProfile(
+        search_query="cream heavy whipping",
+        default_grams=15,   # 1 tbsp default serving
+        prefer_terms=("cream", "heavy", "whipping"),
+        avoid_terms=("half", "light", "sour", "cheese", "ice cream"),
+        unit_grams={
+            "tbsp": 15.0, "tablespoon": 15.0, "tablespoons": 15.0,
+            "tsp": 5.0,   "teaspoon": 5.0,    "teaspoons": 5.0,
+            "cup": 238.0, "cups": 238.0,
+        },
+    ),
     "sugar": GenericFoodProfile(
         search_query="sugar granulated",
         default_grams=4,    # 1 tsp default serving
@@ -553,7 +605,10 @@ _PROFILE_ALIASES: dict[str, str] = {
     "black bean":       "black beans",
     "wheat bread":      "whole wheat bread",
     "whole grain bread": "whole wheat bread",
+    "toast":            "white bread",
+    "toasted bread":    "white bread",
     "greek yoghurt":    "greek yogurt",
+    "yogurt":           "greek yogurt",
     "oj":               "orange juice",
     # ── Bare / short forms → reasonable canonical ─────────────────────────────
     "chicken":          "chicken breast",
@@ -622,6 +677,12 @@ _PROFILE_ALIASES: dict[str, str] = {
     # full phrase.
     "chicken and rice bowl": "chicken rice bowl",
     "chicken and rice":      "chicken rice bowl",
+    # ── Condiment short-form aliases ─────────────────────────────────────────
+    "whipping cream":        "heavy cream",
+    "whipped cream":         "heavy cream",
+    "heavy whipping cream":  "heavy cream",
+    "full fat cream cheese": "cream cheese",
+    "low fat sour cream":    "sour cream",
 }
 
 

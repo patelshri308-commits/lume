@@ -74,7 +74,7 @@ from app.services.nutrition_service import get_nutrition
 # (e.g. "eggs and toast" — that SHOULD decompose).  Only add phrases where
 # fragmentation produces a clearly wrong result.
 _KNOWN_WHOLE_FOODS: frozenset[str] = frozenset({
-    # Sandwiches (Phase 9B)
+    # Sandwiches
     "peanut butter and jelly sandwich",
     "pbj sandwich",
     "peanut butter jelly sandwich",
@@ -83,18 +83,35 @@ _KNOWN_WHOLE_FOODS: frozenset[str] = frozenset({
     "turkey sandwich",
     "turkey sandwich on wheat",
     "turkey sandwich on rye",
-    # Meal bowls (Phase 9C)
+    # Meal bowls
     "chicken and rice bowl",
     "chicken rice bowl",
-    # Coffee add-ins (Phase 9D) — prevent decomposition from adding a full cup
-    # of milk (244 g → ~150 kcal) instead of a realistic 30 g splash.
+    # "chicken and rice" — has a profile alias → "chicken rice bowl" (~400g meal).
+    # Without this entry the " and " triggers decomposition into bare "chicken"
+    # (no verified entry) + "rice" (white rice 205 kcal) which badly underestimates
+    # a full bowl meal.
+    "chicken and rice",
+    "chicken and rice bowl",
+    # Breakfast plates — decomposition works here (both sides are verified),
+    # but the canonical dish name should stay whole for profile lookup.
+    "bacon and eggs",
+    "eggs and bacon",
+    # Coffee add-ins — prevent decomposition from adding a full cup of milk
+    # (244g → ~150 kcal) instead of a realistic splash.
     "coffee with milk",
     "coffee with cream",
+    "coffee with creamer",
+    # Tea add-ins — same reasoning as coffee.
+    "tea with milk",
+    "tea with honey",
+    "tea with lemon",
     # NOTE: "salad with chicken" is intentionally NOT in this set.
     # Composite decomposition (salad ≈ 30 kcal + chicken ≈ 165 kcal ≈ 200 kcal)
-    # stays within the Phase 8D acceptance range (168–712) and avoids the risk
-    # of USDA matching a high-fat prepared chicken salad (≥250 kcal/100g) and
-    # over-scaling it against a full-meal default_grams.
+    # stays within the acceptance range and avoids the risk of USDA matching a
+    # high-fat prepared chicken salad (≥250 kcal/100g) over-scaled to a full meal.
+    # NOTE: "rice and beans", "steak and potatoes", "eggs and toast" are also
+    # intentionally excluded — they genuinely ARE two foods and decompose correctly
+    # now that "potatoes" / "beans" aliases are in place.
 })
 
 
@@ -242,6 +259,7 @@ def _resolve_component(
         quantity=comp_parsed.quantity,
         unit=comp_parsed.unit,
         size_modifier=size_mod,
+        prefer_generic=True,
     )
 
 

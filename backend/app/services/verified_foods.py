@@ -501,6 +501,78 @@ _VERIFIED_FOODS: dict[str, VerifiedFoodEntry] = {
         unit_grams={"cup": 172, "cups": 172},
     ),
 
+    # ── Condiments & spreads ─────────────────────────────────────────────────
+    # These are all high-kcal/100g foods consumed in tablespoon-scale portions.
+    # Without a verified entry the pipeline returns raw per-100g values (304,
+    # 342, 340 kcal etc.) as the logged total — a 3–7× overcount.
+
+    # 304.0 kcal/100g × 21g (1 tbsp) = 63.8 kcal
+    "honey": VerifiedFoodEntry(
+        calories_per_100g=304.0,
+        protein_per_100g=0.3,
+        carbs_per_100g=82.4,
+        fat_per_100g=0.0,
+        source_name="Honey",
+        default_grams=21,
+        unit_grams={
+            "tbsp": 21, "tablespoon": 21, "tablespoons": 21,
+            "tsp": 7,   "teaspoon": 7,   "teaspoons": 7,
+        },
+    ),
+    # 166.0 kcal/100g × 60g (4 tbsp / typical dip serving) = 99.6 kcal
+    "hummus": VerifiedFoodEntry(
+        calories_per_100g=166.0,
+        protein_per_100g=7.9,
+        carbs_per_100g=14.3,
+        fat_per_100g=9.6,
+        source_name="Hummus, commercial",
+        default_grams=60,
+        unit_grams={
+            "tbsp": 15, "tablespoon": 15, "tablespoons": 15,
+            "cup": 246, "cups": 246,
+        },
+    ),
+    # 342.0 kcal/100g × 29g (2 tbsp / typical bagel spread) = 99.2 kcal
+    "cream cheese": VerifiedFoodEntry(
+        calories_per_100g=342.0,
+        protein_per_100g=5.9,
+        carbs_per_100g=4.1,
+        fat_per_100g=34.2,
+        source_name="Cream cheese",
+        default_grams=29,
+        unit_grams={
+            "tbsp": 14.5, "tablespoon": 14.5, "tablespoons": 14.5,
+            "oz": 28.35,
+        },
+    ),
+    # 198.0 kcal/100g × 30g (2 tbsp) = 59.4 kcal
+    "sour cream": VerifiedFoodEntry(
+        calories_per_100g=198.0,
+        protein_per_100g=2.4,
+        carbs_per_100g=4.6,
+        fat_per_100g=19.4,
+        source_name="Sour cream, regular",
+        default_grams=30,
+        unit_grams={
+            "tbsp": 15, "tablespoon": 15, "tablespoons": 15,
+            "cup": 230, "cups": 230,
+        },
+    ),
+    # 340.0 kcal/100g × 15g (1 tbsp) = 51.0 kcal
+    "heavy cream": VerifiedFoodEntry(
+        calories_per_100g=340.0,
+        protein_per_100g=2.1,
+        carbs_per_100g=2.8,
+        fat_per_100g=36.1,
+        source_name="Cream, fluid, heavy whipping",
+        default_grams=15,
+        unit_grams={
+            "tbsp": 15, "tablespoon": 15, "tablespoons": 15,
+            "tsp": 5,   "teaspoon": 5,   "teaspoons": 5,
+            "cup": 238, "cups": 238,
+        },
+    ),
+
     # ── Oils ─────────────────────────────────────────────────────────────────
 
     # 884.0 kcal/100g × 13.5g (1 tbsp) = 119.3 kcal
@@ -588,9 +660,14 @@ _VERIFIED_ALIASES: dict[str, str] = {
     "pan seared chicken": "chicken breast",
     # ── Dairy ────────────────────────────────────────────────────────────────
     "greek yoghurt":    "greek yogurt",
+    "yogurt":           "greek yogurt",
     # ── Grains ───────────────────────────────────────────────────────────────
     "wheat bread":      "whole wheat bread",
     "whole grain bread": "whole wheat bread",
+    # Toast is nutritionally identical to white bread (toasting loses <5 kcal
+    # of water weight per slice — not worth a separate entry).
+    "toast":            "white bread",
+    "toasted bread":    "white bread",
     # ── Nuts / legumes ───────────────────────────────────────────────────────
     "almond":           "almonds",
     "walnut":           "walnuts",
@@ -599,6 +676,12 @@ _VERIFIED_ALIASES: dict[str, str] = {
     "beans":            "black beans",
     # ── Beverages ────────────────────────────────────────────────────────────
     "oj":               "orange juice",
+    # ── Condiments & spreads ─────────────────────────────────────────────────
+    "whipping cream":       "heavy cream",
+    "heavy whipping cream": "heavy cream",
+    "whipped cream":        "heavy cream",
+    "full fat cream cheese": "cream cheese",
+    "low fat sour cream":   "sour cream",
 }
 
 
