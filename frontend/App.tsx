@@ -379,6 +379,9 @@ function AppInner() {
   const [wlDurationStr,       setWlDurationStr]       = useState("");
   const [wlUnit,              setWlUnit]              = useState<"km"|"mi">("km");
   const [wlSaving,            setWlSaving]            = useState(false);
+  const [weeklySummary,       setWeeklySummary]       = useState<{ distanceKm: number; durationMin: number; calories: number; count: number } | null>(null);
+  const [recentRoutes,        setRecentRoutes]        = useState<{ id: string; name: string; distance_km: number; elev_gain_m: number | null; waypoints: { latitude: number; longitude: number }[]; created_at: string }[]>([]);
+  const [cardioInitialRoute,  setCardioInitialRoute]  = useState<{ id: string; name: string; distance_km: number; elev_gain_m: number | null; waypoints: { latitude: number; longitude: number }[]; created_at: string } | null>(null);
 
   const { width: screenW } = useWindowDimensions();
   const [tabBarW, setTabBarW] = useState(screenW - 40);
@@ -993,6 +996,42 @@ function AppInner() {
       fetchHomeWeightLogs();
     }
   }, [isWeightOpen]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  // Fetch weekly cardio summary whenever the cardio tab is opened or a workout is saved.
+  const fetchWeeklySummary = useCallback(async () => {
+    if (!session?.user.id) return;
+    const now = new Date();
+    const day = now.getDay();
+    const monday = new Date(now);
+    monday.setDate(now.getDate() - (day === 0 ? 6 : day - 1));
+    monday.setHours(0, 0, 0, 0);
+    const [logsRes, routesRes] = await Promise.all([
+      supabase
+        .from("cardio_logs")
+        .select("distance_km, duration_min, calories")
+        .eq("user_id", session.user.id)
+        .gte("logged_at", monday.toISOString()),
+      supabase
+        .from("cardio_routes")
+        .select("id, name, distance_km, elev_gain_m, waypoints, created_at")
+        .eq("user_id", session.user.id)
+        .order("created_at", { ascending: false })
+        .limit(3),
+    ]);
+    if (logsRes.data) {
+      setWeeklySummary({
+        distanceKm:  logsRes.data.reduce((s, r) => s + (r.distance_km ?? 0), 0),
+        durationMin: logsRes.data.reduce((s, r) => s + Number(r.duration_min), 0),
+        calories:    logsRes.data.reduce((s, r) => s + (r.calories ?? 0), 0),
+        count:       logsRes.data.length,
+      });
+    }
+    if (routesRes.data) setRecentRoutes(routesRes.data as any);
+  }, [session?.user.id]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  useEffect(() => {
+    if (currentPage === "cardio" && session?.user.id) fetchWeeklySummary();
+  }, [currentPage, session?.user.id]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // When a barcode is scanned, look it up and immediately auto-log it —
   // same pattern as searchAndLog so there is one consistent logging path.
@@ -2008,11 +2047,55 @@ function AppInner() {
             setWlDistanceStr("");
             setWlDurationStr("");
             setWlActivity("run");
+            fetchWeeklySummary();
           };
+
+          const fmtDuration = (min: number) => {
+            if (min < 60) return `${Math.round(min)}m`;
+            return `${Math.floor(min / 60)}h ${Math.round(min % 60)}m`;
+          };
+          const fmtDist = (km: number) =>
+            wlUnit === "mi"
+              ? `${(km * 0.621371).toFixed(1)} mi`
+              : `${km.toFixed(1)} km`;
 
           return (
             <View style={styles.section}>
               <Text style={styles.sectionLabel}>CARDIO</Text>
+
+              {/* Weekly summary */}
+              <View style={styles.weeklySummaryCard}>
+                <Text style={styles.weeklySummaryHeading}>This Week</Text>
+                <View style={styles.weeklySummaryRow}>
+                  <View style={styles.weeklySummaryStat}>
+                    <Text style={styles.weeklySummaryValue}>
+                      {weeklySummary ? weeklySummary.count : "—"}
+                    </Text>
+                    <Text style={styles.weeklySummaryLabel}>sessions</Text>
+                  </View>
+                  <View style={styles.weeklySummarySep} />
+                  <View style={styles.weeklySummaryStat}>
+                    <Text style={styles.weeklySummaryValue}>
+                      {weeklySummary && weeklySummary.distanceKm > 0 ? fmtDist(weeklySummary.distanceKm) : "—"}
+                    </Text>
+                    <Text style={styles.weeklySummaryLabel}>distance</Text>
+                  </View>
+                  <View style={styles.weeklySummarySep} />
+                  <View style={styles.weeklySummaryStat}>
+                    <Text style={styles.weeklySummaryValue}>
+                      {weeklySummary && weeklySummary.durationMin > 0 ? fmtDuration(weeklySummary.durationMin) : "—"}
+                    </Text>
+                    <Text style={styles.weeklySummaryLabel}>time</Text>
+                  </View>
+                  <View style={styles.weeklySummarySep} />
+                  <View style={styles.weeklySummaryStat}>
+                    <Text style={styles.weeklySummaryValue}>
+                      {weeklySummary && weeklySummary.calories > 0 ? `${weeklySummary.calories}` : "—"}
+                    </Text>
+                    <Text style={styles.weeklySummaryLabel}>kcal</Text>
+                  </View>
+                </View>
+              </View>
 
               {/* Route Planner card */}
               <TouchableOpacity style={styles.routeCard} onPress={() => setIsRoutePlannerOpen(true)} activeOpacity={0.92}>
@@ -2046,6 +2129,40 @@ function AppInner() {
                 </View>
                 <Ionicons name="chevron-forward" size={18} color="#C0C0B0" />
               </TouchableOpacity>
+
+              {/* Recent Routes */}
+              {recentRoutes.length > 0 && (
+                <View style={styles.recentRoutesSection}>
+                  <Text style={styles.recentRoutesHeading}>Recent Routes</Text>
+                  {recentRoutes.map(route => (
+                    <TouchableOpacity
+                      key={route.id}
+                      style={styles.recentRouteRow}
+                      onPress={() => { setCardioInitialRoute(route as any); setIsRoutePlannerOpen(true); }}
+                      activeOpacity={0.8}
+                    >
+                      <View style={styles.recentRouteIcon}>
+                        <Ionicons name="map-outline" size={18} color="#E86F2C" />
+                      </View>
+                      <View style={styles.recentRouteInfo}>
+                        <Text style={styles.recentRouteName} numberOfLines={1}>{route.name}</Text>
+                        <Text style={styles.recentRouteMeta}>
+                          {wlUnit === "mi"
+                            ? `${(route.distance_km * 0.621371).toFixed(2)} mi`
+                            : `${Number(route.distance_km).toFixed(2)} km`}
+                          {route.elev_gain_m != null
+                            ? wlUnit === "mi"
+                              ? `  ·  ↑${Math.round(route.elev_gain_m * 3.28084)} ft`
+                              : `  ·  ↑${route.elev_gain_m} m`
+                            : ""}
+                          {"  ·  "}{new Date(route.created_at).toLocaleDateString()}
+                        </Text>
+                      </View>
+                      <Ionicons name="chevron-forward" size={16} color="#C0C0B0" />
+                    </TouchableOpacity>
+                  ))}
+                </View>
+              )}
 
               {/* Log Workout modal */}
               <Modal visible={isWorkoutLogOpen} transparent animationType="slide" onRequestClose={() => setIsWorkoutLogOpen(false)}>
@@ -2152,10 +2269,11 @@ function AppInner() {
           Rendered outside the ScrollView so MapView touch gestures work cleanly. */}
       {isRoutePlannerOpen && (
         <CardioScreen
-          onBack={() => setIsRoutePlannerOpen(false)}
+          onBack={() => { setIsRoutePlannerOpen(false); setCardioInitialRoute(null); }}
           weightKg={homeWeightKg}
           userId={session?.user.id ?? null}
           onLocationFound={setHomeUserLocation}
+          initialRoute={cardioInitialRoute}
         />
       )}
 
@@ -4840,6 +4958,48 @@ const styles = StyleSheet.create({
   },
 
   // ── Daily stat strip (water + weight, below the rings card) ──────────────
+  weeklySummaryCard: {
+    marginTop: 10,
+    backgroundColor: "#1A1A14",
+    borderRadius: 20,
+    paddingVertical: 18,
+    paddingHorizontal: 20,
+    gap: 12,
+  },
+  weeklySummaryHeading: {
+    fontFamily: "Chillax-SemiBold",
+    fontSize: 13,
+    color: "rgba(255,255,255,0.5)",
+    letterSpacing: 0.5,
+    textTransform: "uppercase",
+  },
+  weeklySummaryRow: {
+    flexDirection: "row",
+    alignItems: "center",
+  },
+  weeklySummaryStat: {
+    flex: 1,
+    alignItems: "center",
+    gap: 4,
+  },
+  weeklySummaryValue: {
+    fontFamily: "Chillax-SemiBold",
+    fontSize: 22,
+    color: "#fff",
+    letterSpacing: -0.5,
+  },
+  weeklySummaryLabel: {
+    fontFamily: "Inter-Variable",
+    fontSize: 11,
+    color: "rgba(255,255,255,0.45)",
+    textTransform: "uppercase",
+    letterSpacing: 0.3,
+  },
+  weeklySummarySep: {
+    width: 1,
+    height: 36,
+    backgroundColor: "rgba(255,255,255,0.1)",
+  },
   routeCard: {
     marginTop: 10,
     height: 130,
@@ -4866,6 +5026,52 @@ const styles = StyleSheet.create({
     fontSize: 17,
     color: "#fff",
     letterSpacing: -0.3,
+  },
+  recentRoutesSection: {
+    marginTop: 10,
+    gap: 8,
+  },
+  recentRoutesHeading: {
+    fontFamily: "Inter-Variable",
+    fontSize: 12,
+    fontWeight: "600",
+    color: "#6B6B5E",
+    letterSpacing: 0.5,
+    textTransform: "uppercase",
+    marginBottom: 2,
+  },
+  recentRouteRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 12,
+    backgroundColor: "#FFFEF8",
+    borderRadius: 16,
+    padding: 14,
+    borderWidth: 1,
+    borderColor: "rgba(0,0,0,0.06)",
+  },
+  recentRouteIcon: {
+    width: 36,
+    height: 36,
+    borderRadius: 18,
+    backgroundColor: "rgba(232,111,44,0.1)",
+    alignItems: "center",
+    justifyContent: "center",
+  },
+  recentRouteInfo: {
+    flex: 1,
+    gap: 3,
+  },
+  recentRouteName: {
+    fontFamily: "Chillax-SemiBold",
+    fontSize: 15,
+    color: "#1A1A14",
+    letterSpacing: -0.2,
+  },
+  recentRouteMeta: {
+    fontFamily: "Inter-Variable",
+    fontSize: 12,
+    color: "#6B6B5E",
   },
   logWorkoutCard: {
     marginTop: 10,
@@ -6903,11 +7109,12 @@ type SavedRoute = {
   created_at: string;
 };
 
-function CardioScreen({ onBack, weightKg, userId, onLocationFound }: {
+function CardioScreen({ onBack, weightKg, userId, onLocationFound, initialRoute }: {
   onBack: () => void;
   weightKg: number | null;
   userId: string | null;
   onLocationFound?: (loc: { latitude: number; longitude: number }) => void;
+  initialRoute?: SavedRoute | null;
 }) {
   const insets = useSafeAreaInsets();
   const [locationGranted, setLocationGranted] = useState<boolean | null>(null);
@@ -6974,6 +7181,12 @@ function CardioScreen({ onBack, weightKg, userId, onLocationFound }: {
       mapRef.current?.animateToRegion({ ...pt, latitudeDelta: 0.01, longitudeDelta: 0.01 }, 800);
     })();
   }, []);
+
+  // Pre-load a route passed in from the Cardio page
+  useEffect(() => {
+    if (!initialRoute) return;
+    handleLoadRoute(initialRoute);
+  }, []); // eslint-disable-line react-hooks/exhaustive-deps
 
   // Tap → append waypoint to end of route
   const handleMapPress = useCallback(async (e: any) => {
