@@ -1318,9 +1318,10 @@ function AppInner() {
             onPress={() => setCurrentPage("home")}
             activeOpacity={1}
           >
-            <Animated.Text style={[styles.pageTabText, { opacity: homeTabOpacity, transform: [{ scale: homeTabScale }] }]}>
+            <Animated.Text style={[styles.pageTabText, { opacity: homeTabOpacity, transform: [{ scale: homeTabScale }], fontSize: currentPage === "home" ? 23 : 19 }]}>
               Home
             </Animated.Text>
+            {currentPage === "home" && <View style={styles.pageTabUnderline} />}
           </TouchableOpacity>
           <View style={{ width: 36 }} />
           <TouchableOpacity
@@ -1329,9 +1330,10 @@ function AppInner() {
             onPress={() => setCurrentPage("weight")}
             activeOpacity={1}
           >
-            <Animated.Text style={[styles.pageTabText, { opacity: weightTabOpacity, transform: [{ scale: weightTabScale }] }]}>
+            <Animated.Text style={[styles.pageTabText, { opacity: weightTabOpacity, transform: [{ scale: weightTabScale }], fontSize: currentPage === "weight" ? 23 : 19 }]}>
               Weight Projection
             </Animated.Text>
+            {currentPage === "weight" && <View style={styles.pageTabUnderline} />}
           </TouchableOpacity>
           <View style={{ width: 36 }} />
           <TouchableOpacity
@@ -1340,9 +1342,10 @@ function AppInner() {
             onPress={() => setCurrentPage("cardio")}
             activeOpacity={1}
           >
-            <Animated.Text style={[styles.pageTabText, { opacity: cardioTabOpacity, transform: [{ scale: cardioTabScale }] }]}>
+            <Animated.Text style={[styles.pageTabText, { opacity: cardioTabOpacity, transform: [{ scale: cardioTabScale }], fontSize: currentPage === "cardio" ? 23 : 19 }]}>
               Cardio
             </Animated.Text>
+            {currentPage === "cardio" && <View style={styles.pageTabUnderline} />}
           </TouchableOpacity>
         </ScrollView>
 
@@ -5333,19 +5336,25 @@ const styles = StyleSheet.create({
 
   // ── Page tab scroller ─────────────────────────────────────────────────────
   pageTabBar: {
-    height: 52,
     marginTop: 14,
     marginBottom: 4,
   },
   pageTabItem: {
     paddingHorizontal: 4,
     paddingVertical: 10,
+    gap: 4,
   },
   pageTabText: {
     fontFamily: "Chillax-SemiBold",
     fontSize: 19,
     color: "#1A1A14",
     letterSpacing: -0.4,
+  },
+  pageTabUnderline: {
+    height: 3,
+    borderRadius: 2,
+    backgroundColor: "#F5D834",
+    alignSelf: "stretch",
   },
 
   // ── Weight Projection home card ────────────────────────────────────────────
