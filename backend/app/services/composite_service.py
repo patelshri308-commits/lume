@@ -77,6 +77,8 @@ _KNOWN_WHOLE_FOODS: frozenset[str] = frozenset({
     # Sandwiches
     "peanut butter and jelly sandwich",
     "pbj sandwich",
+    "pb and j",
+    "pb&j",
     "peanut butter jelly sandwich",
     "peanut butter sandwich",
     "grilled cheese sandwich",

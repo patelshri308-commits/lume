@@ -107,17 +107,19 @@ def route_food_query(query: str) -> dict:
         "is_barcode":      parsed.is_barcode_like,
     })
 
+    qc_value = query_class.value  # surfaced in every response for API debugging
+
     # ── BARCODE ──────────────────────────────────────────────────────────────
     # Contract: barcode source only.  A miss is a miss — no generic substitute.
     if query_class == QueryClass.BARCODE:
         try:
             result = lookup_barcode(parsed.clean)
-            final  = {**result, "confidence": 0.95}
+            final  = {**result, "confidence": 0.95, "query_class": qc_value}
             log_result(query, "barcode", 0.95, final.get("calories", 0), final.get("name", ""))
             return final
         except (BarcodeNotFoundError, BarcodeProviderError):
             log_rejection(query, "barcode_not_found")
-            return _barcode_not_found(parsed.raw)
+            return {**_barcode_not_found(parsed.raw), "query_class": qc_value}
 
     # ── BRANDED_PACKAGED ─────────────────────────────────────────────────────
     if query_class == QueryClass.BRANDED_PACKAGED:
@@ -125,7 +127,7 @@ def route_food_query(query: str) -> dict:
         if result is not None:
             score = result.pop("_internal_score", 0)
             conf  = _packaged_confidence(score)
-            final = {**result, "confidence": conf}
+            final = {**result, "confidence": conf, "query_class": qc_value}
             log_result(query, "packaged_product", conf, final.get("calories", 0), final.get("name", ""))
             return final
         # Service miss — use rule-based estimate at low confidence.
@@ -134,7 +136,7 @@ def route_food_query(query: str) -> dict:
         # A rule-based estimate is more representative for a branded query miss.
         log_rejection(query, "off_packaged_miss_fallback_to_rule_based")
         result = get_nutrition(query, size_modifier=parsed.size_modifier, rule_based_only=True)
-        final  = {**result, "source_type": "packaged_guess", "confidence": 0.35}
+        final  = {**result, "source_type": "packaged_guess", "confidence": 0.35, "query_class": qc_value}
         log_result(query, "packaged_guess", 0.35, final.get("calories", 0), final.get("name", ""))
         return final
 
@@ -145,7 +147,7 @@ def route_food_query(query: str) -> dict:
         if result is not None:
             score = result.pop("_internal_score", 0)
             conf  = _restaurant_confidence(score)
-            final = {**result, "confidence": conf}
+            final = {**result, "confidence": conf, "query_class": qc_value}
             log_result(query, "restaurant", conf, final.get("calories", 0), final.get("name", ""))
             return final
         # Service miss — use rule-based estimate at low confidence.
@@ -153,7 +155,7 @@ def route_food_query(query: str) -> dict:
         # misses should return category estimates, not per-100g USDA ingredient data.
         log_rejection(query, "off_restaurant_miss_fallback_to_rule_based")
         result = get_nutrition(query, size_modifier=parsed.size_modifier, rule_based_only=True)
-        final  = {**result, "source_type": "restaurant_guess", "confidence": 0.35}
+        final  = {**result, "source_type": "restaurant_guess", "confidence": 0.35, "query_class": qc_value}
         log_result(query, "restaurant_guess", 0.35, final.get("calories", 0), final.get("name", ""))
         return final
 
@@ -165,7 +167,7 @@ def route_food_query(query: str) -> dict:
         result = decompose_composite(parsed, query)
         meta   = result.pop("_decomposition_meta", {})
         conf   = _composite_confidence(meta)
-        final  = {**result, "confidence": conf}
+        final  = {**result, "confidence": conf, "query_class": qc_value}
         log_result(query, "composite_meal", conf, final.get("calories", 0), final.get("name", ""))
         return final
 
@@ -174,7 +176,7 @@ def route_food_query(query: str) -> dict:
     # Pass size_modifier so "small smoothie" returns a scaled estimate.
     if query_class == QueryClass.AMBIGUOUS:
         result = get_nutrition(query, size_modifier=parsed.size_modifier)
-        final  = {**result, "source_type": "ambiguous_estimate", "confidence": 0.40}
+        final  = {**result, "source_type": "ambiguous_estimate", "confidence": 0.40, "query_class": qc_value}
         log_result(query, "ambiguous_estimate", 0.40, final.get("calories", 0), final.get("name", ""))
         return final
 
@@ -205,8 +207,9 @@ def route_food_query(query: str) -> dict:
     confidence = 0.45 if result.get("is_estimated") else 0.85
     final = {
         **result,
-        "source_type": result.get("source_type", "generic"),
-        "confidence":  confidence,
+        "source_type":  result.get("source_type", "generic"),
+        "confidence":   confidence,
+        "query_class":  qc_value,
     }
     log_result(query, final["source_type"], confidence, final.get("calories", 0), final.get("name", ""))
     return final

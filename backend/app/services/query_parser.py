@@ -32,7 +32,7 @@ from typing import Optional
 # ---------------------------------------------------------------------------
 
 _NUMBER_WORDS: dict[str, float] = {
-    "a": 1.0, "an": 1.0,
+    "a": 1.0, "an": 1.0, "some": 1.0,
     "one": 1.0, "two": 2.0, "three": 3.0, "four": 4.0, "five": 5.0,
     "six": 6.0, "seven": 7.0, "eight": 8.0, "nine": 9.0, "ten": 10.0,
     "half": 0.5, "quarter": 0.25,

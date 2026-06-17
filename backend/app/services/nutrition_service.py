@@ -565,6 +565,57 @@ _GENERIC_FOOD_PROFILES: dict[str, GenericFoodProfile] = {
         avoid_terms=("drink", "blend", "concentrate", "fortified"),
         unit_grams={"cup": 248, "cups": 248},
     ),
+    # ── Granola ───────────────────────────────────────────────────────────────
+    # avoid_terms=("bar",) prevents USDA from returning granola bar entries
+    # (which score identically to loose granola but have different serving weights).
+    "granola": GenericFoodProfile(
+        search_query="granola oats",
+        default_grams=45,   # ~1/3 cup typical topping/bowl serving
+        prefer_terms=("granola", "oats"),
+        avoid_terms=("bar", "cookie", "chocolate", "yogurt"),
+        unit_grams={"cup": 122, "cups": 122},
+    ),
+    # ── Proteins with raw/cooked ambiguity ───────────────────────────────────
+    # Without these profiles USDA returns raw entries (3× more calories/100g
+    # for lentils, ~70% more for pork) making results non-deterministic.
+    "pork chop": GenericFoodProfile(
+        search_query="pork chop cooked",
+        default_grams=100,
+        prefer_terms=("pork", "chop", "cooked"),
+        avoid_terms=("raw", "breaded", "fried", "canned", "frozen"),
+    ),
+    "tilapia": GenericFoodProfile(
+        search_query="tilapia cooked",
+        default_grams=100,
+        prefer_terms=("tilapia", "cooked"),
+        avoid_terms=("raw", "breaded", "fried", "frozen"),
+    ),
+    "cod": GenericFoodProfile(
+        search_query="cod cooked",
+        default_grams=100,
+        prefer_terms=("cod", "cooked"),
+        avoid_terms=("raw", "dried", "salted", "fried", "breaded"),
+    ),
+    "lamb": GenericFoodProfile(
+        search_query="lamb cooked",
+        default_grams=100,
+        prefer_terms=("lamb", "cooked"),
+        avoid_terms=("raw", "stew", "ground", "frozen"),
+    ),
+    "lentils": GenericFoodProfile(
+        search_query="lentils cooked boiled",
+        default_grams=198,  # 1 cup cooked
+        prefer_terms=("lentils", "cooked", "boiled"),
+        avoid_terms=("raw", "dry", "dried", "flour"),
+        unit_grams={"cup": 198, "cups": 198},
+    ),
+    "chickpeas": GenericFoodProfile(
+        search_query="chickpeas cooked boiled",
+        default_grams=164,  # 1 cup cooked
+        prefer_terms=("chickpeas", "cooked", "boiled"),
+        avoid_terms=("raw", "dry", "dried", "flour", "roasted"),
+        unit_grams={"cup": 164, "cups": 164},
+    ),
 }
 
 
@@ -661,6 +712,10 @@ _PROFILE_ALIASES: dict[str, str] = {
     "grilled chicken":        "chicken breast",
     "baked chicken breast":   "chicken breast",
     # ── PBJ short-form aliases ────────────────────────────────────────────────
+    "pb":                           "peanut butter",
+    "pbj":                          "peanut butter and jelly sandwich",
+    "pb and j":                     "peanut butter and jelly sandwich",
+    "pb&j":                         "peanut butter and jelly sandwich",
     "pbj sandwich":                 "peanut butter and jelly sandwich",
     "peanut butter jelly sandwich": "peanut butter and jelly sandwich",
     # ── Steak preparation variants ────────────────────────────────────────────
@@ -677,6 +732,37 @@ _PROFILE_ALIASES: dict[str, str] = {
     # full phrase.
     "chicken and rice bowl": "chicken rice bowl",
     "chicken and rice":      "chicken rice bowl",
+    # ── Common typo aliases ───────────────────────────────────────────────────
+    "bannana":          "banana",
+    "bananana":         "banana",
+    "brocolli":         "broccoli",
+    "broccolli":        "broccoli",
+    "brocoli":          "broccoli",
+    "chiken":           "chicken breast",
+    "chikken":          "chicken breast",
+    "yougurt":          "greek yogurt",
+    "yougart":          "greek yogurt",
+    "samon":            "salmon",
+    "salamon":          "salmon",
+    "avacado":          "avocado",
+    "avocodo":          "avocado",
+    "straberry":        "strawberries",
+    "strawbery":        "strawberries",
+    # ── New protein variant aliases ───────────────────────────────────────────
+    "pork chops":            "pork chop",
+    "grilled pork chop":    "pork chop",
+    "baked pork chop":      "pork chop",
+    "lamb chop":             "lamb",
+    "lamb chops":            "lamb",
+    "grilled lamb":          "lamb",
+    "garbanzo beans":        "chickpeas",
+    "garbanzo":              "chickpeas",
+    "red lentils":           "lentils",
+    "green lentils":         "lentils",
+    "grilled tilapia":       "tilapia",
+    "baked tilapia":         "tilapia",
+    "grilled cod":           "cod",
+    "baked cod":             "cod",
     # ── Condiment short-form aliases ─────────────────────────────────────────
     "whipping cream":        "heavy cream",
     "whipped cream":         "heavy cream",
@@ -853,8 +939,11 @@ def _get_fallback_nutrition(query: str) -> dict:  # always returns is_estimated:
         return {"calories": 150, "protein": 8,  "carbs": 15, "fat": 6}
     if "protein bar" in q:
         return {"calories": 250, "protein": 20, "carbs": 25, "fat": 8}
-    if "granola bar" in q or "granola" in q:
+    if "granola bar" in q:
         return {"calories": 200, "protein": 4,  "carbs": 30, "fat": 7}
+    if "granola" in q:
+        # ~45g serving (1/3 cup) of loose granola ≈ 200 kcal at ~450 kcal/100g
+        return {"calories": 200, "protein": 4,  "carbs": 27, "fat": 7}
     if "orange juice" in q:
         return {"calories": 110, "protein": 2,  "carbs": 26, "fat": 0}
     if "juice" in q:
@@ -940,8 +1029,10 @@ def _get_fallback_nutrition(query: str) -> dict:  # always returns is_estimated:
         return {"calories": 150, "protein": 3,  "carbs": 18, "fat": 8}
     if "protein bar" in q:
         return {"calories": 250, "protein": 20, "carbs": 25, "fat": 8}
-    if "granola bar" in q or "granola" in q:
+    if "granola bar" in q:
         return {"calories": 200, "protein": 4,  "carbs": 30, "fat": 7}
+    if "granola" in q:
+        return {"calories": 200, "protein": 4,  "carbs": 27, "fat": 7}
     if "trail mix" in q:
         return {"calories": 300, "protein": 8,  "carbs": 30, "fat": 18}
     if "candy" in q:
@@ -1060,7 +1151,7 @@ def _normalize_query(query: str) -> str:
 
     # Strip a leading number word or filler article
     _LEADING = {"one", "two", "three", "four", "five", "six", "seven",
-                "eight", "nine", "ten", "a", "an", "the"}
+                "eight", "nine", "ten", "a", "an", "the", "some"}
     words = q.split()
     if words and words[0] in _LEADING:
         words = words[1:]

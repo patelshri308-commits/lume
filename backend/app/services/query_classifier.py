@@ -198,6 +198,9 @@ _PACKAGED_SIGNALS: frozenset[str] = frozenset({
     "core power",
     "boost",
     "ensure",
+    # ── Yogurt / breakfast brands ─────────────────────────────────────────────
+    "chobani",
+    "kodiak",
 
     # ── Other snacks ──────────────────────────────────────────────────────────
     "smartfood",
@@ -259,6 +262,17 @@ _AMBIGUOUS_SIGNALS: frozenset[str] = frozenset({
     "chili",
     "pizza",
     "tacos",
+    # Bare "coffee" / "tea" return 0 kcal from USDA (black coffee per 100ml).
+    # Routing to AMBIGUOUS lets the fallback return the right category estimate
+    # (50 kcal coffee, 0 kcal plain tea) without an unscaled USDA value.
+    # Qualified queries ("iced coffee", "green tea", "coffee with milk") have
+    # additional words or "with" clauses so they bypass this branch.
+    "coffee",
+    "tea",
+    # "chips" (bare) returns per-100g USDA data (536 kcal) with no profile.
+    # AMBIGUOUS routes to the fallback which correctly returns ~150 kcal/serving.
+    # Qualified queries ("tortilla chips", "potato chips") stay GENERIC_FOOD.
+    "chips",
 })
 
 
@@ -367,10 +381,17 @@ def _is_ambiguous(parsed: ParsedQuery) -> bool:
     if parsed.unit or parsed.size_modifier:
         return False
 
-    core_words = parsed.core_food.lower().split()
+    core_lower = parsed.core_food.lower()
+    core_words = core_lower.split()
 
-    if parsed.core_food.lower() in _GENERIC_SINGLE_WORD_OVERRIDES:
+    if core_lower in _GENERIC_SINGLE_WORD_OVERRIDES:
         return False
+
+    # Check the full phrase first so that multi-word signals like "stir fry"
+    # (spaced) match correctly — the word-split path below would fail for these
+    # because individual words ("stir", "fry") are not in the signal set.
+    if core_lower in _AMBIGUOUS_SIGNALS:
+        return True
 
     # More than 2 core words → enough descriptive context to route confidently
     if len(core_words) > 2:
