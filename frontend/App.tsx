@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useRef, useCallback } from "react";
-import MapView, { Marker, Polyline, PROVIDER_DEFAULT } from "react-native-maps";
+import MapView, { Callout, Marker, Polyline, PROVIDER_DEFAULT } from "react-native-maps";
 import * as Location from "expo-location";
 import { Keyboard, KeyboardAvoidingView, Platform, Modal, Linking, InputAccessoryView } from "react-native";
 import HomepageHero from "./components/HomepageHero";
@@ -11,6 +11,7 @@ import * as Haptics from "expo-haptics";
 import DateTimePicker, { DateTimePickerAndroid } from "@react-native-community/datetimepicker";
 import Slider from "@react-native-community/slider";
 import {
+  ActivityIndicator,
   Alert,
   Animated,
   Image,
@@ -28,7 +29,7 @@ import {
 } from "react-native";
 import { SafeAreaProvider, SafeAreaView, useSafeAreaInsets } from "react-native-safe-area-context";
 import { LinearGradient } from "expo-linear-gradient";
-import Svg, { Circle, G, Defs, LinearGradient as SvgLinearGradient, Stop, Line as SvgLine, Path as SvgPath, Text as SvgText } from "react-native-svg";
+import Svg, { Circle, G, Defs, LinearGradient as SvgLinearGradient, Stop, Line as SvgLine, Path as SvgPath, Text as SvgText, Polyline as SvgPolyline } from "react-native-svg";
 import axios from "axios";
 import { Session } from "@supabase/supabase-js";
 import { supabase } from "./lib/supabase";
@@ -365,11 +366,19 @@ function AppInner() {
   const [isWeightOpen,   setIsWeightOpen]   = useState(false);
   const [isMultiLogOpen, setIsMultiLogOpen] = useState(false);
   const [homeWeightKg,     setHomeWeightKg]     = useState<number | null>(null);
+  const [homeUserLocation, setHomeUserLocation] = useState<{ latitude: number; longitude: number } | null>(null);
   const [homeWeightPrevKg, setHomeWeightPrevKg] = useState<number | null>(null);
   const [homePrediction,   setHomePrediction]   = useState<WeightPrediction | null>(null);
   const [homePredLoading,  setHomePredLoading]  = useState(false);
   const [homeWeightLogs,   setHomeWeightLogs]   = useState<WeightLogEntry[]>([]);
-  const [currentPage,      setCurrentPage]      = useState<"home" | "weight" | "cardio">("home");
+  const [currentPage,        setCurrentPage]        = useState<"home" | "weight" | "cardio">("home");
+  const [isRoutePlannerOpen,  setIsRoutePlannerOpen]  = useState(false);
+  const [isWorkoutLogOpen,    setIsWorkoutLogOpen]    = useState(false);
+  const [wlActivity,          setWlActivity]          = useState<"run"|"walk"|"bike"|"swim"|"other">("run");
+  const [wlDistanceStr,       setWlDistanceStr]       = useState("");
+  const [wlDurationStr,       setWlDurationStr]       = useState("");
+  const [wlUnit,              setWlUnit]              = useState<"km"|"mi">("km");
+  const [wlSaving,            setWlSaving]            = useState(false);
 
   const { width: screenW } = useWindowDimensions();
   const [tabBarW, setTabBarW] = useState(screenW - 40);
@@ -1222,7 +1231,7 @@ function AppInner() {
       <ScrollView
         style={styles.scrollView}
         contentContainerStyle={styles.container}
-        scrollEnabled={currentPage !== "cardio"}
+        scrollEnabled={true}
         refreshControl={
           <RefreshControl
             refreshing={refreshing}
@@ -1966,12 +1975,188 @@ function AppInner() {
           );
         })()}
 
+        {/* ── Cardio page ── */}
+        {currentPage === "cardio" && (() => {
+          // MET values per activity
+          const METS: Record<string, number> = { run: 8.0, walk: 3.5, bike: 7.5, swim: 6.0, other: 5.0 };
+          const ACTIVITY_LABELS: Record<string, string> = { run: "Run", walk: "Walk", bike: "Bike", swim: "Swim", other: "Other" };
+          const ACTIVITY_ICONS: Record<string, string> = { run: "walk-outline", walk: "footsteps-outline", bike: "bicycle-outline", swim: "water-outline", other: "flash-outline" };
+
+          const wlDistKm = (() => {
+            const v = parseFloat(wlDistanceStr);
+            if (isNaN(v) || v <= 0) return null;
+            return wlUnit === "mi" ? v / 0.621371 : v;
+          })();
+          const wlDurationMin = parseFloat(wlDurationStr);
+          const wlCalories = !isNaN(wlDurationMin) && wlDurationMin > 0 && homeWeightKg
+            ? Math.round(METS[wlActivity] * homeWeightKg * (wlDurationMin / 60))
+            : null;
+          const wlCanSave = !isNaN(wlDurationMin) && wlDurationMin > 0;
+
+          const handleSaveWorkout = async () => {
+            if (!wlCanSave || !session?.user.id) return;
+            setWlSaving(true);
+            await supabase.from("cardio_logs").insert({
+              user_id:     session.user.id,
+              activity:    wlActivity,
+              distance_km: wlDistKm,
+              duration_min: wlDurationMin,
+              calories:    wlCalories,
+            });
+            setWlSaving(false);
+            setIsWorkoutLogOpen(false);
+            setWlDistanceStr("");
+            setWlDurationStr("");
+            setWlActivity("run");
+          };
+
+          return (
+            <View style={styles.section}>
+              <Text style={styles.sectionLabel}>CARDIO</Text>
+
+              {/* Route Planner card */}
+              <TouchableOpacity style={styles.routeCard} onPress={() => setIsRoutePlannerOpen(true)} activeOpacity={0.92}>
+                <View pointerEvents="none" style={StyleSheet.absoluteFill}>
+                  <MapView
+                    style={StyleSheet.absoluteFill}
+                    provider={PROVIDER_DEFAULT}
+                    initialRegion={
+                      homeUserLocation
+                        ? { ...homeUserLocation, latitudeDelta: 0.018, longitudeDelta: 0.018 }
+                        : { latitude: 37.7749, longitude: -122.4194, latitudeDelta: 0.05, longitudeDelta: 0.05 }
+                    }
+                    scrollEnabled={false} zoomEnabled={false} rotateEnabled={false} pitchEnabled={false}
+                    showsUserLocation={!!homeUserLocation} showsMyLocationButton={false}
+                  />
+                </View>
+                <View style={styles.routeCardOverlay}>
+                  <View style={styles.routeCardLabel}>
+                    <Ionicons name="map-outline" size={18} color="#fff" />
+                    <Text style={styles.routeCardTitle}>Route Planner</Text>
+                  </View>
+                  <Ionicons name="chevron-forward" size={20} color="rgba(255,255,255,0.8)" />
+                </View>
+              </TouchableOpacity>
+
+              {/* Log Workout card */}
+              <TouchableOpacity style={styles.logWorkoutCard} onPress={() => setIsWorkoutLogOpen(true)} activeOpacity={0.85}>
+                <View style={styles.logWorkoutCardLeft}>
+                  <Ionicons name="add-circle-outline" size={22} color="#E86F2C" />
+                  <Text style={styles.logWorkoutCardTitle}>Log Workout</Text>
+                </View>
+                <Ionicons name="chevron-forward" size={18} color="#C0C0B0" />
+              </TouchableOpacity>
+
+              {/* Log Workout modal */}
+              <Modal visible={isWorkoutLogOpen} transparent animationType="slide" onRequestClose={() => setIsWorkoutLogOpen(false)}>
+                <View style={styles.wlOverlay}>
+                  <View style={[styles.wlSheet, { paddingBottom: insets.bottom + 16 }]}>
+                    {/* Header */}
+                    <View style={styles.wlHeader}>
+                      <Text style={styles.wlTitle}>Log Workout</Text>
+                      <TouchableOpacity onPress={() => setIsWorkoutLogOpen(false)} activeOpacity={0.7}>
+                        <Ionicons name="close" size={22} color="#6B6B5E" />
+                      </TouchableOpacity>
+                    </View>
+
+                    {/* Activity type */}
+                    <Text style={styles.wlLabel}>Activity</Text>
+                    <ScrollView horizontal showsHorizontalScrollIndicator={false} style={styles.wlActivityScroll}>
+                      {(["run","walk","bike","swim","other"] as const).map(a => (
+                        <TouchableOpacity
+                          key={a}
+                          style={[styles.wlActivityChip, wlActivity === a && styles.wlActivityChipActive]}
+                          onPress={() => setWlActivity(a)}
+                          activeOpacity={0.75}
+                        >
+                          <Ionicons name={ACTIVITY_ICONS[a] as any} size={16} color={wlActivity === a ? "#fff" : "#6B6B5E"} />
+                          <Text style={[styles.wlActivityChipLabel, wlActivity === a && styles.wlActivityChipLabelActive]}>
+                            {ACTIVITY_LABELS[a]}
+                          </Text>
+                        </TouchableOpacity>
+                      ))}
+                    </ScrollView>
+
+                    {/* Duration + Distance row */}
+                    <View style={styles.wlFieldRow}>
+                      <View style={styles.wlFieldGroup}>
+                        <Text style={styles.wlLabel}>Duration</Text>
+                        <View style={styles.wlInputWrap}>
+                          <TextInput
+                            style={styles.wlInput}
+                            value={wlDurationStr}
+                            onChangeText={setWlDurationStr}
+                            placeholder="0"
+                            placeholderTextColor="#ccc"
+                            keyboardType="decimal-pad"
+                          />
+                          <Text style={styles.wlInputUnit}>min</Text>
+                        </View>
+                      </View>
+
+                      <View style={styles.wlFieldGroup}>
+                        <View style={styles.wlDistLabelRow}>
+                          <Text style={styles.wlLabel}>Distance</Text>
+                          <View style={styles.wlUnitToggle}>
+                            {(["km","mi"] as const).map(u => (
+                              <TouchableOpacity key={u} onPress={() => setWlUnit(u)} style={[styles.wlUnitBtn, wlUnit === u && styles.wlUnitBtnActive]} activeOpacity={0.8}>
+                                <Text style={[styles.wlUnitBtnLabel, wlUnit === u && styles.wlUnitBtnLabelActive]}>{u}</Text>
+                              </TouchableOpacity>
+                            ))}
+                          </View>
+                        </View>
+                        <View style={styles.wlInputWrap}>
+                          <TextInput
+                            style={styles.wlInput}
+                            value={wlDistanceStr}
+                            onChangeText={setWlDistanceStr}
+                            placeholder="0"
+                            placeholderTextColor="#ccc"
+                            keyboardType="decimal-pad"
+                          />
+                          <Text style={styles.wlInputUnit}>{wlUnit}</Text>
+                        </View>
+                      </View>
+                    </View>
+
+                    {/* Calorie preview */}
+                    {wlCalories != null && (
+                      <View style={styles.wlCalRow}>
+                        <Ionicons name="flame-outline" size={16} color="#E86F2C" />
+                        <Text style={styles.wlCalText}>~{wlCalories} kcal burned</Text>
+                      </View>
+                    )}
+                    {wlCalories == null && homeWeightKg == null && wlDurationStr.length > 0 && (
+                      <Text style={styles.wlCalNote}>Log your weight to see calorie estimates</Text>
+                    )}
+
+                    {/* Save */}
+                    <TouchableOpacity
+                      style={[styles.wlSaveBtn, !wlCanSave && { opacity: 0.4 }]}
+                      onPress={handleSaveWorkout}
+                      disabled={!wlCanSave || wlSaving}
+                      activeOpacity={0.8}
+                    >
+                      <Text style={styles.wlSaveBtnLabel}>{wlSaving ? "Saving…" : "Save Workout"}</Text>
+                    </TouchableOpacity>
+                  </View>
+                </View>
+              </Modal>
+            </View>
+          );
+        })()}
+
       </ScrollView>
 
-      {/* Cardio plan mode — full-screen overlay when cardio tab is active.
+      {/* Cardio plan mode — full-screen overlay.
           Rendered outside the ScrollView so MapView touch gestures work cleanly. */}
-      {currentPage === "cardio" && (
-        <CardioScreen onBack={() => setCurrentPage("home")} />
+      {isRoutePlannerOpen && (
+        <CardioScreen
+          onBack={() => setIsRoutePlannerOpen(false)}
+          weightKg={homeWeightKg}
+          userId={session?.user.id ?? null}
+          onLocationFound={setHomeUserLocation}
+        />
       )}
 
       {/* Today's calorie badge — absolutely positioned so it stays fixed
@@ -4655,6 +4840,205 @@ const styles = StyleSheet.create({
   },
 
   // ── Daily stat strip (water + weight, below the rings card) ──────────────
+  routeCard: {
+    marginTop: 10,
+    height: 130,
+    borderRadius: 20,
+    overflow: "hidden",
+    backgroundColor: "#c8d6c8",
+  },
+  routeCardOverlay: {
+    ...StyleSheet.absoluteFillObject,
+    backgroundColor: "rgba(0,0,0,0.28)",
+    flexDirection: "row",
+    alignItems: "flex-end",
+    justifyContent: "space-between",
+    paddingHorizontal: 18,
+    paddingVertical: 14,
+  },
+  routeCardLabel: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 8,
+  },
+  routeCardTitle: {
+    fontFamily: "Chillax-SemiBold",
+    fontSize: 17,
+    color: "#fff",
+    letterSpacing: -0.3,
+  },
+  logWorkoutCard: {
+    marginTop: 10,
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "space-between",
+    backgroundColor: "#FFFEF8",
+    borderRadius: 20,
+    paddingHorizontal: 18,
+    paddingVertical: 16,
+    borderWidth: 1,
+    borderColor: "rgba(0,0,0,0.06)",
+  },
+  logWorkoutCardLeft: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 10,
+  },
+  logWorkoutCardTitle: {
+    fontFamily: "Chillax-SemiBold",
+    fontSize: 16,
+    color: "#1A1A14",
+    letterSpacing: -0.2,
+  },
+  // Workout log modal
+  wlOverlay: {
+    flex: 1,
+    justifyContent: "flex-end",
+    backgroundColor: "rgba(0,0,0,0.4)",
+  },
+  wlSheet: {
+    backgroundColor: "#FFFEF8",
+    borderTopLeftRadius: 24,
+    borderTopRightRadius: 24,
+    paddingHorizontal: 20,
+    paddingTop: 20,
+    gap: 16,
+  },
+  wlHeader: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "space-between",
+  },
+  wlTitle: {
+    fontFamily: "Chillax-SemiBold",
+    fontSize: 20,
+    color: "#1A1A14",
+    letterSpacing: -0.3,
+  },
+  wlLabel: {
+    fontFamily: "Inter-Variable",
+    fontSize: 12,
+    fontWeight: "600",
+    color: "#6B6B5E",
+    letterSpacing: 0.5,
+    textTransform: "uppercase",
+  },
+  wlActivityScroll: {
+    marginHorizontal: -20,
+    paddingHorizontal: 20,
+  },
+  wlActivityChip: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 6,
+    paddingVertical: 8,
+    paddingHorizontal: 14,
+    borderRadius: 20,
+    backgroundColor: "rgba(0,0,0,0.05)",
+    marginRight: 8,
+  },
+  wlActivityChipActive: {
+    backgroundColor: "#E86F2C",
+  },
+  wlActivityChipLabel: {
+    fontFamily: "Inter-Variable",
+    fontSize: 14,
+    fontWeight: "500",
+    color: "#6B6B5E",
+  },
+  wlActivityChipLabelActive: {
+    color: "#fff",
+  },
+  wlFieldRow: {
+    flexDirection: "row",
+    gap: 12,
+  },
+  wlFieldGroup: {
+    flex: 1,
+    gap: 8,
+  },
+  wlDistLabelRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "space-between",
+  },
+  wlUnitToggle: {
+    flexDirection: "row",
+    backgroundColor: "rgba(0,0,0,0.05)",
+    borderRadius: 8,
+    padding: 2,
+    gap: 2,
+  },
+  wlUnitBtn: {
+    paddingVertical: 2,
+    paddingHorizontal: 8,
+    borderRadius: 6,
+  },
+  wlUnitBtnActive: {
+    backgroundColor: "#fff",
+  },
+  wlUnitBtnLabel: {
+    fontFamily: "Inter-Variable",
+    fontSize: 11,
+    fontWeight: "600",
+    color: "#6B6B5E",
+  },
+  wlUnitBtnLabelActive: {
+    color: "#1A1A14",
+  },
+  wlInputWrap: {
+    flexDirection: "row",
+    alignItems: "center",
+    borderWidth: 1,
+    borderColor: "rgba(0,0,0,0.1)",
+    borderRadius: 14,
+    paddingHorizontal: 14,
+    paddingVertical: 12,
+    gap: 6,
+    backgroundColor: "#fff",
+  },
+  wlInput: {
+    flex: 1,
+    fontFamily: "Chillax-SemiBold",
+    fontSize: 22,
+    color: "#1A1A14",
+    padding: 0,
+  },
+  wlInputUnit: {
+    fontFamily: "Inter-Variable",
+    fontSize: 13,
+    color: "#6B6B5E",
+  },
+  wlCalRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 6,
+    justifyContent: "center",
+  },
+  wlCalText: {
+    fontFamily: "Inter-Variable",
+    fontSize: 15,
+    color: "#E86F2C",
+    fontWeight: "500",
+  },
+  wlCalNote: {
+    fontFamily: "Inter-Variable",
+    fontSize: 13,
+    color: "#aaa",
+    textAlign: "center",
+  },
+  wlSaveBtn: {
+    backgroundColor: "#E86F2C",
+    borderRadius: 16,
+    paddingVertical: 16,
+    alignItems: "center",
+  },
+  wlSaveBtnLabel: {
+    fontFamily: "Chillax-SemiBold",
+    fontSize: 16,
+    color: "#fff",
+    letterSpacing: -0.2,
+  },
   dailyStatStrip: {
     flexDirection: "row",
     marginTop: 12,
@@ -6417,7 +6801,14 @@ async function fetchOsrmRoute(a: LatLng, b: LatLng): Promise<RouteSegment | null
   }
 }
 
-function formatDistance(km: number): string {
+const KM_TO_MI = 0.621371;
+
+function formatDistance(km: number, unit: "km" | "mi" = "km"): string {
+  if (unit === "mi") {
+    const mi = km * KM_TO_MI;
+    if (mi < 0.1) return `${Math.round(mi * 5280)} ft`;
+    return `${mi.toFixed(2)} mi`;
+  }
   if (km < 1) return `${Math.round(km * 1000)} m`;
   return `${km.toFixed(2)} km`;
 }
@@ -6451,7 +6842,73 @@ function straightSegment(a: LatLng, b: LatLng): RouteSegment {
   return { coords: [a, b], distanceKm: haversineKm(a, b) };
 }
 
-function CardioScreen({ onBack }: { onBack: () => void }) {
+// Sample up to maxPts evenly from an array
+function sampleCoords(coords: LatLng[], maxPts: number): LatLng[] {
+  if (coords.length <= maxPts) return coords;
+  const step = (coords.length - 1) / (maxPts - 1);
+  return Array.from({ length: maxPts }, (_, i) => coords[Math.round(i * step)]);
+}
+
+async function fetchElevation(coords: LatLng[]): Promise<number[] | null> {
+  try {
+    const sampled = sampleCoords(coords, 60);
+    const res = await fetch("https://api.open-elevation.com/api/v1/lookup", {
+      method: "POST",
+      headers: { "Content-Type": "application/json", Accept: "application/json" },
+      body: JSON.stringify({ locations: sampled.map(c => ({ latitude: c.latitude, longitude: c.longitude })) }),
+    });
+    const json = await res.json();
+    if (!json.results) return null;
+    return (json.results as { elevation: number }[]).map(r => r.elevation);
+  } catch {
+    return null;
+  }
+}
+
+function ElevationSparkline({ profile }: { profile: number[] }) {
+  const W = 280;
+  const H = 48;
+  const PAD = 4;
+  const min = Math.min(...profile);
+  const max = Math.max(...profile);
+  const range = max - min || 1;
+  const pts = profile.map((e, i) => {
+    const x = PAD + (i / (profile.length - 1)) * (W - PAD * 2);
+    const y = PAD + (1 - (e - min) / range) * (H - PAD * 2);
+    return `${x.toFixed(1)},${y.toFixed(1)}`;
+  }).join(" ");
+
+  return (
+    <View style={cardioStyles.sparklineWrap}>
+      <Svg width={W} height={H} viewBox={`0 0 ${W} ${H}`}>
+        <SvgPolyline
+          points={pts}
+          fill="none"
+          stroke="#E86F2C"
+          strokeWidth={2}
+          strokeLinejoin="round"
+          strokeLinecap="round"
+        />
+      </Svg>
+    </View>
+  );
+}
+
+type SavedRoute = {
+  id: string;
+  name: string;
+  distance_km: number;
+  elev_gain_m: number | null;
+  waypoints: LatLng[];
+  created_at: string;
+};
+
+function CardioScreen({ onBack, weightKg, userId, onLocationFound }: {
+  onBack: () => void;
+  weightKg: number | null;
+  userId: string | null;
+  onLocationFound?: (loc: { latitude: number; longitude: number }) => void;
+}) {
   const insets = useSafeAreaInsets();
   const [locationGranted, setLocationGranted] = useState<boolean | null>(null);
   const [userLocation, setUserLocation] = useState<LatLng | null>(null);
@@ -6459,13 +6916,51 @@ function CardioScreen({ onBack }: { onBack: () => void }) {
   const [segments, setSegments] = useState<RouteSegment[]>([]);
   const [totalKm, setTotalKm] = useState(0);
   const [routing, setRouting] = useState(false);
-  const [savedName, setSavedName] = useState<string | null>(null);
+  const [satellite, setSatellite] = useState(false);
+  const [elevGainM, setElevGainM] = useState<number | null>(null);
+  const [elevProfile, setElevProfile] = useState<number[] | null>(null);
+  // Pace in min/km — default 6:00/km (comfortable run)
+  const [paceMinPerKm, setPaceMinPerKm] = useState(6);
+  const [unit, setUnit] = useState<"km" | "mi">("km");
+  const unitRef = useRef<"km" | "mi">("km");
+  useEffect(() => { unitRef.current = unit; }, [unit]);
+  // Save modal
+  const [showSaveModal, setShowSaveModal] = useState(false);
+  const [routeName, setRouteName] = useState("");
+  const [saving, setSaving] = useState(false);
+  // History view
+  const [view, setView] = useState<"plan" | "history">("plan");
+  const [savedRoutes, setSavedRoutes] = useState<SavedRoute[]>([]);
+  const [loadingHistory, setLoadingHistory] = useState(false);
+  const [loadingRoute, setLoadingRoute] = useState(false);
   const mapRef = useRef<MapView>(null);
   // Stable refs so async callbacks always see the latest state
   const waypointsRef = useRef(waypoints);
   const segmentsRef  = useRef(segments);
   useEffect(() => { waypointsRef.current = waypoints; }, [waypoints]);
   useEffect(() => { segmentsRef.current  = segments;  }, [segments]);
+
+  // Debounced elevation fetch — fires 700ms after segments settle
+  useEffect(() => {
+    if (segments.length === 0) {
+      setElevGainM(null);
+      setElevProfile(null);
+      return;
+    }
+    const allCoords = segments.flatMap(s => s.coords);
+    const timer = setTimeout(async () => {
+      const elevs = await fetchElevation(allCoords);
+      if (!elevs || elevs.length < 2) return;
+      let gain = 0;
+      for (let i = 1; i < elevs.length; i++) {
+        const delta = elevs[i] - elevs[i - 1];
+        if (delta > 0) gain += delta;
+      }
+      setElevGainM(Math.round(gain));
+      setElevProfile(elevs);
+    }, 700);
+    return () => clearTimeout(timer);
+  }, [segments]);
 
   useEffect(() => {
     (async () => {
@@ -6475,6 +6970,7 @@ function CardioScreen({ onBack }: { onBack: () => void }) {
       const loc = await Location.getCurrentPositionAsync({ accuracy: Location.Accuracy.High });
       const pt = { latitude: loc.coords.latitude, longitude: loc.coords.longitude };
       setUserLocation(pt);
+      onLocationFound?.(pt);
       mapRef.current?.animateToRegion({ ...pt, latitudeDelta: 0.01, longitudeDelta: 0.01 }, 800);
     })();
   }, []);
@@ -6578,6 +7074,75 @@ function CardioScreen({ onBack }: { onBack: () => void }) {
     setTotalKm(k => Math.max(0, k + kmDelta));
   }, []);
 
+  const handleDeleteWaypoint = useCallback(async (index: number) => {
+    const wps = waypointsRef.current;
+    const segs = segmentsRef.current;
+
+    if (wps.length === 1) {
+      // Only one point — just clear everything
+      setWaypoints([]);
+      setSegments([]);
+      setTotalKm(0);
+      return;
+    }
+
+    if (index === 0) {
+      // Remove first point and the segment leading out of it
+      setTotalKm(k => Math.max(0, k - segs[0].distanceKm));
+      setSegments(s => s.slice(1));
+      setWaypoints(w => w.slice(1));
+      return;
+    }
+
+    if (index === wps.length - 1) {
+      // Remove last point and the segment leading into it
+      setTotalKm(k => Math.max(0, k - segs[segs.length - 1].distanceKm));
+      setSegments(s => s.slice(0, -1));
+      setWaypoints(w => w.slice(0, -1));
+      return;
+    }
+
+    // Middle point — replace two surrounding segments with one re-fetched segment
+    const before = wps[index - 1];
+    const after  = wps[index + 1];
+    const removedKm = segs[index - 1].distanceKm + segs[index].distanceKm;
+
+    setRouting(true);
+    const newSeg = await fetchOsrmRoute(before, after) ?? straightSegment(before, after);
+    setRouting(false);
+
+    setWaypoints(w => w.filter((_, i) => i !== index));
+    setSegments(s => {
+      const next = [...s];
+      next.splice(index - 1, 2, newSeg);
+      return next;
+    });
+    setTotalKm(k => Math.max(0, k - removedKm + newSeg.distanceKm));
+  }, []);
+
+  const handleCloseLoop = useCallback(async () => {
+    const wps = waypointsRef.current;
+    const segs = segmentsRef.current;
+    if (wps.length < 2) return;
+    const first = wps[0];
+    const last  = wps[wps.length - 1];
+    // Don't add a loop segment if already very close to start (~30 m)
+    if (haversineKm(first, last) < 0.03) return;
+    setRouting(true);
+    const seg = await fetchOsrmRoute(last, first) ?? straightSegment(last, first);
+    setRouting(false);
+    setSegments(s => [...s, seg]);
+    setTotalKm(k => k + seg.distanceKm);
+    // Add the start point again so the polyline visually closes
+    setWaypoints(w => [...w, { ...first }]);
+  }, []);
+
+  const handleRecenter = useCallback(() => {
+    const loc = userLocation;
+    if (!loc) return;
+    mapRef.current?.animateToRegion({ ...loc, latitudeDelta: 0.01, longitudeDelta: 0.01 }, 500);
+  }, [userLocation]);
+
   const handleUndo = useCallback(() => {
     const wps = waypointsRef.current;
     const segs = segmentsRef.current;
@@ -6593,17 +7158,125 @@ function CardioScreen({ onBack }: { onBack: () => void }) {
     setWaypoints([]);
     setSegments([]);
     setTotalKm(0);
-    setSavedName(null);
+    setElevGainM(null);
+    setElevProfile(null);
   }, []);
 
   const handleSave = useCallback(() => {
     if (waypointsRef.current.length < 2) return;
-    setSavedName(`${formatDistance(totalKm)} route`);
+    setRouteName(`${formatDistance(totalKm, unit)} route`);
+    setShowSaveModal(true);
   }, [totalKm]);
+
+  const handleConfirmSave = useCallback(async () => {
+    const wps = waypointsRef.current;
+    if (!userId || wps.length < 2 || !routeName.trim()) return;
+    setSaving(true);
+    const { error } = await supabase.from("cardio_routes").insert({
+      user_id:     userId,
+      name:        routeName.trim(),
+      waypoints:   wps,
+      distance_km: Math.round(totalKm * 1000) / 1000,
+      elev_gain_m: elevGainM,
+    });
+    setSaving(false);
+    setShowSaveModal(false);
+    if (!error) {
+      // Refresh history cache so it's ready when user opens History
+      loadHistory();
+    }
+  }, [userId, routeName, totalKm, elevGainM]);
+
+  const loadHistory = useCallback(async () => {
+    if (!userId) return;
+    setLoadingHistory(true);
+    const { data } = await supabase
+      .from("cardio_routes")
+      .select("id, name, distance_km, elev_gain_m, waypoints, created_at")
+      .eq("user_id", userId)
+      .order("created_at", { ascending: false })
+      .limit(50);
+    setSavedRoutes((data ?? []) as SavedRoute[]);
+    setLoadingHistory(false);
+  }, [userId]);
+
+  const handleOpenHistory = useCallback(() => {
+    setView("history");
+    loadHistory();
+  }, [loadHistory]);
+
+  const handleLoadRoute = useCallback(async (route: SavedRoute) => {
+    setView("plan");
+    setLoadingRoute(true);
+    handleClear();
+    const wps: LatLng[] = route.waypoints;
+    // Re-fetch all segments for the loaded waypoints
+    const newSegs: RouteSegment[] = [];
+    for (let i = 0; i < wps.length - 1; i++) {
+      const seg = await fetchOsrmRoute(wps[i], wps[i + 1]) ?? straightSegment(wps[i], wps[i + 1]);
+      newSegs.push(seg);
+    }
+    const km = newSegs.reduce((s, seg) => s + seg.distanceKm, 0);
+    setWaypoints(wps);
+    setSegments(newSegs);
+    setTotalKm(km);
+    setLoadingRoute(false);
+    // Fit map to loaded route
+    if (wps.length > 0) {
+      const lats = wps.map(p => p.latitude);
+      const lngs = wps.map(p => p.longitude);
+      mapRef.current?.animateToRegion({
+        latitude:      (Math.min(...lats) + Math.max(...lats)) / 2,
+        longitude:     (Math.min(...lngs) + Math.max(...lngs)) / 2,
+        latitudeDelta:  Math.max(Math.max(...lats) - Math.min(...lats), 0.005) * 1.4,
+        longitudeDelta: Math.max(Math.max(...lngs) - Math.min(...lngs), 0.005) * 1.4,
+      }, 800);
+    }
+  }, [handleClear]);
+
+  const handleDeleteRoute = useCallback(async (id: string) => {
+    await supabase.from("cardio_routes").delete().eq("id", id);
+    setSavedRoutes(r => r.filter(x => x.id !== id));
+  }, []);
 
   const initialRegion = userLocation
     ? { ...userLocation, latitudeDelta: 0.01, longitudeDelta: 0.01 }
     : { latitude: 37.7749, longitude: -122.4194, latitudeDelta: 0.05, longitudeDelta: 0.05 };
+
+  // Estimated time at current pace
+  const estTotalMin = totalKm * paceMinPerKm;
+  const estTimeStr = totalKm > 0
+    ? estTotalMin < 60
+      ? `~${Math.round(estTotalMin)} min`
+      : `~${Math.floor(estTotalMin / 60)}h ${Math.round(estTotalMin % 60)}m`
+    : null;
+
+  // MET-based calorie estimate — pace determines intensity
+  const met = paceMinPerKm >= 8 ? 3.5 : paceMinPerKm >= 5 ? 7.0 : 10.0;
+  const estCalories = totalKm > 0 && weightKg
+    ? Math.round(met * weightKg * (estTotalMin / 60))
+    : null;
+
+  // Pace display — convert to /mi when in miles mode
+  const paceDisplay = unit === "mi" ? paceMinPerKm / KM_TO_MI : paceMinPerKm;
+  const paceStr = `${Math.floor(paceDisplay)}:${String(Math.round((paceDisplay % 1) * 60)).padStart(2, "0")}`;
+  const paceUnitLabel = unit === "mi" ? "/mi" : "/km";
+  // Pace display step — always 15 sec in the active unit, converted to min/km for storage.
+  // Reads from unitRef so the callback is never stale after a unit toggle.
+  const paceStep = unit === "mi" ? 0.25 * KM_TO_MI : 0.25;
+  const adjustPace = useCallback((dir: 1 | -1) => {
+    setPaceMinPerKm(p => {
+      const step = unitRef.current === "mi" ? 0.25 * KM_TO_MI : 0.25;
+      return Math.min(20, Math.max(3, Math.round((p + dir * step) * 100) / 100));
+    });
+  }, []);
+
+  // Elevation in ft when miles mode
+  const elevDisplay = elevGainM != null
+    ? unit === "mi"
+      ? `↑${Math.round(elevGainM * 3.28084)} ft`
+      : `↑${elevGainM} m`
+    : null;
 
   const hintText = waypoints.length === 0
     ? "Tap to place your starting point"
@@ -6611,7 +7284,7 @@ function CardioScreen({ onBack }: { onBack: () => void }) {
       ? "Routing…"
       : waypoints.length === 1
         ? "Tap to continue · long-press to insert · drag dots to adjust"
-        : `${formatDistance(totalKm)} · tap to extend · long-press to insert · drag dots to adjust`;
+        : "Tap to extend · long-press to insert · drag dots to adjust";
 
   return (
     <View style={cardioStyles.container}>
@@ -6620,11 +7293,82 @@ function CardioScreen({ onBack }: { onBack: () => void }) {
           <Ionicons name="chevron-back" size={22} color="#1A1A14" />
           <Text style={cardioStyles.backLabel}>Back</Text>
         </TouchableOpacity>
-        <Text style={cardioStyles.title}>Plan Route</Text>
-        <View style={{ width: 70 }} />
+        <Text style={cardioStyles.title}>{view === "history" ? "My Routes" : "Plan Route"}</Text>
+        <TouchableOpacity
+          style={cardioStyles.historyBtn}
+          onPress={view === "history" ? () => setView("plan") : handleOpenHistory}
+          activeOpacity={0.75}
+        >
+          <Ionicons name={view === "history" ? "map-outline" : "list-outline"} size={20} color="#E86F2C" />
+        </TouchableOpacity>
       </View>
 
-      {locationGranted === false ? (
+      {/* Save name modal */}
+      <Modal visible={showSaveModal} transparent animationType="fade" onRequestClose={() => setShowSaveModal(false)}>
+        <View style={cardioStyles.modalOverlay}>
+          <View style={cardioStyles.modalBox}>
+            <Text style={cardioStyles.modalTitle}>Name this route</Text>
+            <TextInput
+              style={cardioStyles.modalInput}
+              value={routeName}
+              onChangeText={setRouteName}
+              placeholder="e.g. Morning loop"
+              placeholderTextColor="#aaa"
+              autoFocus
+              returnKeyType="done"
+              onSubmitEditing={handleConfirmSave}
+            />
+            <View style={cardioStyles.modalBtnRow}>
+              <TouchableOpacity style={cardioStyles.modalCancelBtn} onPress={() => setShowSaveModal(false)} activeOpacity={0.75}>
+                <Text style={cardioStyles.modalCancelLabel}>Cancel</Text>
+              </TouchableOpacity>
+              <TouchableOpacity style={[cardioStyles.modalSaveBtn, (!routeName.trim() || saving) && { opacity: 0.5 }]} onPress={handleConfirmSave} disabled={!routeName.trim() || saving} activeOpacity={0.75}>
+                <Text style={cardioStyles.modalSaveLabel}>{saving ? "Saving…" : "Save"}</Text>
+              </TouchableOpacity>
+            </View>
+          </View>
+        </View>
+      </Modal>
+
+      {/* Loading overlay when re-fetching a saved route */}
+      {loadingRoute && (
+        <View style={cardioStyles.loadingOverlay}>
+          <ActivityIndicator size="large" color="#E86F2C" />
+          <Text style={cardioStyles.loadingText}>Loading route…</Text>
+        </View>
+      )}
+
+      {view === "history" ? (
+        <ScrollView style={{ flex: 1 }} contentContainerStyle={cardioStyles.historyList}>
+          {loadingHistory ? (
+            <ActivityIndicator size="large" color="#E86F2C" style={{ marginTop: 40 }} />
+          ) : savedRoutes.length === 0 ? (
+            <View style={cardioStyles.historyEmpty}>
+              <Ionicons name="map-outline" size={40} color="#ccc" />
+              <Text style={cardioStyles.historyEmptyText}>No saved routes yet</Text>
+            </View>
+          ) : savedRoutes.map(route => (
+            <View key={route.id} style={cardioStyles.historyCard}>
+              <TouchableOpacity style={{ flex: 1 }} onPress={() => handleLoadRoute(route)} activeOpacity={0.75}>
+                <Text style={cardioStyles.historyCardName}>{route.name}</Text>
+                <Text style={cardioStyles.historyCardMeta}>
+                  {formatDistance(route.distance_km, unit)}
+                  {route.elev_gain_m != null
+                    ? unit === "mi"
+                      ? `  ↑${Math.round(route.elev_gain_m * 3.28084)} ft`
+                      : `  ↑${route.elev_gain_m} m`
+                    : ""}
+                  {"  ·  "}
+                  {new Date(route.created_at).toLocaleDateString()}
+                </Text>
+              </TouchableOpacity>
+              <TouchableOpacity onPress={() => handleDeleteRoute(route.id)} activeOpacity={0.75} style={cardioStyles.historyDeleteBtn}>
+                <Ionicons name="trash-outline" size={18} color="#ccc" />
+              </TouchableOpacity>
+            </View>
+          ))}
+        </ScrollView>
+      ) : locationGranted === false ? (
         <View style={cardioStyles.permissionBox}>
           <Text style={cardioStyles.permissionText}>
             Location access is needed to center the map on your neighborhood.
@@ -6637,10 +7381,23 @@ function CardioScreen({ onBack }: { onBack: () => void }) {
             <Text style={cardioStyles.hintText}>{hintText}</Text>
           </View>
 
+          {/* Floating map controls */}
+          <View style={cardioStyles.mapControls}>
+            <TouchableOpacity style={cardioStyles.mapBtn} onPress={() => setSatellite(s => !s)} activeOpacity={0.8}>
+              <Ionicons name={satellite ? "map-outline" : "layers-outline"} size={20} color="#1A1A14" />
+            </TouchableOpacity>
+            {userLocation && (
+              <TouchableOpacity style={cardioStyles.mapBtn} onPress={handleRecenter} activeOpacity={0.8}>
+                <Ionicons name="locate" size={20} color="#1A1A14" />
+              </TouchableOpacity>
+            )}
+          </View>
+
           <MapView
             ref={mapRef}
             style={cardioStyles.map}
             provider={PROVIDER_DEFAULT}
+            mapType={satellite ? "hybrid" : "standard"}
             initialRegion={initialRegion}
             onPress={handleMapPress}
             onLongPress={handleLongPress}
@@ -6668,25 +7425,69 @@ function CardioScreen({ onBack }: { onBack: () => void }) {
                   i === 0 && cardioStyles.dotStart,
                   i === waypoints.length - 1 && i !== 0 && cardioStyles.dotEnd,
                 ]} />
+                <Callout tooltip onPress={() => handleDeleteWaypoint(i)}>
+                  <View style={cardioStyles.callout}>
+                    <Ionicons name="trash" size={16} color="#fff" />
+                  </View>
+                </Callout>
               </Marker>
             ))}
           </MapView>
 
           <View style={[cardioStyles.panel, { paddingBottom: insets.bottom + 12 }]}>
-            {savedName ? (
-              <View style={cardioStyles.savedRow}>
-                <Ionicons name="checkmark-circle" size={20} color="#4CAF50" />
-                <Text style={cardioStyles.savedText}>Saved: {savedName}</Text>
-              </View>
-            ) : (
+            {/* Stats row */}
+            <View style={cardioStyles.statsRow}>
               <Text style={cardioStyles.distanceText}>
-                {totalKm > 0 ? formatDistance(totalKm) : "0 m"}
+                {totalKm > 0 ? formatDistance(totalKm, unit) : unit === "mi" ? "0 mi" : "0 m"}
               </Text>
-            )}
+              {(estTimeStr || estCalories || elevDisplay) && (
+                <View style={cardioStyles.subStatsRow}>
+                  {estTimeStr && <Text style={cardioStyles.estTimeText}>{estTimeStr}</Text>}
+                  {estTimeStr && estCalories && <Text style={cardioStyles.estTimeSep}>·</Text>}
+                  {estCalories && <Text style={cardioStyles.estTimeText}>~{estCalories} kcal</Text>}
+                  {(estTimeStr || estCalories) && elevDisplay && <Text style={cardioStyles.estTimeSep}>·</Text>}
+                  {elevDisplay && <Text style={cardioStyles.elevText}>{elevDisplay}</Text>}
+                </View>
+              )}
+              {elevProfile && elevProfile.length > 1 && (
+                <ElevationSparkline profile={elevProfile} />
+              )}
+            </View>
 
+            {/* Pace picker */}
+            <View style={cardioStyles.paceRow}>
+              <Text style={cardioStyles.paceLabel}>Pace</Text>
+              <TouchableOpacity style={cardioStyles.paceBtn} onPress={() => adjustPace(-1)} activeOpacity={0.7}>
+                <Ionicons name="remove" size={18} color="#1A1A14" />
+              </TouchableOpacity>
+              <Text style={cardioStyles.paceValue}>{paceStr} <Text style={cardioStyles.paceUnit}>{paceUnitLabel}</Text></Text>
+              <TouchableOpacity style={cardioStyles.paceBtn} onPress={() => adjustPace(1)} activeOpacity={0.7}>
+                <Ionicons name="add" size={18} color="#1A1A14" />
+              </TouchableOpacity>
+            </View>
+
+            {/* km / mi toggle */}
+            <View style={cardioStyles.unitToggleRow}>
+              <TouchableOpacity
+                style={[cardioStyles.unitBtn, unit === "km" && cardioStyles.unitBtnActive]}
+                onPress={() => setUnit("km")}
+                activeOpacity={0.8}
+              >
+                <Text style={[cardioStyles.unitBtnLabel, unit === "km" && cardioStyles.unitBtnLabelActive]}>km</Text>
+              </TouchableOpacity>
+              <TouchableOpacity
+                style={[cardioStyles.unitBtn, unit === "mi" && cardioStyles.unitBtnActive]}
+                onPress={() => setUnit("mi")}
+                activeOpacity={0.8}
+              >
+                <Text style={[cardioStyles.unitBtnLabel, unit === "mi" && cardioStyles.unitBtnLabelActive]}>mi</Text>
+              </TouchableOpacity>
+            </View>
+
+            {/* Utility buttons */}
             <View style={cardioStyles.btnRow}>
               <TouchableOpacity
-                style={[cardioStyles.ctrlBtn, waypoints.length === 0 && cardioStyles.ctrlBtnDisabled]}
+                style={[cardioStyles.ctrlBtn, { flex: 1 }, waypoints.length === 0 && cardioStyles.ctrlBtnDisabled]}
                 onPress={handleUndo}
                 disabled={waypoints.length === 0}
                 activeOpacity={0.75}
@@ -6696,7 +7497,7 @@ function CardioScreen({ onBack }: { onBack: () => void }) {
               </TouchableOpacity>
 
               <TouchableOpacity
-                style={[cardioStyles.ctrlBtn, waypoints.length === 0 && cardioStyles.ctrlBtnDisabled]}
+                style={[cardioStyles.ctrlBtn, { flex: 1 }, waypoints.length === 0 && cardioStyles.ctrlBtnDisabled]}
                 onPress={handleClear}
                 disabled={waypoints.length === 0}
                 activeOpacity={0.75}
@@ -6706,14 +7507,25 @@ function CardioScreen({ onBack }: { onBack: () => void }) {
               </TouchableOpacity>
 
               <TouchableOpacity
-                style={[cardioStyles.saveBtn, waypoints.length < 2 && cardioStyles.ctrlBtnDisabled]}
-                onPress={handleSave}
+                style={[cardioStyles.ctrlBtn, { flex: 1 }, waypoints.length < 2 && cardioStyles.ctrlBtnDisabled]}
+                onPress={handleCloseLoop}
                 disabled={waypoints.length < 2}
                 activeOpacity={0.75}
               >
-                <Text style={[cardioStyles.saveBtnLabel, waypoints.length < 2 && { color: "#ccc" }]}>Save Route</Text>
+                <Ionicons name="refresh-circle-outline" size={18} color={waypoints.length < 2 ? "#ccc" : "#1A1A14"} />
+                <Text style={[cardioStyles.ctrlBtnLabel, waypoints.length < 2 && { color: "#ccc" }]}>Loop</Text>
               </TouchableOpacity>
             </View>
+
+            {/* Full-width save button */}
+            <TouchableOpacity
+              style={[cardioStyles.saveBtn, waypoints.length < 2 && cardioStyles.ctrlBtnDisabled]}
+              onPress={handleSave}
+              disabled={waypoints.length < 2}
+              activeOpacity={0.75}
+            >
+              <Text style={cardioStyles.saveBtnLabel}>Save Route</Text>
+            </TouchableOpacity>
           </View>
         </>
       )}
@@ -6770,6 +7582,55 @@ const cardioStyles = StyleSheet.create({
   map: {
     flex: 1,
   },
+  mapControls: {
+    position: "absolute",
+    right: 14,
+    top: 130,
+    zIndex: 10,
+    gap: 10,
+  },
+  mapBtn: {
+    width: 40,
+    height: 40,
+    borderRadius: 20,
+    backgroundColor: "#FFFEF8",
+    alignItems: "center",
+    justifyContent: "center",
+    shadowColor: "#000",
+    shadowOpacity: 0.15,
+    shadowRadius: 4,
+    shadowOffset: { width: 0, height: 2 },
+    elevation: 4,
+  },
+  statsRow: {
+    alignItems: "center",
+    gap: 2,
+  },
+  subStatsRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 6,
+  },
+  estTimeText: {
+    fontFamily: "Inter-Variable",
+    fontSize: 15,
+    color: "#6B6B5E",
+    textAlign: "center",
+  },
+  estTimeSep: {
+    fontFamily: "Inter-Variable",
+    fontSize: 15,
+    color: "#C0C0B0",
+  },
+  elevText: {
+    fontFamily: "Inter-Variable",
+    fontSize: 15,
+    color: "#E86F2C",
+  },
+  sparklineWrap: {
+    marginTop: 6,
+    alignItems: "center",
+  },
   dot: {
     width: 14,
     height: 14,
@@ -6789,6 +7650,12 @@ const cardioStyles = StyleSheet.create({
     width: 16,
     height: 16,
     borderRadius: 8,
+  },
+  callout: {
+    backgroundColor: "#1A1A14",
+    borderRadius: 8,
+    paddingVertical: 6,
+    paddingHorizontal: 10,
   },
   panel: {
     backgroundColor: "#FFFEF8",
@@ -6816,6 +7683,68 @@ const cardioStyles = StyleSheet.create({
     fontSize: 16,
     color: "#4CAF50",
   },
+  paceRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "center",
+    gap: 12,
+  },
+  paceLabel: {
+    fontFamily: "Inter-Variable",
+    fontSize: 13,
+    color: "#6B6B5E",
+    marginRight: 4,
+  },
+  paceBtn: {
+    width: 34,
+    height: 34,
+    borderRadius: 17,
+    backgroundColor: "rgba(0,0,0,0.05)",
+    alignItems: "center",
+    justifyContent: "center",
+  },
+  paceValue: {
+    fontFamily: "Chillax-SemiBold",
+    fontSize: 18,
+    color: "#1A1A14",
+    minWidth: 70,
+    textAlign: "center",
+  },
+  paceUnit: {
+    fontFamily: "Inter-Variable",
+    fontSize: 13,
+    color: "#6B6B5E",
+  },
+  unitToggleRow: {
+    flexDirection: "row",
+    alignSelf: "center",
+    borderRadius: 10,
+    backgroundColor: "rgba(0,0,0,0.05)",
+    padding: 3,
+    gap: 2,
+  },
+  unitBtn: {
+    paddingVertical: 5,
+    paddingHorizontal: 18,
+    borderRadius: 8,
+  },
+  unitBtnActive: {
+    backgroundColor: "#fff",
+    shadowColor: "#000",
+    shadowOpacity: 0.08,
+    shadowRadius: 3,
+    shadowOffset: { width: 0, height: 1 },
+    elevation: 2,
+  },
+  unitBtnLabel: {
+    fontFamily: "Inter-Variable",
+    fontSize: 13,
+    fontWeight: "600",
+    color: "#6B6B5E",
+  },
+  unitBtnLabelActive: {
+    color: "#1A1A14",
+  },
   btnRow: {
     flexDirection: "row",
     gap: 10,
@@ -6824,9 +7753,10 @@ const cardioStyles = StyleSheet.create({
   ctrlBtn: {
     flexDirection: "row",
     alignItems: "center",
+    justifyContent: "center",
     gap: 6,
     paddingVertical: 10,
-    paddingHorizontal: 16,
+    paddingHorizontal: 10,
     borderRadius: 12,
     backgroundColor: "rgba(0,0,0,0.05)",
   },
@@ -6835,21 +7765,19 @@ const cardioStyles = StyleSheet.create({
   },
   ctrlBtnLabel: {
     fontFamily: "Inter-Variable",
-    fontSize: 15,
+    fontSize: 14,
     color: "#1A1A14",
     fontWeight: "500",
   },
   saveBtn: {
-    flex: 1,
     alignItems: "center",
-    paddingVertical: 10,
-    paddingHorizontal: 16,
-    borderRadius: 12,
+    paddingVertical: 14,
+    borderRadius: 14,
     backgroundColor: "#E86F2C",
   },
   saveBtnLabel: {
     fontFamily: "Chillax-SemiBold",
-    fontSize: 15,
+    fontSize: 16,
     color: "#fff",
     letterSpacing: -0.2,
   },
@@ -6865,6 +7793,121 @@ const cardioStyles = StyleSheet.create({
     color: "#6B6B5E",
     textAlign: "center",
     lineHeight: 22,
+  },
+  historyBtn: {
+    width: 70,
+    alignItems: "flex-end",
+  },
+  historyList: {
+    padding: 16,
+    gap: 12,
+  },
+  historyEmpty: {
+    alignItems: "center",
+    marginTop: 60,
+    gap: 12,
+  },
+  historyEmptyText: {
+    fontFamily: "Inter-Variable",
+    fontSize: 15,
+    color: "#aaa",
+  },
+  historyCard: {
+    flexDirection: "row",
+    alignItems: "center",
+    backgroundColor: "#FFFEF8",
+    borderRadius: 14,
+    padding: 16,
+    borderWidth: 1,
+    borderColor: "rgba(0,0,0,0.06)",
+    shadowColor: "#000",
+    shadowOpacity: 0.04,
+    shadowRadius: 4,
+    shadowOffset: { width: 0, height: 2 },
+  },
+  historyCardName: {
+    fontFamily: "Chillax-SemiBold",
+    fontSize: 16,
+    color: "#1A1A14",
+    marginBottom: 4,
+  },
+  historyCardMeta: {
+    fontFamily: "Inter-Variable",
+    fontSize: 13,
+    color: "#6B6B5E",
+  },
+  historyDeleteBtn: {
+    padding: 8,
+  },
+  modalOverlay: {
+    flex: 1,
+    backgroundColor: "rgba(0,0,0,0.45)",
+    alignItems: "center",
+    justifyContent: "center",
+  },
+  modalBox: {
+    backgroundColor: "#FFFEF8",
+    borderRadius: 18,
+    padding: 24,
+    width: "80%",
+    gap: 16,
+  },
+  modalTitle: {
+    fontFamily: "Chillax-SemiBold",
+    fontSize: 18,
+    color: "#1A1A14",
+    textAlign: "center",
+  },
+  modalInput: {
+    borderWidth: 1,
+    borderColor: "rgba(0,0,0,0.12)",
+    borderRadius: 12,
+    paddingHorizontal: 14,
+    paddingVertical: 10,
+    fontFamily: "Inter-Variable",
+    fontSize: 15,
+    color: "#1A1A14",
+  },
+  modalBtnRow: {
+    flexDirection: "row",
+    gap: 10,
+  },
+  modalCancelBtn: {
+    flex: 1,
+    paddingVertical: 12,
+    borderRadius: 12,
+    alignItems: "center",
+    backgroundColor: "rgba(0,0,0,0.05)",
+  },
+  modalCancelLabel: {
+    fontFamily: "Inter-Variable",
+    fontSize: 15,
+    color: "#6B6B5E",
+  },
+  modalSaveBtn: {
+    flex: 1,
+    paddingVertical: 12,
+    borderRadius: 12,
+    alignItems: "center",
+    backgroundColor: "#E86F2C",
+  },
+  modalSaveLabel: {
+    fontFamily: "Chillax-SemiBold",
+    fontSize: 15,
+    color: "#fff",
+  },
+  loadingOverlay: {
+    ...StyleSheet.absoluteFillObject,
+    backgroundColor: "rgba(255,254,248,0.88)",
+    alignItems: "center",
+    justifyContent: "center",
+    zIndex: 20,
+    gap: 12,
+  },
+  loadingText: {
+    fontFamily: "Inter-Variable",
+    fontSize: 15,
+    color: "#6B6B5E",
   },
 });
 
