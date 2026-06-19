@@ -30,6 +30,7 @@ import {
 import { SafeAreaProvider, SafeAreaView, useSafeAreaInsets } from "react-native-safe-area-context";
 import { LinearGradient } from "expo-linear-gradient";
 import Svg, { Circle, G, Defs, LinearGradient as SvgLinearGradient, Stop, Line as SvgLine, Path as SvgPath, Text as SvgText, Polyline as SvgPolyline } from "react-native-svg";
+import { SvgXml } from "react-native-svg";
 import axios from "axios";
 import { Session } from "@supabase/supabase-js";
 import { supabase } from "./lib/supabase";
@@ -327,6 +328,7 @@ function AppInner() {
   const scanLockRef  = useRef(false);                          // prevents duplicate scan callbacks
   const tabScrollRef = useRef<ScrollView>(null);
   const sidebarAnim  = useRef(new Animated.Value(0)).current;  // 0 = closed, 1 = open
+  const mascotPulse  = useRef(new Animated.Value(1)).current;  // scale 1→1.08→1
   // Solar Bloom animated glow values — each loops 0→1→0 at a different duration
   const glowOuter   = useRef(new Animated.Value(0)).current;  // 7 s
   const glowMid     = useRef(new Animated.Value(0)).current;  // 5.5 s
@@ -357,6 +359,7 @@ function AppInner() {
   // true = settled (show setup screen or tracker based on onboarding_completed).
   const [profile,        setProfile]        = useState<UserProfile | null>(null);
   const [profileFetched, setProfileFetched] = useState(false);
+  const [rayCount,       setRayCount]       = useState(0);
   const [profileSaving,  setProfileSaving]  = useState(false);
   const [profileMessage, setProfileMessage] = useState("");
   const [isAccountOpen,  setIsAccountOpen]  = useState(false);
@@ -499,6 +502,12 @@ function AppInner() {
           Animated.timing(val, { toValue: 0, duration: duration / 2, useNativeDriver: true }),
         ])
       );
+    const mascotBreath = Animated.loop(
+      Animated.sequence([
+        Animated.timing(mascotPulse, { toValue: 1.08, duration: 900, useNativeDriver: true }),
+        Animated.timing(mascotPulse, { toValue: 1,    duration: 900, useNativeDriver: true }),
+      ])
+    );
     const anims = [
       breathe(glowOuter,   7000),
       breathe(glowMid,     5500),
@@ -506,8 +515,16 @@ function AppInner() {
       breathe(glowShimmer, 6500),
     ];
     anims.forEach(a => a.start());
-    return () => anims.forEach(a => a.stop());
+    mascotBreath.start();
+    return () => { anims.forEach(a => a.stop()); mascotBreath.stop(); };
   }, []); // eslint-disable-line react-hooks/exhaustive-deps
+
+  // Ray-by-ray loader for cold-start screen — cycles 0→12→0 while profileFetched is false.
+  useEffect(() => {
+    if (profileFetched) return;
+    const id = setInterval(() => setRayCount(c => (c >= 12 ? 0 : c + 1)), 750);
+    return () => clearInterval(id);
+  }, [profileFetched]);
 
   // Sidebar open/close animation.
   useEffect(() => {
@@ -1188,9 +1205,51 @@ function AppInner() {
   // ── Profile loading — wait for GET /profile to settle ───────────────────────
   // Shown briefly after login while the profile fetch is in-flight.
   if (!profileFetched) {
+    const rayAngles = [0, 30, 60, 90, 120, 150, 180, 210, 240, 270, 300, 330];
+    const visibleRays = rayAngles
+      .slice(0, rayCount)
+      .map(deg => `<g transform="rotate(${deg} 100 100)"><path d="M 90 55 Q 98.5 44 100 25 Q 101.5 44 110 55 Z"/></g>`)
+      .join('\n  ');
+    const mascotSvg = `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 200 200" width="200" height="200">
+  <defs>
+    <radialGradient id="g3-halo" cx="100" cy="100" r="96" gradientUnits="userSpaceOnUse">
+      <stop offset="0" stop-color="#FEFEE8" stop-opacity="0.95"/>
+      <stop offset="0.4" stop-color="#F0EC3A" stop-opacity="0.5"/>
+      <stop offset="0.72" stop-color="#C8BE12" stop-opacity="0.18"/>
+      <stop offset="1" stop-color="#C8BE12" stop-opacity="0"/>
+    </radialGradient>
+    <radialGradient id="g3-body" cx="100" cy="95" r="48" gradientUnits="userSpaceOnUse">
+      <stop offset="0" stop-color="#FFFFFF"/>
+      <stop offset="0.2" stop-color="#FDFBD5"/>
+      <stop offset="0.55" stop-color="#E3D517"/>
+      <stop offset="1" stop-color="#B8AB12"/>
+    </radialGradient>
+    <linearGradient id="g3-beam" x1="100" y1="9" x2="100" y2="66" gradientUnits="userSpaceOnUse">
+      <stop offset="0" stop-color="#E3D517" stop-opacity="0.12"/>
+      <stop offset="1" stop-color="#C4B814" stop-opacity="0.95"/>
+    </linearGradient>
+  </defs>
+  <circle cx="100" cy="100" r="96" fill="url(#g3-halo)"/>
+  <circle cx="100" cy="100" r="49" fill="#D4C914" opacity="0.4"/>
+  <g fill="url(#g3-beam)" stroke="#9E9410" stroke-width="1" stroke-opacity="0.5" stroke-linejoin="round">
+  ${visibleRays}
+  </g>
+  <circle cx="100" cy="100" r="41" fill="#FFFFFF" opacity="0.5"/>
+  <circle cx="100" cy="100" r="40" fill="url(#g3-body)"/>
+  <ellipse cx="80" cy="109" rx="8.5" ry="5" fill="#FF7E55" opacity="0.3"/>
+  <ellipse cx="120" cy="109" rx="8.5" ry="5" fill="#FF7E55" opacity="0.3"/>
+  <ellipse cx="89" cy="95" rx="3.4" ry="4.6" fill="#3B2412"/>
+  <ellipse cx="111" cy="95" rx="3.4" ry="4.6" fill="#3B2412"/>
+  <circle cx="90.4" cy="92.8" r="1.5" fill="#FFFFFF"/>
+  <circle cx="112.4" cy="92.8" r="1.5" fill="#FFFFFF"/>
+  <path d="M 88 107 Q 100 119 112 107" fill="none" stroke="#3B2412" stroke-width="3" stroke-linecap="round"/>
+</svg>`;
     return (
       <SafeAreaView style={styles.profileLoadingSafe}>
-        <Text style={styles.profileLoadingText}>Loading…</Text>
+        <Animated.View style={{ transform: [{ scale: mascotPulse }] }}>
+          <SvgXml xml={mascotSvg} width={160} height={160} />
+        </Animated.View>
+        <Text style={[styles.profileLoadingText, { marginTop: 20 }]}>Loading…</Text>
       </SafeAreaView>
     );
   }
@@ -5327,11 +5386,13 @@ const styles = StyleSheet.create({
     backgroundColor: "#FAFAF7",
     alignItems: "center",
     justifyContent: "center",
+    gap: 4,
   },
   profileLoadingText: {
     fontSize: 14,
     fontFamily: "Inter-Variable",
-    color: "rgba(26,26,20,0.5)",
+    color: "rgba(26,26,20,0.4)",
+    letterSpacing: 0.2,
   },
 
   // ── Page tab scroller ─────────────────────────────────────────────────────
