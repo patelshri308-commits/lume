@@ -383,7 +383,10 @@ function AppInner() {
   const [wlUnit,              setWlUnit]              = useState<"km"|"mi">("km");
   const [wlSaving,            setWlSaving]            = useState(false);
   const [weeklySummary,       setWeeklySummary]       = useState<{ distanceKm: number; durationMin: number; calories: number; count: number } | null>(null);
+  const [lastWeekSummary,     setLastWeekSummary]     = useState<{ distanceKm: number; durationMin: number; calories: number; count: number } | null>(null);
+  const [activityBreakdown,   setActivityBreakdown]   = useState<{ activity: string; count: number }[]>([]);
   const [recentRoutes,        setRecentRoutes]        = useState<{ id: string; name: string; distance_km: number; elev_gain_m: number | null; waypoints: { latitude: number; longitude: number }[]; created_at: string }[]>([]);
+  const [recentWorkouts,      setRecentWorkouts]      = useState<{ id: string; activity: string; duration_min: number; distance_km: number | null; calories: number | null; logged_at: string }[]>([]);
   const [cardioInitialRoute,  setCardioInitialRoute]  = useState<{ id: string; name: string; distance_km: number; elev_gain_m: number | null; waypoints: { latitude: number; longitude: number }[]; created_at: string } | null>(null);
 
   const { width: screenW } = useWindowDimensions();
@@ -1022,10 +1025,12 @@ function AppInner() {
     const monday = new Date(now);
     monday.setDate(now.getDate() - (day === 0 ? 6 : day - 1));
     monday.setHours(0, 0, 0, 0);
-    const [logsRes, routesRes] = await Promise.all([
+    const lastMonday = new Date(monday);
+    lastMonday.setDate(monday.getDate() - 7);
+    const [logsRes, routesRes, recentLogsRes, lastWeekRes] = await Promise.all([
       supabase
         .from("cardio_logs")
-        .select("distance_km, duration_min, calories")
+        .select("distance_km, duration_min, calories, activity")
         .eq("user_id", session.user.id)
         .gte("logged_at", monday.toISOString()),
       supabase
@@ -1034,6 +1039,18 @@ function AppInner() {
         .eq("user_id", session.user.id)
         .order("created_at", { ascending: false })
         .limit(3),
+      supabase
+        .from("cardio_logs")
+        .select("id, activity, duration_min, distance_km, calories, logged_at")
+        .eq("user_id", session.user.id)
+        .order("logged_at", { ascending: false })
+        .limit(5),
+      supabase
+        .from("cardio_logs")
+        .select("distance_km, duration_min, calories")
+        .eq("user_id", session.user.id)
+        .gte("logged_at", lastMonday.toISOString())
+        .lt("logged_at", monday.toISOString()),
     ]);
     if (logsRes.data) {
       setWeeklySummary({
@@ -1042,8 +1059,20 @@ function AppInner() {
         calories:    logsRes.data.reduce((s, r) => s + (r.calories ?? 0), 0),
         count:       logsRes.data.length,
       });
+      const counts: Record<string, number> = {};
+      for (const r of logsRes.data) counts[r.activity] = (counts[r.activity] ?? 0) + 1;
+      setActivityBreakdown(Object.entries(counts).map(([activity, count]) => ({ activity, count })));
     }
     if (routesRes.data) setRecentRoutes(routesRes.data as any);
+    if (recentLogsRes.data) setRecentWorkouts(recentLogsRes.data as any);
+    if (lastWeekRes.data) {
+      setLastWeekSummary({
+        distanceKm:  lastWeekRes.data.reduce((s, r) => s + (r.distance_km ?? 0), 0),
+        durationMin: lastWeekRes.data.reduce((s, r) => s + Number(r.duration_min), 0),
+        calories:    lastWeekRes.data.reduce((s, r) => s + (r.calories ?? 0), 0),
+        count:       lastWeekRes.data.length,
+      });
+    }
   }, [session?.user.id]); // eslint-disable-line react-hooks/exhaustive-deps
 
   useEffect(() => {
@@ -1246,6 +1275,14 @@ function AppInner() {
 </svg>`;
     return (
       <SafeAreaView style={styles.profileLoadingSafe}>
+        <LinearGradient
+          colors={["#FFFEF8", "#FFF8D4", "#FDF3B0"]}
+          locations={[0, 0.5, 1]}
+          start={{ x: 0.15, y: 0 }}
+          end={{ x: 0.85, y: 1 }}
+          style={StyleSheet.absoluteFillObject}
+          pointerEvents="none"
+        />
         <Animated.View style={{ transform: [{ scale: mascotPulse }] }}>
           <SvgXml xml={mascotSvg} width={160} height={160} />
         </Animated.View>
@@ -1343,10 +1380,12 @@ function AppInner() {
         {/* Header */}
         <View style={styles.headerRow}>
           <Animated.View pointerEvents="none" style={[styles.headerGlowOuter, {
+            backgroundColor: getGlowColors().outer,
             opacity: glowOuter.interpolate({ inputRange: [0, 1], outputRange: [0.4, 0.85] }),
             transform: [{ scale: glowOuter.interpolate({ inputRange: [0, 1], outputRange: [1, 1.08] }) }],
           }]} />
           <Animated.View pointerEvents="none" style={[styles.headerGlowMid, {
+            backgroundColor: getGlowColors().mid,
             opacity: glowMid.interpolate({ inputRange: [0, 1], outputRange: [0.5, 1] }),
             transform: [{ scale: glowMid.interpolate({ inputRange: [0, 1], outputRange: [1, 1.05] }) }],
           }]} />
@@ -2092,6 +2131,14 @@ function AppInner() {
           const wlCalories = !isNaN(wlDurationMin) && wlDurationMin > 0 && homeWeightKg
             ? Math.round(METS[wlActivity] * homeWeightKg * (wlDurationMin / 60))
             : null;
+          const wlPace = (() => {
+            if (!wlDistKm || isNaN(wlDurationMin) || wlDurationMin <= 0) return null;
+            const distInUnit = wlUnit === "mi" ? wlDistKm * 0.621371 : wlDistKm;
+            const paceDecimal = wlDurationMin / distInUnit;
+            const paceMin = Math.floor(paceDecimal);
+            const paceSec = Math.round((paceDecimal - paceMin) * 60);
+            return `${paceMin}:${paceSec.toString().padStart(2, "0")} / ${wlUnit}`;
+          })();
           const wlCanSave = !isNaN(wlDurationMin) && wlDurationMin > 0;
 
           const handleSaveWorkout = async () => {
@@ -2121,19 +2168,38 @@ function AppInner() {
               ? `${(km * 0.621371).toFixed(1)} mi`
               : `${km.toFixed(1)} km`;
 
+          const fmtDelta = (current: number, prev: number, fmt: (n: number) => string) => {
+            if (!lastWeekSummary || prev === 0) return null;
+            const diff = current - prev;
+            if (diff === 0) return null;
+            return { label: (diff > 0 ? "+" : "") + fmt(Math.abs(diff)), up: diff > 0 };
+          };
+          const sessionDelta  = lastWeekSummary ? fmtDelta(weeklySummary?.count ?? 0, lastWeekSummary.count, n => `${n}`) : null;
+          const distDelta     = lastWeekSummary ? fmtDelta(weeklySummary?.distanceKm ?? 0, lastWeekSummary.distanceKm, n => fmtDist(n)) : null;
+          const durationDelta = lastWeekSummary ? fmtDelta(weeklySummary?.durationMin ?? 0, lastWeekSummary.durationMin, n => fmtDuration(n)) : null;
+          const calDelta      = lastWeekSummary ? fmtDelta(weeklySummary?.calories ?? 0, lastWeekSummary.calories, n => `${Math.round(n)}`) : null;
+
           return (
             <View style={styles.section}>
-              <Text style={styles.sectionLabel}>CARDIO</Text>
 
               {/* Weekly summary */}
               <View style={styles.weeklySummaryCard}>
                 <Text style={styles.weeklySummaryHeading}>This Week</Text>
+
+                {weeklySummary !== null && weeklySummary.count === 0 ? (
+                  <View style={styles.emptyStateContainer}>
+                    <SvgXml xml={`<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 200 200"><defs><radialGradient id="es-body" cx="100" cy="95" r="48" gradientUnits="userSpaceOnUse"><stop offset="0" stop-color="#FFFFFF"/><stop offset="0.2" stop-color="#FFF6C8"/><stop offset="0.55" stop-color="#E3D517"/><stop offset="1" stop-color="#C4B814"/></radialGradient><linearGradient id="es-beam" x1="100" y1="9" x2="100" y2="66" gradientUnits="userSpaceOnUse"><stop offset="0" stop-color="#E3D517" stop-opacity="0.3"/><stop offset="1" stop-color="#C4B814" stop-opacity="0.9"/></linearGradient></defs><g fill="url(#es-beam)" stroke="#B8AB12" stroke-width="1" stroke-opacity="0.5" stroke-linejoin="round"><g transform="rotate(0 100 100)"><path d="M 90 55 Q 98.5 44 100 25 Q 101.5 44 110 55 Z"/></g><g transform="rotate(30 100 100)"><path d="M 90 55 Q 98.5 44 100 25 Q 101.5 44 110 55 Z"/></g><g transform="rotate(60 100 100)"><path d="M 90 55 Q 98.5 44 100 25 Q 101.5 44 110 55 Z"/></g><g transform="rotate(90 100 100)"><path d="M 90 55 Q 98.5 44 100 25 Q 101.5 44 110 55 Z"/></g><g transform="rotate(120 100 100)"><path d="M 90 55 Q 98.5 44 100 25 Q 101.5 44 110 55 Z"/></g><g transform="rotate(150 100 100)"><path d="M 90 55 Q 98.5 44 100 25 Q 101.5 44 110 55 Z"/></g><g transform="rotate(180 100 100)"><path d="M 90 55 Q 98.5 44 100 25 Q 101.5 44 110 55 Z"/></g><g transform="rotate(210 100 100)"><path d="M 90 55 Q 98.5 44 100 25 Q 101.5 44 110 55 Z"/></g><g transform="rotate(240 100 100)"><path d="M 90 55 Q 98.5 44 100 25 Q 101.5 44 110 55 Z"/></g><g transform="rotate(270 100 100)"><path d="M 90 55 Q 98.5 44 100 25 Q 101.5 44 110 55 Z"/></g><g transform="rotate(300 100 100)"><path d="M 90 55 Q 98.5 44 100 25 Q 101.5 44 110 55 Z"/></g><g transform="rotate(330 100 100)"><path d="M 90 55 Q 98.5 44 100 25 Q 101.5 44 110 55 Z"/></g></g><circle cx="100" cy="100" r="40" fill="url(#es-body)"/><ellipse cx="80" cy="109" rx="8.5" ry="5" fill="#FF7E55" opacity="0.3"/><ellipse cx="120" cy="109" rx="8.5" ry="5" fill="#FF7E55" opacity="0.3"/><ellipse cx="89" cy="95" rx="3.4" ry="4.6" fill="#3B2412"/><ellipse cx="111" cy="95" rx="3.4" ry="4.6" fill="#3B2412"/><circle cx="90.4" cy="92.8" r="1.5" fill="#FFFFFF"/><circle cx="112.4" cy="92.8" r="1.5" fill="#FFFFFF"/><path d="M 90 107 Q 100 115 110 107" fill="none" stroke="#3B2412" stroke-width="2.5" stroke-linecap="round"/></svg>`} width={72} height={72} />
+                    <Text style={styles.emptyStateTitle}>No workouts yet</Text>
+                    <Text style={styles.emptyStateSubtitle}>Log your first session this week and Lume will track your progress here.</Text>
+                  </View>
+                ) : (
                 <View style={styles.weeklySummaryRow}>
                   <View style={styles.weeklySummaryStat}>
                     <Text style={styles.weeklySummaryValue}>
                       {weeklySummary ? weeklySummary.count : "—"}
                     </Text>
                     <Text style={styles.weeklySummaryLabel}>sessions</Text>
+                    {sessionDelta && <Text style={[styles.weeklyDelta, !sessionDelta.up && styles.weeklyDeltaDown]}>{sessionDelta.label}</Text>}
                   </View>
                   <View style={styles.weeklySummarySep} />
                   <View style={styles.weeklySummaryStat}>
@@ -2141,6 +2207,7 @@ function AppInner() {
                       {weeklySummary && weeklySummary.distanceKm > 0 ? fmtDist(weeklySummary.distanceKm) : "—"}
                     </Text>
                     <Text style={styles.weeklySummaryLabel}>distance</Text>
+                    {distDelta && <Text style={[styles.weeklyDelta, !distDelta.up && styles.weeklyDeltaDown]}>{distDelta.label}</Text>}
                   </View>
                   <View style={styles.weeklySummarySep} />
                   <View style={styles.weeklySummaryStat}>
@@ -2148,6 +2215,7 @@ function AppInner() {
                       {weeklySummary && weeklySummary.durationMin > 0 ? fmtDuration(weeklySummary.durationMin) : "—"}
                     </Text>
                     <Text style={styles.weeklySummaryLabel}>time</Text>
+                    {durationDelta && <Text style={[styles.weeklyDelta, !durationDelta.up && styles.weeklyDeltaDown]}>{durationDelta.label}</Text>}
                   </View>
                   <View style={styles.weeklySummarySep} />
                   <View style={styles.weeklySummaryStat}>
@@ -2155,8 +2223,49 @@ function AppInner() {
                       {weeklySummary && weeklySummary.calories > 0 ? `${weeklySummary.calories}` : "—"}
                     </Text>
                     <Text style={styles.weeklySummaryLabel}>kcal</Text>
+                    {calDelta && <Text style={[styles.weeklyDelta, !calDelta.up && styles.weeklyDeltaDown]}>{calDelta.label}</Text>}
                   </View>
                 </View>
+
+                {/* Activity breakdown bar */}
+                {activityBreakdown.length > 0 && (() => {
+                  const ACTIVITY_COLORS: Record<string, string> = {
+                    run:   "#1A1A14",
+                    walk:  "#E3D517",
+                    bike:  "#C4B814",
+                    swim:  "#6B6B5E",
+                    other: "rgba(26,26,20,0.2)",
+                  };
+                  const total = activityBreakdown.reduce((s, a) => s + a.count, 0);
+                  return (
+                    <View style={styles.activityBreakdown}>
+                      <View style={styles.activityBar}>
+                        {activityBreakdown.map((a, i) => (
+                          <View
+                            key={a.activity}
+                            style={[
+                              styles.activityBarSegment,
+                              { flex: a.count / total, backgroundColor: ACTIVITY_COLORS[a.activity] ?? "#6B6B5E" },
+                              i === 0 && styles.activityBarFirst,
+                              i === activityBreakdown.length - 1 && styles.activityBarLast,
+                            ]}
+                          />
+                        ))}
+                      </View>
+                      <View style={styles.activityLegend}>
+                        {activityBreakdown.map(a => (
+                          <View key={a.activity} style={styles.activityLegendItem}>
+                            <View style={[styles.activityLegendDot, { backgroundColor: ACTIVITY_COLORS[a.activity] ?? "#6B6B5E" }]} />
+                            <Text style={styles.activityLegendLabel}>
+                              {ACTIVITY_LABELS[a.activity] ?? a.activity}  {a.count}
+                            </Text>
+                          </View>
+                        ))}
+                      </View>
+                    </View>
+                  );
+                })()}
+                )}
               </View>
 
               {/* Route Planner card */}
@@ -2176,20 +2285,20 @@ function AppInner() {
                 </View>
                 <View style={styles.routeCardOverlay}>
                   <View style={styles.routeCardLabel}>
-                    <Ionicons name="map-outline" size={18} color="#fff" />
+                    <Ionicons name="map-outline" size={18} color="#E3D517" />
                     <Text style={styles.routeCardTitle}>Route Planner</Text>
                   </View>
-                  <Ionicons name="chevron-forward" size={20} color="rgba(255,255,255,0.8)" />
+                  <Ionicons name="chevron-forward" size={20} color="rgba(255,255,255,0.7)" />
                 </View>
               </TouchableOpacity>
 
               {/* Log Workout card */}
               <TouchableOpacity style={styles.logWorkoutCard} onPress={() => setIsWorkoutLogOpen(true)} activeOpacity={0.85}>
                 <View style={styles.logWorkoutCardLeft}>
-                  <Ionicons name="add-circle-outline" size={22} color="#E86F2C" />
+                  <Ionicons name="add-circle-outline" size={22} color="#1A1A14" />
                   <Text style={styles.logWorkoutCardTitle}>Log Workout</Text>
                 </View>
-                <Ionicons name="chevron-forward" size={18} color="#C0C0B0" />
+                <Ionicons name="chevron-forward" size={18} color="rgba(26,26,20,0.5)" />
               </TouchableOpacity>
 
               {/* Recent Routes */}
@@ -2204,7 +2313,7 @@ function AppInner() {
                       activeOpacity={0.8}
                     >
                       <View style={styles.recentRouteIcon}>
-                        <Ionicons name="map-outline" size={18} color="#E86F2C" />
+                        <Ionicons name="map-outline" size={18} color="#1A1A14" />
                       </View>
                       <View style={styles.recentRouteInfo}>
                         <Text style={styles.recentRouteName} numberOfLines={1}>{route.name}</Text>
@@ -2223,6 +2332,40 @@ function AppInner() {
                       <Ionicons name="chevron-forward" size={16} color="#C0C0B0" />
                     </TouchableOpacity>
                   ))}
+                </View>
+              )}
+
+              {/* Recent Workouts */}
+              {recentWorkouts.length > 0 && (
+                <View style={styles.recentRoutesSection}>
+                  <Text style={styles.recentRoutesHeading}>Recent Workouts</Text>
+                  {recentWorkouts.map(w => {
+                    const distDisplay = w.distance_km != null
+                      ? wlUnit === "mi"
+                        ? `${(w.distance_km * 0.621371).toFixed(1)} mi`
+                        : `${w.distance_km.toFixed(1)} km`
+                      : null;
+                    const date = new Date(w.logged_at);
+                    const isToday = date.toDateString() === new Date().toDateString();
+                    const isYesterday = date.toDateString() === new Date(Date.now() - 86400000).toDateString();
+                    const dateLabel = isToday ? "Today" : isYesterday ? "Yesterday" : date.toLocaleDateString(undefined, { month: "short", day: "numeric" });
+                    return (
+                      <View key={w.id} style={styles.recentRouteRow}>
+                        <View style={styles.recentRouteIcon}>
+                          <Ionicons name={ACTIVITY_ICONS[w.activity] as any ?? "flash-outline"} size={16} color="#1A1A14" />
+                        </View>
+                        <View style={styles.recentRouteInfo}>
+                          <Text style={styles.recentRouteName}>{ACTIVITY_LABELS[w.activity] ?? w.activity}</Text>
+                          <Text style={styles.recentRouteMeta}>
+                            {fmtDuration(w.duration_min)}
+                            {distDisplay ? `  ·  ${distDisplay}` : ""}
+                            {w.calories ? `  ·  ${w.calories} kcal` : ""}
+                          </Text>
+                        </View>
+                        <Text style={styles.recentWorkoutDate}>{dateLabel}</Text>
+                      </View>
+                    );
+                  })}
                 </View>
               )}
 
@@ -2248,7 +2391,7 @@ function AppInner() {
                           onPress={() => setWlActivity(a)}
                           activeOpacity={0.75}
                         >
-                          <Ionicons name={ACTIVITY_ICONS[a] as any} size={16} color={wlActivity === a ? "#fff" : "#6B6B5E"} />
+                          <Ionicons name={ACTIVITY_ICONS[a] as any} size={16} color={wlActivity === a ? "#1A1A14" : "#6B6B5E"} />
                           <Text style={[styles.wlActivityChipLabel, wlActivity === a && styles.wlActivityChipLabelActive]}>
                             {ACTIVITY_LABELS[a]}
                           </Text>
@@ -2298,11 +2441,21 @@ function AppInner() {
                       </View>
                     </View>
 
-                    {/* Calorie preview */}
-                    {wlCalories != null && (
-                      <View style={styles.wlCalRow}>
-                        <Ionicons name="flame-outline" size={16} color="#E86F2C" />
-                        <Text style={styles.wlCalText}>~{wlCalories} kcal burned</Text>
+                    {/* Pace + calorie preview */}
+                    {(wlPace != null || wlCalories != null) && (
+                      <View style={styles.wlStatsRow}>
+                        {wlPace != null && (
+                          <View style={styles.wlStatPill}>
+                            <Ionicons name="speedometer-outline" size={14} color="#1A1A14" />
+                            <Text style={styles.wlStatPillText}>{wlPace}</Text>
+                          </View>
+                        )}
+                        {wlCalories != null && (
+                          <View style={styles.wlStatPill}>
+                            <Ionicons name="flame-outline" size={14} color="#1A1A14" />
+                            <Text style={styles.wlStatPillText}>~{wlCalories} kcal</Text>
+                          </View>
+                        )}
                       </View>
                     )}
                     {wlCalories == null && homeWeightKg == null && wlDurationStr.length > 0 && (
@@ -2458,6 +2611,7 @@ function AppInner() {
           </View>
         </TouchableOpacity>
       </Animated.View>
+
 
     </SafeAreaView>
   );
@@ -5022,16 +5176,18 @@ const styles = StyleSheet.create({
   // ── Daily stat strip (water + weight, below the rings card) ──────────────
   weeklySummaryCard: {
     marginTop: 10,
-    backgroundColor: "#1A1A14",
+    backgroundColor: "#FFFEF8",
     borderRadius: 20,
     paddingVertical: 18,
     paddingHorizontal: 20,
     gap: 12,
+    borderWidth: 1.5,
+    borderColor: "rgba(227,213,23,0.45)",
   },
   weeklySummaryHeading: {
     fontFamily: "Chillax-SemiBold",
     fontSize: 13,
-    color: "rgba(255,255,255,0.5)",
+    color: "#1A1A14",
     letterSpacing: 0.5,
     textTransform: "uppercase",
   },
@@ -5047,24 +5203,95 @@ const styles = StyleSheet.create({
   weeklySummaryValue: {
     fontFamily: "Chillax-SemiBold",
     fontSize: 22,
-    color: "#fff",
+    color: "#1A1A14",
     letterSpacing: -0.5,
   },
   weeklySummaryLabel: {
     fontFamily: "Inter-Variable",
     fontSize: 11,
-    color: "rgba(255,255,255,0.45)",
+    color: "rgba(26,26,20,0.45)",
     textTransform: "uppercase",
     letterSpacing: 0.3,
   },
   weeklySummarySep: {
     width: 1,
     height: 36,
-    backgroundColor: "rgba(255,255,255,0.1)",
+    backgroundColor: "rgba(227,213,23,0.4)",
+  },
+  weeklyDelta: {
+    fontFamily: "Inter-Variable",
+    fontSize: 10,
+    fontWeight: "600",
+    color: "#4CAF50",
+    letterSpacing: 0.2,
+  },
+  weeklyDeltaDown: {
+    color: "rgba(26,26,20,0.35)",
+  },
+  activityBreakdown: {
+    gap: 8,
+    marginTop: 4,
+  },
+  activityBar: {
+    flexDirection: "row",
+    height: 6,
+    borderRadius: 3,
+    overflow: "hidden",
+    gap: 2,
+  },
+  activityBarSegment: {
+    height: "100%",
+  },
+  activityBarFirst: {
+    borderTopLeftRadius: 3,
+    borderBottomLeftRadius: 3,
+  },
+  activityBarLast: {
+    borderTopRightRadius: 3,
+    borderBottomRightRadius: 3,
+  },
+  activityLegend: {
+    flexDirection: "row",
+    flexWrap: "wrap",
+    gap: 10,
+  },
+  activityLegendItem: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 5,
+  },
+  activityLegendDot: {
+    width: 7,
+    height: 7,
+    borderRadius: 4,
+  },
+  activityLegendLabel: {
+    fontFamily: "Inter-Variable",
+    fontSize: 11,
+    color: "rgba(26,26,20,0.55)",
+  },
+  emptyStateContainer: {
+    alignItems: "center",
+    paddingVertical: 16,
+    gap: 8,
+  },
+  emptyStateTitle: {
+    fontFamily: "Inter-Variable",
+    fontSize: 15,
+    fontWeight: "600",
+    color: "#1A1A14",
+  },
+  emptyStateSubtitle: {
+    fontFamily: "Inter-Variable",
+    fontSize: 13,
+    color: "rgba(26,26,20,0.45)",
+    textAlign: "center",
+    lineHeight: 18,
+    maxWidth: 260,
   },
   routeCard: {
     marginTop: 10,
-    height: 130,
+    height: 160,
     borderRadius: 20,
     overflow: "hidden",
     backgroundColor: "#c8d6c8",
@@ -5107,16 +5334,16 @@ const styles = StyleSheet.create({
     alignItems: "center",
     gap: 12,
     backgroundColor: "#FFFEF8",
-    borderRadius: 16,
+    borderRadius: 20,
     padding: 14,
     borderWidth: 1,
-    borderColor: "rgba(0,0,0,0.06)",
+    borderColor: "rgba(227,213,23,0.2)",
   },
   recentRouteIcon: {
     width: 36,
     height: 36,
     borderRadius: 18,
-    backgroundColor: "rgba(232,111,44,0.1)",
+    backgroundColor: "rgba(227,213,23,0.15)",
     alignItems: "center",
     justifyContent: "center",
   },
@@ -5135,17 +5362,20 @@ const styles = StyleSheet.create({
     fontSize: 12,
     color: "#6B6B5E",
   },
+  recentWorkoutDate: {
+    fontFamily: "Inter-Variable",
+    fontSize: 12,
+    color: "rgba(26,26,20,0.4)",
+  },
   logWorkoutCard: {
     marginTop: 10,
     flexDirection: "row",
     alignItems: "center",
     justifyContent: "space-between",
-    backgroundColor: "#FFFEF8",
+    backgroundColor: "#E3D517",
     borderRadius: 20,
     paddingHorizontal: 18,
-    paddingVertical: 16,
-    borderWidth: 1,
-    borderColor: "rgba(0,0,0,0.06)",
+    paddingVertical: 18,
   },
   logWorkoutCardLeft: {
     flexDirection: "row",
@@ -5206,7 +5436,7 @@ const styles = StyleSheet.create({
     marginRight: 8,
   },
   wlActivityChipActive: {
-    backgroundColor: "#E86F2C",
+    backgroundColor: "#E3D517",
   },
   wlActivityChipLabel: {
     fontFamily: "Inter-Variable",
@@ -5215,7 +5445,7 @@ const styles = StyleSheet.create({
     color: "#6B6B5E",
   },
   wlActivityChipLabelActive: {
-    color: "#fff",
+    color: "#1A1A14",
   },
   wlFieldRow: {
     flexDirection: "row",
@@ -5277,17 +5507,27 @@ const styles = StyleSheet.create({
     fontSize: 13,
     color: "#6B6B5E",
   },
-  wlCalRow: {
+  wlStatsRow: {
     flexDirection: "row",
-    alignItems: "center",
-    gap: 6,
+    gap: 10,
     justifyContent: "center",
   },
-  wlCalText: {
+  wlStatPill: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 5,
+    backgroundColor: "rgba(227,213,23,0.18)",
+    borderRadius: 100,
+    paddingHorizontal: 14,
+    paddingVertical: 8,
+    borderWidth: 1,
+    borderColor: "rgba(227,213,23,0.35)",
+  },
+  wlStatPillText: {
     fontFamily: "Inter-Variable",
-    fontSize: 15,
-    color: "#E86F2C",
-    fontWeight: "500",
+    fontSize: 14,
+    fontWeight: "600",
+    color: "#1A1A14",
   },
   wlCalNote: {
     fontFamily: "Inter-Variable",
@@ -5296,16 +5536,16 @@ const styles = StyleSheet.create({
     textAlign: "center",
   },
   wlSaveBtn: {
-    backgroundColor: "#E86F2C",
-    borderRadius: 16,
-    paddingVertical: 16,
+    backgroundColor: "#E3D517",
+    borderRadius: 100,
+    paddingVertical: 18,
     alignItems: "center",
   },
   wlSaveBtnLabel: {
     fontFamily: "Chillax-SemiBold",
     fontSize: 16,
-    color: "#fff",
-    letterSpacing: -0.2,
+    color: "#1A1A14",
+    letterSpacing: 0.1,
   },
   dailyStatStrip: {
     flexDirection: "row",
@@ -5383,7 +5623,7 @@ const styles = StyleSheet.create({
   // Profile loading screen (shown while GET /profile is in-flight)
   profileLoadingSafe: {
     flex: 1,
-    backgroundColor: "#FAFAF7",
+    backgroundColor: "#FFFEF8",
     alignItems: "center",
     justifyContent: "center",
     gap: 4,
@@ -9583,6 +9823,22 @@ function getGreetingTime(): string {
   if (hour < 12) return "Good morning";
   if (hour < 17) return "Good afternoon";
   return "Good evening";
+}
+
+function getGlowColors(): { outer: string; mid: string } {
+  const hour = new Date().getHours();
+  if (hour < 12) return {
+    outer: "rgba(250,248,210,0.18)",  // soft morning — near-white yellow
+    mid:   "rgba(255,253,220,0.24)",
+  };
+  if (hour < 17) return {
+    outer: "rgba(250,230,90,0.22)",   // midday — full brand yellow (current default)
+    mid:   "rgba(255,245,150,0.30)",
+  };
+  return {
+    outer: "rgba(210,195,14,0.28)",   // evening — deeper, richer yellow
+    mid:   "rgba(184,171,18,0.22)",
+  };
 }
 
 function getCalorieMessage(todayCalories: number | null, calorieGoal: number): string {
