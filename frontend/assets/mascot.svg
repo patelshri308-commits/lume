@@ -1,0 +1,50 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 200 200" width="200" height="200">
+  <defs>
+    <!-- Body: creamy-white hot center → warm golden yellow → amber at rim -->
+    <radialGradient id="bodyGrad" cx="100" cy="88" r="52" gradientUnits="userSpaceOnUse">
+      <stop offset="0%"   stop-color="#FFFACC"/>
+      <stop offset="45%"  stop-color="#FFD93D"/>
+      <stop offset="100%" stop-color="#FFAA00"/>
+    </radialGradient>
+    <!-- Petals: yellow near body center, deep orange at tips.
+         gradientUnits userSpaceOnUse + center at (100,100) means all
+         8 rotated petals inherit the same outward gradient automatically. -->
+    <radialGradient id="petalGrad" cx="100" cy="100" r="74" gradientUnits="userSpaceOnUse">
+      <stop offset="25%"  stop-color="#FFD93D"/>
+      <stop offset="100%" stop-color="#FF7800"/>
+    </radialGradient>
+  </defs>
+
+  <!-- ── 8 Flame-Petals ─────────────────────────────────────────────────── -->
+  <!-- Each petal is a rounded teardrop. Root sits inside the body (hidden
+       behind the body circle drawn on top). Tip reaches out to radius ~73.  -->
+  <g fill="url(#petalGrad)" stroke="#C85800" stroke-width="1.5" stroke-linejoin="round">
+    <path d="M 100 68 C 117 60, 117 30, 100 25 C 83 30, 83 60, 100 68 Z" transform="rotate(  0, 100, 100)"/>
+    <path d="M 100 68 C 117 60, 117 30, 100 25 C 83 30, 83 60, 100 68 Z" transform="rotate( 45, 100, 100)"/>
+    <path d="M 100 68 C 117 60, 117 30, 100 25 C 83 30, 83 60, 100 68 Z" transform="rotate( 90, 100, 100)"/>
+    <path d="M 100 68 C 117 60, 117 30, 100 25 C 83 30, 83 60, 100 68 Z" transform="rotate(135, 100, 100)"/>
+    <path d="M 100 68 C 117 60, 117 30, 100 25 C 83 30, 83 60, 100 68 Z" transform="rotate(180, 100, 100)"/>
+    <path d="M 100 68 C 117 60, 117 30, 100 25 C 83 30, 83 60, 100 68 Z" transform="rotate(225, 100, 100)"/>
+    <path d="M 100 68 C 117 60, 117 30, 100 25 C 83 30, 83 60, 100 68 Z" transform="rotate(270, 100, 100)"/>
+    <path d="M 100 68 C 117 60, 117 30, 100 25 C 83 30, 83 60, 100 68 Z" transform="rotate(315, 100, 100)"/>
+  </g>
+
+  <!-- ── Sun Body ───────────────────────────────────────────────────────── -->
+  <circle cx="100" cy="100" r="43" fill="url(#bodyGrad)" stroke="#C85800" stroke-width="2.5"/>
+
+  <!-- ── Rosy Cheeks ────────────────────────────────────────────────────── -->
+  <ellipse cx="79"  cy="113" rx="11" ry="6.5" fill="#FF6060" opacity="0.35"/>
+  <ellipse cx="121" cy="113" rx="11" ry="6.5" fill="#FF6060" opacity="0.35"/>
+
+  <!-- ── Eyes ───────────────────────────────────────────────────────────── -->
+  <circle cx="89"  cy="97" r="5.5" fill="#2B1400"/>
+  <circle cx="111" cy="97" r="5.5" fill="#2B1400"/>
+  <!-- shine highlights -->
+  <circle cx="91.5" cy="94.5" r="2.2" fill="white"/>
+  <circle cx="113.5" cy="94.5" r="2.2" fill="white"/>
+
+  <!-- ── Smile ───────────────────────────────────────────────────────────── -->
+  <!-- Q control point pulled down for a warm, full smile -->
+  <path d="M 84 109 Q 100 126 116 109"
+        stroke="#2B1400" stroke-width="3" fill="none" stroke-linecap="round"/>
+</svg>
